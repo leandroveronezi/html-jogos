@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jogo de Pouso de Foguete</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #87CEEB;
+            /* Céu azul claro */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+
+        canvas {
+            background-color: #87CEEB;
+            /* Céu azul claro */
+        }
+
+        #fuelDisplay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: black;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            padding: 5px;
+        }
+
+        #speedDisplay {
+            position: absolute;
+            top: 40px;
+            left: 10px;
+            color: black;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            padding: 5px;
+        }
+
+        #positionDisplay {
+            position: absolute;
+            top: 70px;
+            left: 10px;
+            color: black;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            padding: 5px;
+        }
+
+        #angleDisplay {
+            position: absolute;
+            top: 100px;
+            left: 10px;
+            color: black;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            padding: 5px;
+        }
+
+        #fuelBar {
+            position: absolute;
+            top: 130px;
+            left: 10px;
+            width: 100px;
+            height: 20px;
+            background-color: white;
+            border-radius: 5px;
+            padding: 2px;
+        }
+
+        #fuelBarPercent {
+            height: 20px;
+            width: 0%;
+            background-color: red;
+            transition: width 0.3s;
+            border-radius: 5px;
+        }
+
+
+
+        #score {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 5px;
+            color: black;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+        }
+
+        #windInfo {
+            position: absolute;
+            top: 40px;
+            right: 10px;
+            padding: 5px;
+            color: black;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="fuelDisplay">Combustível: 100</div>
+    <div id="positionDisplay">Posição: 0,0</div>
+    <div id="speedDisplay">Velocidade: 0</div>
+    <div id="angleDisplay">Angulo: 0</div>
+
+    <div id="windInfo">Wind: Calculating...</div>
+    <div id="score">Score: 0</div>
+
+    <div id="fuelBar">
+        <div class="fuelBarPercent" id="fuelBarPercent"></div>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        window.onload = () => {
+            const canvas = document.getElementById('gameCanvas');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            const ctx = canvas.getContext('2d');
+            // Translada o contexto para a parte inferior do canvas
+            ctx.translate(0, canvas.height - 10);
+
+            // Inverte o eixo Y para crescer para cima
+            ctx.scale(1, -1);
+
+            const fuelDisplay = document.getElementById('fuelDisplay');
+            const speedDisplay = document.getElementById('speedDisplay');
+            const angleDisplay = document.getElementById('angleDisplay');
+            const fuelBar = document.getElementById('fuelBar');
+            const positionDisplay = document.getElementById('positionDisplay');
+
+            var fuelMax = 200;
+
+            // Configurações do foguete
+            const rocket = {
+                x: canvas.width / 2,
+                y: 500,
+                width: 20,
+                height: 80,
+                fuel: fuelMax,
+                speedX: 0,
+                speedY: 0,
+                gravity: -0.05,
+                thrust: -0.2,
+                maxSpeedX: 3,
+                isThrusting: false,
+                thrustingLeft: false,
+                thrustingRight: false,
+                angle: Math.PI
+            };
+
+            // Configurações da base de pouso
+            const landingPad = {
+                x: Math.random() * (canvas.width - 50),
+                y: 0, // Altura ajustada considerando que o eixo Y está invertido
+                width: 50,
+                height: 10
+            };
+
+            let windStrength = Math.random() > 0.1 ? Math.random() * 0.33 + 0.5 : 0; // Intensidade do vento ou sem vento
+            let windDirection = windStrength === 0 ? 0 : (Math.random() > 0.5 ? 1 : -1); // Direção ou sem vento
+
+            // Configurações das nuvens
+            var clouds = [];
+
+            var cloudsHeight = 500;
+
+            generateClouds();
+
+            function generateClouds() {
+                const numberOfClouds = 10; // Número total de nuvens a serem geradas
+                clouds = []; // Certifique-se de que o array de nuvens esteja vazio
+
+                for (let i = 0; i < numberOfClouds; i++) {
+
+                    const cloudWidth = Math.random() * 80 + 40; // Largura da nuvem entre 40 e 120
+                    const cloudHeight = Math.random() * 30 + 20; // Altura da nuvem entre 20 e 50
+                    const cloudX = Math.random() * (canvas.width - cloudWidth); // Posição X aleatória
+                    const cloudY = cloudsHeight + Math.random() * (canvas.height / 2 - cloudsHeight); // Posição Y entre 300 e a metade superior do canvas
+
+                    // Armazena as propriedades da nuvem sem alterar a forma
+
+                    clouds.push({ x: cloudX, y: cloudY, width: cloudWidth, height: cloudHeight });
+
+                    for (let i = 0; i < 3; i++) {
+                        const offsetX = Math.random() * cloudWidth - cloudWidth / 2;
+                        const offsetY = Math.random() * cloudHeight - cloudHeight / 2;
+                        const ellipseWidth = cloudWidth * 0.6 + Math.random() * (cloudWidth * 0.4);
+                        const ellipseHeight = cloudHeight * 0.6 + Math.random() * (cloudHeight * 0.4);
+
+                        clouds.push({ x: cloudX + offsetX, y: cloudY + offsetY, width: ellipseWidth, height: ellipseHeight });
+                    }
+
+                }
+            }
+
+
+            function drawFlag2() {
+                ctx.fillStyle = 'white';
+
+                // Mastro da bandeira
+                const mastWidth = 5; // Largura do mastro
+                const mastHeight = 40; // Altura do mastro
+                const mastX = canvas.width - 60; // Ajusta a posição do mastro para perto da borda direita
+                const mastY = 20; // Define a posição Y do mastro com base no solo
+
+                // Desenhar o mastro
+                ctx.fillRect(mastX, 0, mastWidth, mastHeight);
+
+                // Configurações da bandeira
+                const flagHeight = 20;
+                const flagWidth = 30;
+                const flagTilt = windStrength * 5; // Inclinação baseada na força do vento (positivo ou negativo)
+                const flagOffsetX = windDirection > 0 ? 0 : -mastWidth; // Desloca para a esquerda se o vento estiver à esquerda
+
+                // Desenhar a bandeira com base na direção e força do vento
+                ctx.fillStyle = windDirection > 0 ? 'green' : (windDirection < 0 ? 'red' : 'gray');
+                ctx.beginPath();
+
+                ctx.lineTo(mastX + flagOffsetX, mastY + flagHeight); // Canto inferior esquerdo da bandeira
+                ctx.moveTo(mastX + flagOffsetX, mastY); // Canto superior esquerdo da bandeira
+                ctx.lineTo(mastX + flagOffsetX + flagWidth + flagTilt, mastY + flagHeight / 2); // Ponto ajustado pela inclinação
+
+                ctx.closePath();
+                ctx.fill();
+            }
+
+
+            function drawFlag() {
+                ctx.fillStyle = 'white';
+                // Mastro da bandeira
+                const mastWidth = 5; // Largura do mastro
+                const mastX = canvas.width - 50; // Ajusta a posição do mastro para a direita da tela
+
+                ctx.fillRect(mastX, 0, mastWidth, 40);
+
+                // Calcula a inclinação e o deslocamento da bandeira baseado na direção do vento
+                const flagHeight = 20; // Altura da bandeira
+                const flagTilt = windStrength > 0 ? (5 * (windStrength / 2)) : 0; // Inclinação baseada na força do vento
+                const flagOffsetX = windDirection > 0 ? 0 : -mastWidth; // Desloca para a esquerda se o vento estiver à esquerda
+
+                ctx.fillStyle = windDirection > 0 ? 'green' : (windDirection < 0 ? 'red' : 'gray');
+                ctx.beginPath();
+                ctx.moveTo(mastX + 5 + flagOffsetX, 40); // Canto inferior esquerdo
+                ctx.lineTo(mastX + 5 + flagOffsetX + (windDirection > 0 ? 20 : -20) + (windDirection > 0 ? flagTilt : -flagTilt), 20); // Canto inferior direito
+                ctx.lineTo(mastX + 5 + flagOffsetX, 20); // Canto superior
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Função para desenhar as nuvens
+            function drawClouds() {
+                clouds.forEach(cloud => {
+                    ctx.save();
+                    ctx.globalAlpha = 0.8; // Deixar as nuvens um pouco transparentes
+                    ctx.fillStyle = 'white';
+
+                    // Desenhar a nuvem usando elipses com base nas propriedades fixas
+                    ctx.beginPath();
+                    ctx.ellipse(cloud.x, cloud.y, cloud.width / 2, cloud.height / 2, 0, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.restore();
+                });
+            }
+
+
+            // Função para desenhar o foguete
+            function drawRocket() {
+                ctx.save(); // Salva o estado atual do canvas
+
+                positionDisplay.innerText = `Posição: ${Math.round(rocket.x)}, ${Math.round(rocket.y)}`;
+
+                // Calcular o ângulo do foguete
+                const angle = rocket.angle;
+                ctx.translate(rocket.x + rocket.width / 2, rocket.y + rocket.height / 2);
+                ctx.rotate(angle);
+
+                // Desenhar o corpo do foguete
+                ctx.fillStyle = "black";
+                ctx.fillRect(-rocket.width / 2, -rocket.height / 2, rocket.width, rocket.height);
+
+                // Desenhar a ponta do foguete
+                ctx.beginPath();
+                ctx.moveTo(0, -rocket.height / 2 - 20);
+                ctx.lineTo(-rocket.width / 2, -rocket.height / 2 + 1);
+                ctx.lineTo(rocket.width / 2, -rocket.height / 2 + 1);
+                ctx.closePath();
+                ctx.fill();
+
+                // Desenhar os motores laterais
+                if (rocket.thrustingLeft && rocket.fuel > 0) {
+                    ctx.fillStyle = "orange";
+                    ctx.beginPath();
+                    ctx.moveTo(-rocket.width / 2 + 2, -rocket.height / 2 + 20);
+                    ctx.lineTo(-rocket.width / 2 - 5, -rocket.height / 2 + 35);
+                    ctx.lineTo(-rocket.width / 2 + 7, -rocket.height / 2 + 20);
+                    ctx.closePath();
+                    ctx.fill();
+                    rocket.angle += 0.01;
+                    rocket.fuel -= 0.1;
+                }
+
+                if (rocket.thrustingRight && rocket.fuel > 0) {
+                    ctx.fillStyle = "orange";
+                    ctx.beginPath();
+                    ctx.moveTo(rocket.width / 2 - 2, -rocket.height / 2 + 20);
+                    ctx.lineTo(rocket.width / 2 + 5, -rocket.height / 2 + 35);
+                    ctx.lineTo(rocket.width / 2 - 7, -rocket.height / 2 + 20);
+                    ctx.closePath();
+                    ctx.fill();
+                    rocket.angle -= 0.01;
+                    rocket.fuel -= 0.1;
+                }
+
+                // Desenhar o motor inferior
+                if (rocket.isThrusting && rocket.fuel > 0) {
+                    ctx.fillStyle = "orange";
+                    ctx.beginPath();
+                    ctx.moveTo(0, rocket.height / 2);
+                    ctx.lineTo(-rocket.width / 2, rocket.height / 2 + 10);
+                    ctx.lineTo(rocket.width / 2, rocket.height / 2 + 10);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+
+                ctx.restore(); // Restaura o estado anterior do canvas
+            }
+
+            // Função para desenhar a base de pouso
+            function drawLandingPad() {
+                ctx.fillStyle = "green";
+                ctx.fillRect(landingPad.x, landingPad.y, landingPad.width, landingPad.height);
+            }
+
+            // Função para desenhar o solo (mar)
+            function drawSea() {
+                ctx.fillStyle = "#1E90FF";
+                ctx.fillRect(0, 0, canvas.width, -10);
+            }
+
+            // Função para desenhar o indicador de ângulo
+            function drawAngleIndicator() {
+                angleDisplay.innerText = `Ângulo: ${Math.round(rocket.angle * (180 / Math.PI))}°`;
+            }
+
+            function updateWindInfo() {
+                const windInfo = document.getElementById('windInfo');
+                const direction = windDirection === 1 ? 'Direita' : (windDirection === -1 ? 'Esquerda' : 'Sem Vento');
+                windInfo.textContent = `Vento: ${direction},  Velocidade: ${windStrength.toFixed(2)}`;
+            }
+
+            // Função de atualização do jogo
+            function update() {
+                rocket.speedY += rocket.gravity;
+
+                // Atualiza a velocidade horizontal do foguete com base na direção e força do vento
+                rocket.speedX += windStrength * windDirection * 0.01; // O fator 0.01 é para ajustar a intensidade
+
+                if (rocket.isThrusting && rocket.fuel > 0) {
+                    rocket.speedY += rocket.thrust * Math.cos(rocket.angle);
+                    rocket.speedX -= rocket.thrust * Math.sin(rocket.angle);
+                    rocket.fuel -= 0.5;
+                }
+
+                rocket.y += rocket.speedY;
+                rocket.x += rocket.speedX;
+
+                fuelDisplay.innerText = `Combustível: ${Math.max(0, Math.round(rocket.fuel))}`;
+                const porcentagem = (rocket.fuel / fuelMax) * 100;
+                const fuelBarPercent = document.getElementById('fuelBarPercent');
+                fuelBarPercent.style.width = porcentagem + '%';
+
+                speedDisplay.innerText = `Y: ${Math.round(rocket.speedY * 10)} X: ${Math.round(rocket.speedX * 10)}`;
+
+                if (rocket.x < 0) rocket.x = 0;
+                if (rocket.x + rocket.width > canvas.width) rocket.x = canvas.width - rocket.width;
+
+                if (
+                    rocket.y <= landingPad.y + landingPad.height && // Verifica se o foguete atingiu a altura da base de pouso
+                    rocket.x >= landingPad.x &&
+                    rocket.x + rocket.width <= landingPad.x + landingPad.width
+                ) {
+                    // Verifica se a velocidade de pouso é segura
+                    if (Math.abs(Math.round(rocket.speedY * 10)) <= 15) {
+
+                        var auxAngle = Math.round(rocket.angle * (180 / Math.PI));
+
+                        if (auxAngle < 170 || auxAngle > 190) {
+                            alert("O foguete tombou após o pouso!");
+                        } else {
+                            alert("Pouso bem-sucedido!");
+                        }
+
+                    } else { // Colisão de alta velocidade
+                        alert("Explosão! Você colidiu em alta velocidade.");
+                    }
+                    resetGame();
+                } else if (rocket.y < 0) { // Verifica se o foguete atingiu o limite superior (o mar)
+                    alert("O foguete caiu no mar!");
+                    resetGame();
+                }
+            }
+
+
+            function resetWind() {
+                windStrength = Math.random() > 0.1 ? Math.random() * 0.33 + 0.5 : 0; // Intensidade do vento ou sem vento
+                windDirection = (Math.random() > 0.5 ? 1 : -1); // Direção ou sem vento
+            }
+
+            // Função para resetar o jogo
+            function resetGame() {
+                rocket.x = canvas.width / 2;
+                rocket.y = 500;
+                rocket.speedX = 0;
+                rocket.speedY = 0;
+                rocket.fuel = fuelMax;
+                rocket.angle = Math.PI;
+                rocket.isThrusting = false;
+                rocket.thrustingLeft = false;
+                rocket.thrustingRight = false;
+                landingPad.x = Math.random() * (canvas.width - landingPad.width);
+                generateClouds();
+                resetWind();
+            }
+
+            // Função principal de loop do jogo
+            function gameLoop() {
+                update();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawSea();
+                drawClouds(); // Desenhar nuvens
+                drawFlag();
+                drawRocket();
+                updateWindInfo();
+                drawAngleIndicator();
+                drawLandingPad();
+                requestAnimationFrame(gameLoop);
+            }
+
+            document.addEventListener('keydown', (event) => {
+                if (event.code === 'ArrowUp') rocket.isThrusting = true;
+                if (event.code === 'ArrowLeft') rocket.thrustingLeft = true;
+                if (event.code === 'ArrowRight') rocket.thrustingRight = true;
+            });
+
+            document.addEventListener('keyup', (event) => {
+                if (event.code === 'ArrowUp') rocket.isThrusting = false;
+                if (event.code === 'ArrowLeft') rocket.thrustingLeft = false;
+                if (event.code === 'ArrowRight') rocket.thrustingRight = false;
+            });
+
+            gameLoop();
+        };
+    </script>
+</body>
+
+</html>

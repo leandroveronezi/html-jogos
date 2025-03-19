@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sky Diver Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            background: #87ceeb;
+            display: block;
+            margin: 0 auto;
+            height: 100vh;
+        }
+
+        #windInfo, #score {
+            position: absolute;
+            padding: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+        }
+
+        #windInfo {
+            top: 10px;
+            right: 10px;
+        }
+
+        #score {
+            top: 50px;
+            right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="windInfo">Wind: Calculating...</div>
+    <div id="score">Score: 0</div>
+
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const ctx = canvas.getContext('2d');
+
+        const closedDiverHeight = 36;
+        const closedDiverWidth = 30;
+        const closedDiverMaxSpeedY = 6;
+        const openDiverMaxSpeedY = 0.8;
+        const parachuteColor = 'green';
+        const planeColor = 'red';
+
+        let groundHeight = 10;
+        let baseWidth = 50;
+        let base = { x: Math.random() * (canvas.width - baseWidth), y: canvas.height - groundHeight, width: baseWidth, height: 10 };
+        const plane = { x: -100, y: 30, speed: 2 };
+        const diver = { x: plane.x, y: plane.y, falling: false, speedY: 0, parachuteOpen: false };
+        let windStrength = Math.random() > 0.1 ? Math.random() * 5.5 + 0.5 : 0;
+        let windDirection = windStrength === 0 ? 0 : (Math.random() > 0.5 ? 1 : -1);
+        const groundY = canvas.height - groundHeight;
+        let gameOver = false;
+        let score = 0;
+
+        let moveBaseLeft = false;
+        let moveBaseRight = false;
+        const baseSpeed = 5; // Velocidade de movimentação da base
+
+        function drawPlane() {
+            ctx.fillStyle = planeColor;
+            ctx.font = '10px monospace';
+            const planeLines = [
+                '|~~\\_____/~~\\__  |',
+                ' \\______====== )-+',
+                '        ~~~|/~~  |',
+                '           ()'
+            ];
+            planeLines.forEach((line, index) => {
+                ctx.fillText(line, plane.x, plane.y + index * 12);
+            });
+        }
+
+        function drawDiver() {
+            if (!diver.falling) return;
+
+            ctx.fillStyle = parachuteColor;
+            ctx.font = 'bold 6px monospace';
+            const diverClosedLines = [
+                '     _       ',
+                '    (_}      ',
+                '   /.X.\\    ',
+                '  / |_| \\   ',
+                ' o // \\\\ o ',
+                '   \\\\ //   ',
+                '    U U      '
+            ];
+            diverClosedLines.forEach((line, index) => {
+                ctx.fillText(line, diver.x - 5, diver.y + index * 6);
+            });
+        }
+
+        function drawBase() {
+            ctx.save();
+            ctx.translate(base.x, base.y);
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, base.width, base.height);
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 3;
+            for (let i = 0; i < base.width; i += 5) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i + 5, base.height);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        function drawGround() {
+            ctx.fillStyle = 'gray';
+            ctx.fillRect(0, groundY, canvas.width, groundHeight);
+        }
+
+        function update() {
+            if (gameOver) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawGround();
+            drawPlane();
+            drawDiver();
+            drawBase();
+
+            plane.x += plane.speed;
+            if (plane.x > canvas.width) plane.x = -100;
+
+            // Movimentação da base
+            if (moveBaseLeft && base.x > 0) {
+                base.x -= baseSpeed; // Move a base para a esquerda
+            }
+            if (moveBaseRight && base.x < canvas.width - base.width) {
+                base.x += baseSpeed; // Move a base para a direita
+            }
+
+            if (diver.falling) {
+                diver.y += diver.speedY;
+                if (diver.parachuteOpen) {
+                    diver.speedY -= 0.10;
+                    if (diver.speedY < openDiverMaxSpeedY) {
+                        diver.speedY = openDiverMaxSpeedY;
+                    }
+                } else {
+                    diver.speedY += 0.10;
+                    if (diver.speedY > closedDiverMaxSpeedY) {
+                        diver.speedY = closedDiverMaxSpeedY;
+                        diver.parachuteOpen = true; // Abre o paraquedas
+                    }
+                }
+            }
+
+            if (diver.y + closedDiverHeight >= groundY) {
+                checkLanding();
+            }
+        }
+
+        function checkLanding() {
+            if (diver.x >= base.x && diver.x <= base.x + base.width) {
+                score++;
+                base.x = Math.random() * (canvas.width - base.width);
+                resetDiver();
+            } else {
+                gameOver = true;
+                alert('Game over! Score: ' + score);
+            }
+        }
+
+        function resetDiver() {
+            diver.falling = false;
+            diver.parachuteOpen = false;
+            diver.x = plane.x;
+            diver.y = plane.y;
+            diver.speedY = 0;
+        }
+
+        function controlBase(e) {
+            if (e.code === 'ArrowLeft') {
+                moveBaseLeft = true; // Inicia movimento para a esquerda
+            } else if (e.code === 'ArrowRight') {
+                moveBaseRight = true; // Inicia movimento para a direita
+            }
+        }
+
+        function stopBaseMovement(e) {
+            if (e.code === 'ArrowLeft') {
+                moveBaseLeft = false; // Para movimento para a esquerda
+            } else if (e.code === 'ArrowRight') {
+                moveBaseRight = false; // Para movimento para a direita
+            }
+        }
+
+        function jump() {
+            if (!diver.falling) {
+                diver.falling = true;
+                diver.y = 30;
+                diver.x = plane.x;
+            }
+        }
+
+        setInterval(() => {
+            update();
+            // Lógica para o paraquedista saltar
+            if (plane.x > 0 && plane.x < canvas.width) {
+                if (!diver.falling) {
+                    jump(); // Salta quando o avião está na posição correta
+                }
+            }
+        }, 1000 / 60);
+
+        document.addEventListener('keydown', controlBase);
+        document.addEventListener('keyup', stopBaseMovement);
+    </script>
+</body>
+</html>

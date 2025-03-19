@@ -1,0 +1,43 @@
+<canvas id="gameCanvas" width="400" height="600"></canvas>
+<script>
+    const canvas = document.getElementById("gameCanvas"), ctx = canvas.getContext("2d");
+    let bird = { x: 50, y: 150, size: 20, dy: 0 }, pipes = [], score = 0, gameOver = false;
+
+    function spawnPipe() {
+        const gap = 150, height = Math.random() * (canvas.height - gap);
+        pipes.push({ x: canvas.width, top: height, bottom: height + gap });
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "skyblue";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "green";
+        pipes.forEach(p => {
+            ctx.fillRect(p.x, 0, 50, p.top);
+            ctx.fillRect(p.x, p.bottom, 50, canvas.height - p.bottom);
+        });
+        ctx.fillStyle = "yellow";
+        ctx.fillRect(bird.x, bird.y, bird.size, bird.size);
+        ctx.fillStyle = "black";
+        ctx.fillText(`Score: ${score}`, 10, 20);
+    }
+
+    function update() {
+        if (gameOver) return;
+        bird.dy += 0.5; bird.y += bird.dy;
+        pipes.forEach(p => {
+            p.x -= 2;
+            if (p.x + 50 < 0) { pipes.shift(); score++; spawnPipe(); }
+            if (bird.x + bird.size > p.x && bird.x < p.x + 50 && (bird.y < p.top || bird.y + bird.size > p.bottom)) {
+                gameOver = true;
+            }
+        });
+        if (bird.y + bird.size > canvas.height || bird.y < 0) gameOver = true;
+        draw();
+    }
+
+    canvas.onclick = () => bird.dy = -8;
+    setInterval(update, 20);
+    spawnPipe();
+</script>

@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sky Diver Game</title>
+    <style>
+        body {
+            margin: 0;
+            /* Remove a margem padrão do corpo */
+            padding: 0;
+            /* Remove o preenchimento padrão do corpo */
+            overflow: hidden;
+            /* Opcional: evita rolagem caso o canvas fique maior que a tela */
+        }
+
+        canvas {
+            background: #87ceeb;
+            display: block;
+            margin: 0 auto;
+            height: 100vh;
+            /* Altura total da janela */
+        }
+
+        #windInfo {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+        }
+
+        #score {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="windInfo">Wind: Calculating...</div>
+    <div id="score">Score: 0</div>
+
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+    <script>
+
+        window.onload = () => {
+
+            const canvas = document.getElementById('gameCanvas');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            const ctx = canvas.getContext('2d');
+
+            // Paraquedas fechado
+            const closedDiverHeight = 36; // Altura do paraquedista com paraquedas fechado
+            const closedDiverWidth = 30; // Largura do paraquedista com paraquedas fechado
+
+            // Paraquedas aberto
+            let openDiverHeight = 60; // Altura do retângulo de colisão do paraquedista aberto
+            let openDiverWidth = 44; // Largura do retângulo de colisão do paraquedista aberto
+
+            const closedDiverMaxSpeedY = 7; // Velocidade de queda para o paraquedas fechado
+            const openDiverMaxSpeedY = 1; // Velocidade de queda para o paraquedas aberto
+
+            const parachuteColor = 'green'; // Cor do paraquedas
+            const planeColor = 'red'; // Cor do avião
+
+            // Variáveis ajustáveis para a altura do solo/base e largura da base
+            let groundHeight = 10; // Altura do solo
+            let baseWidth = 50; // Largura da base
+            let base = { x: Math.random() * (canvas.width - baseWidth), y: canvas.height - groundHeight, width: baseWidth, height: 10 };
+
+            let moveBaseLeft = false;
+            let moveBaseRight = false;
+            const baseSpeed = 5; // Velocidade de movimentação da base
+
+            const plane = { x: -100, y: 60, speed: 1.0 }; // Posição Y do avião para 30
+
+            const diver = {
+                x: plane.x,
+                y: plane.y,
+                falling: false,
+                speedY: 0, // Aumentando a velocidade de queda
+                speedX: 0,
+                parachuteOpen: false // Estado do paraquedas
+            };
+
+
+            let windStrength = Math.random() > 0.1 ? Math.random() * 5.5 + 0.5 : 0; // Intensidade do vento ou sem vento
+            let windDirection = windStrength === 0 ? 0 : (Math.random() > 0.5 ? 1 : -1); // Direção ou sem vento
+
+            const groundY = canvas.height - groundHeight; // Posição Y do solo
+            let gameOver = false;
+            let score = 0;
+
+            function drawPlane() {
+                ctx.fillStyle = planeColor; // Cor do avião alterada para vermelho
+                ctx.font = '10px monospace'; // Define a fonte para texto monospace
+
+                // As duas versões do avião: normal e espelhada
+                const planeLinesRight = [
+                    '|~~\\_____/~~\\__  |',
+                    ' \\______====== )-+',
+                    '        ~~~|/~~  |',
+                    '           ()'
+                ];
+
+                const planeLinesLeft = [
+                    '|  __/~~\\_____/~~|',
+                    '+-( ======_______/ ',
+                    '|  ~~\\|~~~        ',
+                    '      ()'
+                ];
+
+                const planeLines = plane.speed > 0 ? planeLinesRight : planeLinesLeft;
+
+                // Desenha cada linha do avião com um deslocamento em Y
+                planeLines.forEach((line, index) => {
+                    ctx.fillText(line, plane.x, plane.y + index * 12); // Ajusta a posição vertical
+                });
+            }
+
+
+            function drawDiver() {
+                if (!diver.falling) return; // Não desenha o paraquedista se ele não estiver caindo
+
+                ctx.fillStyle = parachuteColor;
+                ctx.font = 'bold 6px monospace'; // Define a fonte para texto monospace menor
+
+                // Desenho do paraquedista com paraquedas fechado
+                if (!diver.parachuteOpen) {
+                    const diverClosedLines = [
+                        '     _       ',
+                        '    (_}      ',
+                        '   /.X.\\    ',
+                        '  / |_| \\   ',
+                        ' o // \\\\ o ',
+                        '   \\\\ //   ',
+                        '    U U      '
+                    ];
+
+                    // Desenha cada linha do paraquedista com um deslocamento em Y
+                    diverClosedLines.forEach((line, index) => {
+                        ctx.fillText(line, diver.x - 5, diver.y + index * 6); // Ajusta a posição do paraquedista
+                    });
+
+                    // Desenha um retângulo em volta do paraquedista com paraquedas fechado
+                    //ctx.strokeStyle = 'blue'; // Cor do retângulo de colisão
+                    //ctx.strokeRect(diver.x, diver.y, closedDiverWidth, closedDiverHeight); // Ajusta a posição do retângulo
+
+                    //var a = 8;
+                    //ctx.strokeRect(diver.x + a, diver.y + closedDiverHeight - 10, closedDiverWidth - (2 * a), 10); // Ajusta a posição do retângulo
+
+                } else { // Desenho do paraquedista com paraquedas aberto
+                    const diverOpenLines = [
+                        '   _________      ',
+                        '  /         \\    ',
+                        ' / _   _   _ \\   ',
+                        ' |/ \\ / \\ / \\| ',
+                        '  \\  | _ |  /    ',
+                        '   o `(_}\' o      ',
+                        '    \\/.X.\\/     ',
+                        '      |_|         ',
+                        '     // \\\\      ',
+                        '     \\\\ //      ',
+                        '      U U         '
+
+
+                    ];
+
+                    // Desenha cada linha do paraquedista com um deslocamento em Y
+                    diverOpenLines.forEach((line, index) => {
+                        ctx.fillText(line, diver.x - 5, diver.y + index * 6); // Ajusta a posição do paraquedista
+                    });
+
+                    // Desenha um retângulo em volta do paraquedista com paraquedas aberto
+                    //ctx.strokeStyle = 'blue'; // Cor do retângulo de colisão
+                    //ctx.strokeRect(diver.x, diver.y, openDiverWidth, openDiverHeight); // Ajusta a posição do retângulo
+
+                    //var a = 14;
+                    //ctx.strokeRect(diver.x + a, diver.y + openDiverHeight - 10, openDiverWidth - (2 * a), 10); // Ajusta a posição do retângulo
+                }
+            }
+
+            function drawFlag() {
+                ctx.fillStyle = 'white';
+                // Mastro da bandeira
+                const mastWidth = 5; // Largura do mastro
+                const mastX = canvas.width - 50; // Ajusta a posição do mastro para a direita da tela
+
+                ctx.fillRect(mastX, groundY - 40, mastWidth, 40);
+
+                // Calcula a inclinação e o deslocamento da bandeira baseado na direção do vento
+                const flagHeight = 20; // Altura da bandeira
+                const flagTilt = windStrength > 0 ? (5 * (windStrength / 2)) : 0; // Inclinação baseada na força do vento
+                const flagOffsetX = windDirection > 0 ? 0 : -mastWidth; // Desloca para a esquerda se o vento estiver à esquerda
+
+                ctx.fillStyle = windDirection > 0 ? 'green' : (windDirection < 0 ? 'red' : 'gray');
+                ctx.beginPath();
+                ctx.moveTo(mastX + 5 + flagOffsetX, groundY - 40); // Canto inferior esquerdo
+                ctx.lineTo(mastX + 5 + flagOffsetX + (windDirection > 0 ? 20 : -20) + (windDirection > 0 ? flagTilt : -flagTilt), groundY - 20); // Canto inferior direito
+                ctx.lineTo(mastX + 5 + flagOffsetX, groundY - 20); // Canto superior
+                ctx.closePath();
+                ctx.fill();
+            }
+
+
+            function drawBase() {
+                // Base com listras horizontais
+
+                ctx.save();
+                ctx.translate(base.x, base.y);
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, base.width, base.height);
+
+                ctx.strokeStyle = 'red';
+                ctx.lineWidth = 3;
+                for (let i = 0; i < base.width; i += 5) {
+                    ctx.beginPath();
+                    ctx.moveTo(i, 0);
+                    ctx.lineTo(i + 5, base.height);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            function drawGround() {
+                ctx.fillStyle = 'blue'; // Cor do solo
+                ctx.fillRect(0, groundY, canvas.width, groundHeight); // Desenha o solo na mesma altura da base
+            }
+
+            function update() {
+                if (gameOver) return;
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawGround(); // Desenha o solo
+                drawPlane();
+                drawDiver();
+                drawFlag();
+                drawBase();
+                updateWindInfo();
+                updateScore();
+
+                // Atualiza a posição do avião
+                plane.x += plane.speed;
+
+                // Verifica se o avião saiu da tela para alternar sua direção
+                if (plane.x > canvas.width) {
+                    plane.speed = -plane.speed; // Inverte a direção para voltar da direita para a esquerda
+                    plane.x = canvas.width; // Posiciona o avião na borda direita da tela
+                } else if (plane.x < -100) {
+                    plane.speed = -plane.speed; // Inverte a direção para ir da esquerda para a direita
+                    plane.x = -100; // Posiciona o avião na borda esquerda da tela
+                }
+
+                // Movimentação da base
+                if (moveBaseLeft && base.x > 0) {
+                    base.x -= baseSpeed; // Move a base para a esquerda
+                }
+                if (moveBaseRight && base.x < canvas.width - base.width) {
+                    base.x += baseSpeed; // Move a base para a direita
+                }
+
+                // Atualiza a posição do paraquedista se ele estiver caindo
+                if (diver.falling) {
+                    diver.y += diver.speedY; // Aumenta a velocidade de queda
+
+                    // Se o paraquedas estiver aberto, aplica a influência do vento
+                    if (diver.parachuteOpen) {
+                        diver.speedY -= 0.10;
+
+                        if (diver.speedY < openDiverMaxSpeedY) {
+                            diver.speedY = openDiverMaxSpeedY;
+                        }
+
+                        diver.x += diver.speedX;
+                        if (windDirection === 1) {
+                            diver.x += windStrength * 0.3; // Vento à direita
+                        } else if (windDirection === -1) {
+                            diver.x -= windStrength * 0.3; // Vento à esquerda
+                        }
+                    } else {
+                        diver.speedY += 0.40;
+
+                        if (diver.speedY > closedDiverMaxSpeedY) {
+                            diver.speedY = closedDiverMaxSpeedY;
+                            diver.parachuteOpen = true;
+                        }
+                    }
+                } else {
+                    var a = canvas.width / 40;
+
+                    if (plane.x > a && plane.x < (canvas.width - a)) {
+                        jump();
+                    }
+
+                }
+
+                // Impede que o paraquedista saia da tela
+                if (diver.x < 0) {
+                    diver.x = 0; // Limite esquerdo
+                } else if (diver.x + (diver.parachuteOpen ? openDiverWidth : closedDiverWidth) > canvas.width) {
+                    diver.x = canvas.width - (diver.parachuteOpen ? openDiverWidth : closedDiverWidth); // Limite direito
+                }
+
+                // Verifica se o paraquedista toca o solo
+                if (diver.y + (diver.parachuteOpen ? openDiverHeight : closedDiverHeight) >= groundY) {
+                    checkLanding(); // Verifica se pousou na base
+                }
+            }
+
+            function checkLanding() {
+
+                var eX = 0;
+                var dX = 0;
+
+                if (diver.parachuteOpen) {
+                    eX = diver.x + 16;
+                    dX = diver.x + openDiverWidth - (2 * 16)
+
+                    ctx.strokeRect(eX, diver.y + openDiverHeight - 10, dX - diver.x, 10);
+                } else {
+                    eX = diver.x + 8;
+                    dX = diver.x + closedDiverWidth - (2 * 8)
+
+                    ctx.strokeRect(eX, diver.y + closedDiverHeight - 10, dX - diver.x, 10);
+                }
+
+
+
+                // Verifica se o paraquedista pousou na base
+                if (eX >= base.x && dX <= base.x + base.width) {
+                    score++; // Aumenta a pontuação
+                    resetWind();
+                    resetDiver(); // Reseta o paraquedista
+                } else {
+                    gameOver = true; // Se não pousar, termina o jogo
+
+                    drawGround(); // Desenha o solo
+                    drawPlane();
+                    drawDiver();
+                    drawFlag();
+                    drawBase();
+                    updateWindInfo();
+                    updateScore();
+
+
+                    alert('Game over! Score: ' + score);
+                }
+
+            }
+
+            function resetWind() {
+                windStrength = Math.random() > 0.1 ? Math.random() * 6.5 + 1.5 : 0; // Intensidade do vento ou sem vento
+                windDirection = (Math.random() > 0.5 ? 1 : -1); // Direção ou sem vento
+            }
+
+            function resetDiver() {
+
+                diver.falling = false;
+                diver.parachuteOpen = false; // Reseta o estado do paraquedas
+                diver.x = plane.x; // Reseta a posição X do paraquedista
+                diver.y = plane.y; // Reseta a posição Y do paraquedista
+                diver.speedY = 0; // Reseta a velocidade de queda
+            }
+
+            function controlDiver(e) {
+                if (diver.parachuteOpen) { // Apenas controla se o paraquedas estiver aberto
+                    if (e.code === 'ArrowLeft') {
+                        diver.speedX = -2;
+                    } else if (e.code === 'ArrowRight') {
+                        diver.speedX = 2;
+                    }
+                }
+            }
+
+            function jump() {
+                if (!diver.falling && diver.x >= 0 && diver.x + (diver.parachuteOpen ? openDiverWidth : closedDiverWidth) <= canvas.width) {
+                    diver.falling = true; // Começa a cair
+                    diver.y = plane.y + 30; // Define a altura inicial do paraquedista
+                    diver.x = plane.speed > 0 ? plane.x : plane.x + 80; // Define a posição inicial do paraquedista
+                }
+            }
+
+            function openParachute() {
+                if (diver.falling) {
+                    diver.parachuteOpen = true; // Abre o paraquedas
+                }
+            }
+
+            function updateWindInfo() {
+                const windInfo = document.getElementById('windInfo');
+                const direction = windDirection === 1 ? 'Direita' : (windDirection === -1 ? 'Esquerda' : 'Sem Vento');
+                windInfo.textContent = `Vento: ${direction},  Velocidade: ${windStrength.toFixed(2)} Y:${diver.speedY}`;
+            }
+
+            function updateScore() {
+                const scoreBoard = document.getElementById('score');
+                scoreBoard.textContent = `Score: ${score}`;
+            }
+
+            function controlBase(e) {
+                if (e.code === 'ArrowLeft') {
+                    moveBaseLeft = true; // Inicia movimento para a esquerda
+                } else if (e.code === 'ArrowRight') {
+                    moveBaseRight = true; // Inicia movimento para a direita
+                }
+            }
+
+            function stopBaseMovement(e) {
+                if (e.code === 'ArrowLeft') {
+                    moveBaseLeft = false; // Para movimento para a esquerda
+                } else if (e.code === 'ArrowRight') {
+                    moveBaseRight = false; // Para movimento para a direita
+                }
+            }
+
+
+            setInterval(
+
+                update
+                ,
+                1000 / 60,
+            );
+
+            document.addEventListener('keydown', controlBase);
+            document.addEventListener('keyup', stopBaseMovement);
+
+        };
+
+
+    </script>
+</body>
+
+</html>
