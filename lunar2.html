@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lunar Lander Ultimate</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            color: white;
+            text-align: center;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background: linear-gradient(to bottom, #000033 0%, #000066 100%);
+        }
+        #gameInfo {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 18px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #00f;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            font-size: 14px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #0f0;
+        }
+        #restart {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 15px 30px;
+            font-size: 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            display: none;
+            box-shadow: 0 0 15px #4CAF50;
+        }
+        #restart:hover {
+            background-color: #45a049;
+            box-shadow: 0 0 20px #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameInfo">Combustível: 1000 | Velocidade: 0 | Altitude: 0</div>
+    <div id="instructions">←→ Rotacionar | ↑ Acelerar | R Reiniciar</div>
+    <canvas id="gameCanvas" width="600" height="600"></canvas>
+    <button id="restart">Reiniciar Jogo</button>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameInfo = document.getElementById('gameInfo');
+        const restartBtn = document.getElementById('restart');
+
+        // Configurações
+        const landerWidth = 30;
+        const landerHeight = 45;
+        const gravity = 0.05;
+        const thrustPower = 0.15;
+        const rotationSpeed = 3;
+        const fuelConsumption = 1;
+        const rotationThrusterPower = 0.02;
+
+        // Estado do jogo
+        let lander = {
+            x: canvas.width / 2,
+            y: 50,
+            width: landerWidth,
+            height: landerHeight,
+            angle: 0,
+            vx: 0,
+            vy: 0,
+            fuel: 1000,
+            landed: false,
+            crashed: false,
+            leftThruster: false,
+            rightThruster: false
+        };
+
+        // Plataforma
+        let platform = {
+            x: Math.random() * (canvas.width - 100) + 50,
+            y: canvas.height - 40,
+            width: 100,
+            height: 8
+        };
+
+        // Terreno e estrelas
+        let terrain = [];
+        let stars = [];
+        const terrainPoints = 20;
+        const terrainRoughness = 50;
+        const starsCount = 200;
+
+        // Textura do terreno
+        function createTerrainTexture() {
+            const texCanvas = document.createElement('canvas');
+            texCanvas.width = 50;
+            texCanvas.height = 50;
+            const texCtx = texCanvas.getContext('2d');
+
+            texCtx.fillStyle = '#665544';
+            texCtx.fillRect(0, 0, 50, 50);
+            texCtx.fillStyle = '#554433';
+            for(let i = 0; i < 50; i++) {
+                texCtx.fillRect(Math.random()*50, Math.random()*50, 2, 2);
+            }
+            return ctx.createPattern(texCanvas, 'repeat');
+        }
+
+        // Inicializar estrelas
+        function initStars() {
+            stars = [];
+            for (let i = 0; i < starsCount; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 2 + 0.5,
+                    opacity: Math.random() * 0.8 + 0.2
+                });
+            }
+        }
+
+        // Desenhar estrelas
+        function drawStars() {
+            stars.forEach(star => {
+                ctx.fillStyle = `rgba(255, 255, 255, ${star.opacity})`;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size/2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // Inicializar terreno
+        function initTerrain() {
+            terrain = [];
+            let lastY = canvas.height - 50;
+
+            for (let i = 0; i <= terrainPoints; i++) {
+                const x = (canvas.width / terrainPoints) * i;
+                let y;
+
+                if (x >= platform.x - 15 && x <= platform.x + platform.width + 15) {
+                    y = platform.y;
+                } else {
+                    y = lastY + (Math.random() * terrainRoughness * 2 - terrainRoughness);
+                    y = Math.max(canvas.height - 150, Math.min(canvas.height - 30, y));
+                }
+
+                terrain.push({x, y});
+                lastY = y;
+            }
+        }
+
+        // Desenhar terreno
+        function drawTerrain() {
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height);
+            terrain.forEach(point => ctx.lineTo(point.x, point.y));
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.closePath();
+
+            ctx.fillStyle = createTerrainTexture();
+            ctx.fill();
+
+            // Plataforma
+            ctx.shadowColor = '#0f0';
+            ctx.shadowBlur = 15;
+            ctx.fillStyle = '#0f0';
+            ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+            ctx.shadowBlur = 0;
+        }
+
+        // Desenhar propulsores laterais
+        function drawRotationThrusters() {
+            ctx.save();
+            ctx.translate(lander.x, lander.y - 10);
+            ctx.rotate(lander.angle * Math.PI / 180);
+
+            // Propulsor esquerdo (ativa com seta direita)
+            if(lander.leftThruster) {
+                ctx.fillStyle = '#ff4500';
+                ctx.beginPath();
+                ctx.moveTo(landerWidth/2 + 5, -10);
+                ctx.lineTo(landerWidth/2 + 15, 0);
+                ctx.lineTo(landerWidth/2 + 5, 10);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Propulsor direito (ativa com seta esquerda)
+            if(lander.rightThruster) {
+                ctx.fillStyle = '#ff4500';
+                ctx.beginPath();
+                ctx.moveTo(-landerWidth/2 - 5, -10);
+                ctx.lineTo(-landerWidth/2 - 15, 0);
+                ctx.lineTo(-landerWidth/2 - 5, 10);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        // Desenhar módulo
+        function drawLander() {
+            ctx.save();
+            ctx.translate(lander.x, lander.y);
+            ctx.rotate(lander.angle * Math.PI / 180);
+
+            // Corpo
+            ctx.fillStyle = '#666';
+            ctx.beginPath();
+            ctx.roundRect(-landerWidth/2, -landerHeight/2, landerWidth, landerHeight, 5);
+            ctx.fill();
+
+            // Janela
+            ctx.fillStyle = '#7ec8e3';
+            ctx.beginPath();
+            ctx.arc(0, -landerHeight/4, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Pernas
+            ctx.fillStyle = '#555';
+            ctx.fillRect(-landerWidth/2 - 5, landerHeight/2 - 5, 10, 10);
+            ctx.fillRect(landerWidth/2 - 5, landerHeight/2 - 5, 10, 10);
+
+            // Propulsor principal
+            if (keys.ArrowUp && lander.fuel > 0 && !lander.landed && !lander.crashed) {
+                const flameHeight = 25 + Math.random() * 5;
+
+                ctx.fillStyle = '#ff4500';
+                ctx.beginPath();
+                ctx.moveTo(-10, landerHeight/2);
+                ctx.lineTo(0, landerHeight/2 + flameHeight);
+                ctx.lineTo(10, landerHeight/2);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.fillStyle = '#ffd700';
+                ctx.beginPath();
+                ctx.moveTo(-7, landerHeight/2);
+                ctx.lineTo(0, landerHeight/2 + flameHeight * 0.8);
+                ctx.lineTo(7, landerHeight/2);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        // Verificar colisão
+        function checkCollision() {
+            if (lander.y + lander.height/2 >= canvas.height) return true;
+
+            for (let i = 0; i < terrain.length - 1; i++) {
+                const p1 = terrain[i];
+                const p2 = terrain[i+1];
+
+                if (lander.x + lander.width/2 >= p1.x && lander.x - lander.width/2 <= p2.x) {
+                    const slope = (p2.y - p1.y) / (p2.x - p1.x);
+                    const terrainY = p1.y + slope * (lander.x - p1.x);
+                    const landerBottom = lander.y + lander.height/2;
+
+                    if (landerBottom >= terrainY) {
+                        const onPlatform = lander.x >= platform.x && lander.x <= platform.x + platform.width;
+
+                        if (onPlatform &&
+                            Math.abs(lander.angle) < 10 &&
+                            Math.abs(lander.vx) < 0.5 &&
+                            Math.abs(lander.vy) < 1) {
+                            lander.landed = true;
+                        } else {
+                            lander.crashed = true;
+                        }
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Atualizar física
+        function updatePhysics() {
+            if (lander.landed || lander.crashed) return;
+
+            // Gravidade
+            lander.vy += gravity;
+
+            // Rotação com efeito de propulsão
+            if (keys.ArrowLeft) {
+                lander.angle -= rotationSpeed;
+                lander.leftThruster = true;
+                lander.rightThruster = false;
+            }
+            else if (keys.ArrowRight) {
+                lander.angle += rotationSpeed;
+                lander.rightThruster = true;
+                lander.leftThruster = false;
+            }
+            else {
+                lander.leftThruster = false;
+                lander.rightThruster = false;
+            }
+
+            // Propulsão principal
+            if (keys.ArrowUp && lander.fuel > 0) {
+                const angleRad = lander.angle * Math.PI / 180;
+                const thrustX = Math.sin(angleRad) * thrustPower;
+                const thrustY = -Math.cos(angleRad) * thrustPower;
+
+                lander.vx += thrustX;
+                lander.vy += thrustY;
+                lander.fuel -= fuelConsumption;
+            }
+
+            // Movimento
+            lander.x += lander.vx;
+            lander.y += lander.vy;
+
+            // Limites
+            lander.x = Math.max(0, Math.min(canvas.width, lander.x));
+            lander.y = Math.max(0, lander.y);
+
+            checkCollision();
+        }
+
+        // Atualizar interface
+        function updateGameInfo() {
+            const altitude = canvas.height - lander.y - lander.height/2;
+            const speed = Math.sqrt(lander.vx ** 2 + lander.vy ** 2).toFixed(2);
+            let status = lander.landed ? "POUSO BEM-SUCEDIDO!" : lander.crashed ? "COLISÃO!" : "";
+            gameInfo.innerHTML = `Combustível: ${Math.max(0, lander.fuel)} | Velocidade: ${speed} | Altitude: ${Math.max(0, altitude.toFixed(0))} ${status}`;
+        }
+
+        // Reiniciar jogo
+        function restartGame() {
+            lander = {
+                x: canvas.width / 2,
+                y: 50,
+                width: landerWidth,
+                height: landerHeight,
+                angle: 0,
+                vx: 0,
+                vy: 0,
+                fuel: 1000,
+                landed: false,
+                crashed: false,
+                leftThruster: false,
+                rightThruster: false
+            };
+
+            platform.x = Math.random() * (canvas.width - 100) + 50;
+            initStars();
+            initTerrain();
+            restartBtn.style.display = 'none';
+        }
+
+        // Controles
+        const keys = { ArrowUp: false, ArrowLeft: false, ArrowRight: false };
+
+        document.addEventListener('keydown', (e) => {
+            if (['ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                keys[e.key] = true;
+                e.preventDefault();
+            }
+            if (e.key.toLowerCase() === 'r') restartGame();
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (['ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                keys[e.key] = false;
+                e.preventDefault();
+            }
+        });
+
+        restartBtn.addEventListener('click', restartGame);
+
+        // Loop do jogo
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawStars();
+            drawTerrain();
+            drawLander();
+            drawRotationThrusters();
+            updatePhysics();
+            updateGameInfo();
+
+            if (lander.landed || lander.crashed) {
+                restartBtn.style.display = 'block';
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Iniciar
+        initStars();
+        initTerrain();
+        gameLoop();
+    </script>
+</body>
+</html>
