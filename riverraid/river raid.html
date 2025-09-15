@@ -1,0 +1,1576 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>River Raid Clone - Split Freq Fix (v10.3)</title> <!-- <<< TÍTULO ATUALIZADO >>> -->
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            /* Alterado para 'flex-start' para evitar que o canvas seja empurrado para baixo com a UI */
+            height: 100vh;
+            margin: 0;
+            background-color: #111;
+            font-family: 'Consolas', 'Courier New', monospace, 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji';
+            color: white;
+            padding-top: 20px;
+            /* Adiciona um pouco de espaço acima do H1 */
+        }
+
+        h1 {
+            /* <<< NOVO ESTILO H1 >>> */
+            font-family: 'Press Start 2P', cursive;
+            /* Fonte pixelada para o título */
+            color: #FFDC00;
+            /* Amarelo */
+            text-shadow: 2px 2px #FF4136;
+            /* Sombra vermelha */
+            margin-bottom: 15px;
+            /* Espaço abaixo do título */
+            font-size: 2em;
+            /* Tamanho um pouco maior */
+        }
+
+        canvas {
+            border: 1px solid #555;
+            display: block;
+            background-color: #00008B;
+            /* River color */
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+
+        #gameOverMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #FF4136;
+            background-color: rgba(0, 0, 0, 0.85);
+            padding: 25px;
+            border: 2px solid #FF4136;
+            border-radius: 5px;
+            font-size: 2.2em;
+            text-align: center;
+            display: none;
+            z-index: 10;
+            font-family: 'Press Start 2P', cursive;
+            /* <<< Fonte pixelada para Game Over >>> */
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <h1>RIVER RAID</h1>
+
+    <canvas id="gameCanvas" width="700" height="550"></canvas>
+    <div id="gameOverMessage">
+        GAME OVER!<br> Pressione 'R' para reiniciar
+    </div>
+
+    <script>
+
+        let audioCtx; // Variável global para o AudioContext
+
+        // Função para inicializar o AudioContext (importante chamar após interação do usuário)
+        function initAudio() {
+            if (!audioCtx) {
+                try {
+                    // Cria o contexto de áudio
+                    window.AudioContext = window.AudioContext || window.webkitAudioContext;
+                    audioCtx = new AudioContext();
+                    console.log("AudioContext inicializado.");
+
+                    // Tenta resumir o contexto caso ele comece suspenso (política de autoplay)
+                    if (audioCtx.state === 'suspended') {
+                        audioCtx.resume();
+                    }
+
+                } catch (e) {
+                    console.error("Web Audio API não é suportada neste navegador.", e);
+                }
+            }
+            // Se já existe e está suspenso, tenta resumir
+            else if (audioCtx.state === 'suspended') {
+                audioCtx.resume().then(() => {
+                    console.log("AudioContext resumido.");
+                }).catch(err => {
+                    console.error("Erro ao resumir AudioContext:", err);
+                });
+            }
+        }
+
+        // --- Funções para gerar os sons ---
+
+        // Som de Tiro (um "pew" rápido)
+        function playSoundShoot() {
+            if (!audioCtx || audioCtx.state !== 'running') return; // Não faz nada se o áudio não estiver pronto
+
+            const now = audioCtx.currentTime;
+            const duration = 0.1; // Duração curta
+
+            // Oscilador para o tom
+            const osc = audioCtx.createOscillator();
+            osc.type = 'triangle'; // Tipo de onda (pode experimentar 'square', 'sawtooth')
+            osc.frequency.setValueAtTime(880, now); // Frequência inicial (A5)
+            osc.frequency.linearRampToValueAtTime(440, now + duration); // Cai para A4
+
+            // GainNode para controlar o volume (fade out rápido)
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.setValueAtTime(0.3, now); // Volume inicial
+            gainNode.gain.linearRampToValueAtTime(0, now + duration); // Volume cai para 0
+
+            // Conectar os nós: Oscilador -> Ganho -> Saída
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            // Iniciar e parar o oscilador
+            osc.start(now);
+            osc.stop(now + duration);
+        }
+
+        // Som de Explosão (ruído branco com decay)
+        let noiseBuffer = null; // Buffer para armazenar o ruído (gerar só uma vez)
+
+        function playSoundExplosion() {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+
+            const now = audioCtx.currentTime;
+            const duration = 0.4; // Duração um pouco maior
+
+            // Gerar o buffer de ruído branco (se ainda não existir)
+            if (!noiseBuffer) {
+                const bufferSize = audioCtx.sampleRate * 0.5; // Meio segundo de ruído
+                noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const output = noiseBuffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    output[i] = Math.random() * 2 - 1; // Valores aleatórios entre -1 e 1
+                }
+                console.log("Buffer de ruído gerado.");
+            }
+
+            // Fonte para tocar o buffer de ruído
+            const noiseSource = audioCtx.createBufferSource();
+            noiseSource.buffer = noiseBuffer;
+
+            // GainNode para controlar o volume (decay)
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.setValueAtTime(0.4, now); // Volume inicial mais alto
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration); // Decay exponencial
+
+            // (Opcional) Filtro passa-baixa para dar um som mais "abafado" à explosão
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(2000, now); // Frequência inicial do filtro
+            filter.frequency.linearRampToValueAtTime(500, now + duration * 0.5); // Abaixa a frequência
+
+            // Conectar: Ruído -> Filtro -> Ganho -> Saída
+            noiseSource.connect(filter);
+            filter.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            // Iniciar a fonte de ruído (ela para automaticamente quando o buffer acaba)
+            noiseSource.start(now);
+            // Não precisa de stop() explícito para BufferSource se não for loop
+        }
+
+        function playSoundLowFuelWarningBeep() {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+
+            const now = audioCtx.currentTime;
+            const duration = 0.1; // Duração bem curta
+
+            // Oscilador para o tom do bipe
+            const osc = audioCtx.createOscillator();
+            osc.type = 'square'; // Onda quadrada, mais "digital" para um aviso
+            osc.frequency.setValueAtTime(660, now); // Frequência (E5)
+
+            // GainNode para controlar o volume
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.setValueAtTime(0.25, now); // Volume (não muito alto para não irritar)
+            gainNode.gain.linearRampToValueAtTime(0, now + duration); // Fade out rápido
+
+            // Conectar
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            // Tocar
+            osc.start(now);
+            osc.stop(now + duration);
+        }
+
+        // Som de Coleta de Combustível (um "bling" ou nota ascendente)
+        function playSoundFuelPickup() {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+
+            const now = audioCtx.currentTime;
+            const duration = 0.2;
+
+            const osc = audioCtx.createOscillator();
+            osc.type = 'sine'; // Onda suave
+            osc.frequency.setValueAtTime(660, now); // E5
+            osc.frequency.linearRampToValueAtTime(880, now + duration * 0.8); // Sobe para A5
+
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.setValueAtTime(0.4, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration);
+
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            osc.start(now);
+            osc.stop(now + duration);
+        }
+
+        const canvas = document.getElementById('gameCanvas');
+
+        const availableHeight = window.innerHeight - 100;
+        const availableWidth = window.innerWidth * 0.6; // Pode aumentar se necessário
+
+        // Define as dimensões do canvas
+        canvas.height = availableHeight;
+        canvas.width = availableWidth;
+
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false; // Manter pixels nítidos
+
+
+        const gameOverMessageElement = document.getElementById('gameOverMessage');
+
+        // --- Configurações ---
+        const PIXEL_SCALE = 3;
+
+        // --- Paleta de Cores ---
+        const C_RIVER = '#001f7f';
+        const C_PLAYER_Y = '#FFFF00';
+        const C_FUEL_R = '#FF4136';
+        const C_FUEL_W = '#FFFFFF';
+        const C_SHIP_BLACK = '#000000';
+        const C_SHIP_RED = '#A0522D';
+        const C_SHIP_WATER = '#7FDBFF';
+        const C_HELI_Y = '#FFDC00';
+        const C_HELI_G = '#2ECC40';
+        const C_HELI_BLACK = '#000000';
+        const C_EPLANE_W = '#DDDDDD';
+        const C_LAND = '#00A800'; // Cor da margem/estrada lateral/ilha central
+        const C_BULLET = '#FFDC00';
+        const C_EXPL_Y = '#FFFF00'; const C_EXPL_O = '#FF851B'; const C_EXPL_R = '#FF4136';
+        const C_TRANSPARENT = 0;
+        const C_BRIDGE_ROAD = '#AAAAAA';
+        const C_BRIDGE_LINE = C_PLAYER_Y;
+        const C_BRIDGE_BORDER = C_SHIP_BLACK;
+        const C_UI_BOTTOM_BAR = '#333333'; // <<< NOVA COR: Cinza escuro para a barra inferior
+        const C_UI_TEXT = '#FFFFFF';        // Cor do texto da UI (branco)
+
+        // Mapeamento Emoji -> Cor Constante
+        const colorMap = {
+            '🟦': C_TRANSPARENT,
+            '🟨': C_PLAYER_Y,
+            '🟥': C_FUEL_R,
+            '⬛': C_SHIP_BLACK,
+            '🟩': C_HELI_G,
+            '🟫': C_BRIDGE_ROAD,
+            '⬜': C_BRIDGE_ROAD, // Mapeado para a estrada também
+        };
+
+        // Função parseEmojiSprite (inalterada)
+        function parseEmojiSprite(emojiString, specificColorMap = {}) {
+            const lines = emojiString.trim().split('\n');
+            const height = lines.length;
+            if (height === 0) return { data: [], width: 0, height: 0 };
+            const firstLineChars = Array.from(lines[0]);
+            const width = firstLineChars.length;
+            const spriteData = [];
+            const finalMap = { ...colorMap, ...specificColorMap };
+
+            for (let y = 0; y < height; y++) {
+                const row = [];
+                const chars = Array.from(lines[y]);
+                for (let x = 0; x < width; x++) {
+                    const char = chars[x] || '🟦';
+                    row.push(finalMap[char] || C_TRANSPARENT);
+                }
+                spriteData.push(row);
+            }
+            return { data: spriteData, width: width, height: height };
+        }
+
+
+        // --- Definições de Sprites via Emoji ---
+        // (Sprites inalterados)
+        const fuelTankEmoji = `🟦🟥🟥🟥🟥🟥🟦
+🟥🟥🟦🟦🟦🟥🟥
+🟥🟥🟦🟥🟥🟥🟥
+🟥🟥🟦🟦🟦🟥🟥
+🟥🟥🟦🟥🟥🟥🟥
+🟥🟥🟦🟥🟥🟥🟥
+🟥🟥🟥🟥🟥🟥🟥
+🟨🟨🟨🟨🟨🟨🟨
+🟨🟨🟦🟨🟦🟨🟨
+🟨🟨🟦🟨🟦🟨🟨
+🟨🟨🟦🟨🟦🟨🟨
+🟨🟨🟦🟨🟦🟨🟨
+🟨🟨🟦🟦🟦🟨🟨
+🟨🟨🟨🟨🟨🟨🟨
+🟥🟥🟥🟥🟥🟥🟥
+🟥🟥🟦🟦🟦🟥🟥
+🟥🟥🟦🟥🟥🟥🟥
+🟥🟥🟦🟦🟦🟥🟥
+🟥🟥🟦🟥🟥🟥🟥
+🟥🟥🟦🟦🟦🟥🟥
+🟥🟥🟥🟥🟥🟥🟥
+🟨🟨🟨🟨🟨🟨🟨
+🟨🟨🟦🟨🟨🟨🟨
+🟨🟨🟦🟨🟨🟨🟨
+🟨🟨🟦🟨🟨🟨🟨
+🟨🟨🟦🟨🟨🟨🟨
+🟨🟨🟦🟦🟦🟨🟨
+🟨🟨🟨🟨🟨🟨🟨`;
+        const fuelTankSpriteInfo = parseEmojiSprite(fuelTankEmoji, { '🟥': C_FUEL_R, '🟨': C_FUEL_W });
+        const shipEmoji = `🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦
+🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥
+🟦🟦🟦🟦🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥
+🟦🟦🟦🟦🟦🟦🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨
+🟦🟦🟦🟦🟦🟦🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦🟦🟦`;
+        const shipSpriteInfo = parseEmojiSprite(shipEmoji, { '⬛': C_SHIP_BLACK, '🟥': C_SHIP_RED, '🟨': C_SHIP_WATER });
+
+        const playerPlaneLeftEmoji = `🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟨🟨🟦🟦🟦🟦
+🟦🟦🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟦🟦🟨🟨🟦🟦
+🟦🟦🟨🟨🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟨🟨🟦🟦🟦🟦
+🟦🟦🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟦🟦🟨🟨🟦🟦
+🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦`;
+        const playerPlaneLeftSpriteInfo = parseEmojiSprite(playerPlaneLeftEmoji, { '🟨': C_PLAYER_Y });
+
+        const playerPlaneStraightEmoji = `🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟨🟨🟨🟨🟨🟨🟦🟦🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦
+🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨
+🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨
+🟨🟨🟨🟨🟦🟦🟨🟨🟦🟦🟨🟨🟨🟨
+🟨🟨🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟨🟨
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟨🟨🟨🟨🟨🟨🟦🟦🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟨🟨🟦🟦🟨🟨🟦🟦🟨🟨🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦`;
+        const playerPlaneStraightSpriteInfo = parseEmojiSprite(playerPlaneStraightEmoji, { '🟨': C_PLAYER_Y });
+
+        const playerPlaneRightEmoji = `🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟨🟨🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟨🟨🟦🟦🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟨🟨🟦🟦
+🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟦🟦🟨🟨🟨🟨🟦🟦🟦🟦🟦🟦
+🟦🟦🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦🟦🟦
+🟦🟦🟨🟨🟦🟦🟨🟨🟨🟨🟨🟨🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦`;
+        const playerPlaneRightSpriteInfo = parseEmojiSprite(playerPlaneRightEmoji, { '🟨': C_PLAYER_Y });
+
+        const helicopterEmoji = `🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟨🟨🟨🟨🟨🟨
+🟦🟦🟦🟦🟦🟦🟨🟨🟨🟨🟨🟨🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟨🟨🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟩🟩🟩🟩🟩🟩🟦🟦
+🟩🟩🟦🟦🟦🟦🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩
+⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛
+⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛
+🟩🟩🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛🟦🟦`;
+        const helicopterSpriteInfo = parseEmojiSprite(helicopterEmoji, { '🟨': C_HELI_Y, '🟩': C_HELI_G, '⬛': C_HELI_BLACK });
+        const enemyPlaneEmoji = `🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟨🟨
+🟦🟦🟨🟨🟨🟨🟦🟦🟦🟦🟦🟦🟨🟨🟨🟨
+🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨
+🟨🟨🟨🟨🟨🟨🟨🟨🟦🟦🟦🟦🟨🟨🟦🟦
+🟦🟦🟦🟦🟨🟨🟨🟨🟨️🟨🟨🟦🟦🟦🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟨🟨🟨🟨🟦🟦🟦🟦`;
+        const enemyPlaneSpriteInfo = parseEmojiSprite(enemyPlaneEmoji, { '🟨': C_EPLANE_W });
+        const bridgeEmoji = `⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛
+⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛
+⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨
+🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
+⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛
+⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛
+⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛`;
+        const bridgeSpriteInfo = parseEmojiSprite(bridgeEmoji, { '⬛': C_BRIDGE_BORDER, '⬜': C_BRIDGE_ROAD, '🟨': C_BRIDGE_LINE });
+
+        // Sprites do Marcador de Combustível (inalterados)
+        const fuelGaugeDialEmoji = `🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦
+🟦⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛⬛⬛⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦⬛⬛🟦
+🟦⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛🟦
+🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦`;
+        const fuelGaugeDialSpriteInfo = parseEmojiSprite(fuelGaugeDialEmoji, { '⬛': C_SHIP_BLACK });
+
+        const fuelGaugeNeedleEmoji = `🟦🟦🟦🟦🟦🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟨🟨🟨🟨🟦
+🟦🟦🟦🟦🟦🟦`;
+        const fuelGaugeNeedleSpriteInfo = parseEmojiSprite(fuelGaugeNeedleEmoji); // Usa C_PLAYER_Y (amarelo)
+
+
+        // Bullet sprite simple
+        const spriteBulletData = [[C_BULLET], [C_BULLET], [C_BULLET]];
+        const B_W = 1; const B_H = 3;
+
+        // Explosion sprite simple
+        const spriteExplosionData = [[[0, C_EXPL_Y, 0], [C_EXPL_Y, C_EXPL_O, C_EXPL_Y], [0, C_EXPL_Y, 0]], [[C_EXPL_Y, C_EXPL_O, C_EXPL_Y], [C_EXPL_O, C_EXPL_R, C_EXPL_O], [C_EXPL_Y, C_EXPL_O, C_EXPL_Y]], [[C_EXPL_O, C_EXPL_R, C_EXPL_O], [C_EXPL_R, C_EXPL_R, C_EXPL_R], [C_EXPL_O, C_EXPL_R, C_EXPL_O]], [[0, C_EXPL_O, 0], [C_EXPL_O, C_EXPL_R, C_EXPL_O], [0, C_EXPL_O, 0]]];
+        const EXPLOSION_FRAMES = 4; const EXPLOSION_DURATION = 4;
+
+        // --- Dimensões Escaladas ---
+        const PLAYER_WIDTH = playerPlaneStraightSpriteInfo.width * PIXEL_SCALE; const PLAYER_HEIGHT = playerPlaneStraightSpriteInfo.height * PIXEL_SCALE;
+        const BULLET_WIDTH = B_W * PIXEL_SCALE; const BULLET_HEIGHT = B_H * PIXEL_SCALE;
+        const HELI_WIDTH = helicopterSpriteInfo.width * PIXEL_SCALE; const HELI_HEIGHT = helicopterSpriteInfo.height * PIXEL_SCALE;
+        const SHIP_WIDTH = shipSpriteInfo.width * PIXEL_SCALE; const SHIP_HEIGHT = shipSpriteInfo.height * PIXEL_SCALE;
+        const FUEL_TANK_WIDTH = fuelTankSpriteInfo.width * PIXEL_SCALE; const FUEL_TANK_HEIGHT = fuelTankSpriteInfo.height * PIXEL_SCALE;
+        const ENEMY_PLANE_WIDTH = enemyPlaneSpriteInfo.width * PIXEL_SCALE; const ENEMY_PLANE_HEIGHT = enemyPlaneSpriteInfo.height * PIXEL_SCALE;
+        const BRIDGE_SPRITE_HEIGHT = bridgeSpriteInfo.height * PIXEL_SCALE;
+        const FUEL_GAUGE_DIAL_WIDTH = fuelGaugeDialSpriteInfo.width * PIXEL_SCALE;
+        const FUEL_GAUGE_DIAL_HEIGHT = fuelGaugeDialSpriteInfo.height * PIXEL_SCALE;
+        const FUEL_GAUGE_NEEDLE_WIDTH = fuelGaugeNeedleSpriteInfo.width * PIXEL_SCALE;
+        const FUEL_GAUGE_NEEDLE_HEIGHT = fuelGaugeNeedleSpriteInfo.height * PIXEL_SCALE;
+
+
+        // --- Constantes do Jogo ---
+        const PLAYER_SPEED = 3.5; const BULLET_SPEED = 6; const ENEMY_SPEED_X_BASE = 1.0;
+        const BANK_COLOR = C_LAND; const RIVER_COLOR = C_RIVER;
+        const INITIAL_FUEL = 100;
+        const FUEL_CONSUMPTION_RATE = 0.035;
+        const FUEL_REFILL_AMOUNT = 33;
+
+        const SHOOT_COOLDOWN = 15;
+        const MIN_RIVER_WIDTH = PLAYER_WIDTH * 4.1; // <<< ALTERADO: Garante que o rio mínimo pode dividir (era 3.0)
+        const MAX_RIVER_WIDTH = canvas.width;
+        const BANK_SEGMENT_HEIGHT = 15;
+        const MIN_VERTICAL_ENEMY_SPACING = PLAYER_HEIGHT * 1.8;
+        const MIN_VERTICAL_FUEL_SPACING = FUEL_TANK_HEIGHT * 5.0;
+        const BULLET_MAX_RANGE_Y = 100;
+        const LOW_FUEL_THRESHOLD_PERCENT = 0.25;
+        const LOW_FUEL_BEEP_INTERVAL = 60;
+
+        const CRASH_ON_BANK_COLLISION = false; // Mantenha false para ajuste
+
+        // --- Constantes da UI no Canvas ---
+        const UI_PADDING = 10;
+        const UI_FONT_SIZE = 10 * PIXEL_SCALE;
+        const UI_FONT_FAMILY = "'Press Start 2P', monospace";
+        const UI_BOTTOM_BAR_HEIGHT = 100;
+
+        // Constantes de posicionamento/movimento do ponteiro (inalteradas)
+        const NEEDLE_START_X_OFFSET_UNSCALED = 8;
+        const NEEDLE_END_X_OFFSET_UNSCALED = 72;
+        const NEEDLE_RANGE_X_UNSCALED = NEEDLE_END_X_OFFSET_UNSCALED - NEEDLE_START_X_OFFSET_UNSCALED;
+        const NEEDLE_Y_OFFSET_UNSCALED = 2;
+
+        // --- Constantes da Divisão do Rio ---
+        const SPLIT_START_PROBABILITY = 99.82; // <<< ALTERADO: Ligeiramente mais provável (era 0.08)
+        const MIN_SPLIT_LENGTH = BANK_SEGMENT_HEIGHT * 25;
+        const MAX_SPLIT_LENGTH = BANK_SEGMENT_HEIGHT * 60;
+        const MIN_CHANNEL_WIDTH = PLAYER_WIDTH * 2;   // Largura mínima para cada canal
+        const MIN_ISLAND_WIDTH = PLAYER_WIDTH * 0.8;    // Largura mínima da ilha central
+        const MAX_ISLAND_WIDTH = canvas.width * 0.3;    // Largura máxima da ilha central
+        const MAX_ISLAND_EDGE_SHIFT_FACTOR = 0.03;      // Fator para controlar a ondulação da borda
+
+        // --- Constante para Filtro CRT ---
+        const CRT_FILTER_ENABLED = true; // Altere para false para desativar o filtro
+
+        // --- Estado do Jogo ---
+        let player, bullets, ships, helicopters, fuelTanks, bridges, explosions, riverBanks, enemyPlanes;
+        let score, fuel, gameSpeed, isGameOver, keys = {}, shootCooldownTimer = 0;
+        let displayFuelPercentage;
+        let currentRiverWidth, nextBankY, animationFrameId, gameTime = 0;
+        let lastSpeedIncreaseScore = 0;
+        let lowFuelBeepTimer = 0;
+        let isPaused = false;
+
+        // --- Estado da Divisão do Rio ---
+        let isInSplitSection = false;
+        let splitTargetEndY = 0;
+        let currentSplitIslandX = 0;
+        let currentSplitIslandWidth = 0;
+        let currentLeftChannelWidth = 0;
+        let currentRightChannelWidth = 0;
+
+
+        // --- Funções Auxiliares ---
+        function drawPixel(x, y, color) { if (!color) return; ctx.fillStyle = color; ctx.fillRect(Math.floor(x), Math.floor(y), PIXEL_SCALE, PIXEL_SCALE); }
+
+        function drawSprite(baseX, baseY, spriteInfo, flipHorizontal = false) {
+            const { data, width, height } = spriteInfo;
+            if (!data || width === 0 || height === 0) return;
+
+            for (let r = 0; r < height; r++) {
+                for (let c = 0; c < width; c++) {
+                    const color = data[r][c];
+                    if (color !== C_TRANSPARENT) {
+                        let drawX;
+                        if (flipHorizontal) {
+                            drawX = baseX + (width - 1 - c) * PIXEL_SCALE;
+                        } else {
+                            drawX = baseX + c * PIXEL_SCALE;
+                        }
+                        const drawY = baseY + r * PIXEL_SCALE;
+                        drawPixel(drawX, drawY, color);
+                    }
+                }
+            }
+        }
+
+        // --- Inicialização e Geração ---
+        function initGame() {
+            player = {
+                x: canvas.width / 2 - PLAYER_WIDTH / 2,
+                y: canvas.height - UI_BOTTOM_BAR_HEIGHT - PLAYER_HEIGHT - 10,
+                width: PLAYER_WIDTH,
+                height: PLAYER_HEIGHT,
+                currentSpriteInfo: playerPlaneStraightSpriteInfo
+            };
+
+            bullets = []; ships = []; helicopters = []; fuelTanks = []; bridges = []; explosions = []; riverBanks = []; enemyPlanes = [];
+            score = 0; fuel = INITIAL_FUEL; gameSpeed = 1.8; isGameOver = false; keys = {}; shootCooldownTimer = 0; gameTime = 0; lastSpeedIncreaseScore = 0;
+            lowFuelBeepTimer = 0;
+            isPaused = false;
+            displayFuelPercentage = fuel / INITIAL_FUEL;
+
+            currentRiverWidth = canvas.width * 0.7;
+
+            // Resetar estado da divisão
+            isInSplitSection = false;
+            splitTargetEndY = 0;
+            currentSplitIslandX = 0;
+            currentSplitIslandWidth = 0;
+            currentLeftChannelWidth = 0;
+            currentRightChannelWidth = 0;
+
+            riverBanks = [];
+            nextBankY = -BANK_SEGMENT_HEIGHT * 10;
+            let initialFillTargetY = canvas.height - UI_BOTTOM_BAR_HEIGHT + BANK_SEGMENT_HEIGHT * 2;
+            let safetyCounter = 0;
+            while (nextBankY < initialFillTargetY && safetyCounter < 2000) {
+                generateRiverSegment(nextBankY);
+                nextBankY -= BANK_SEGMENT_HEIGHT;
+                safetyCounter++;
+            }
+            if (riverBanks.length > 0) {
+                nextBankY = riverBanks[riverBanks.length - 1].y - BANK_SEGMENT_HEIGHT;
+            }
+
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            gameOverMessageElement.style.display = 'none';
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+            requestAnimationFrame(gameLoop);
+        }
+
+        // generateRiverSegment - INALTERADO desde v10.1
+        function generateRiverSegment(posY) {
+            const riverCenter = canvas.width / 2;
+            let createSplitThisSegment = false;
+
+            // --- Decidir se inicia ou termina uma divisão ---
+            if (isInSplitSection) {
+                if (posY <= splitTargetEndY) {
+                    isInSplitSection = false;
+                    currentRiverWidth = currentLeftChannelWidth + currentSplitIslandWidth + currentRightChannelWidth;
+                    currentRiverWidth = Math.max(MIN_RIVER_WIDTH, Math.min(MAX_RIVER_WIDTH, currentRiverWidth));
+                } else {
+                    createSplitThisSegment = true;
+                }
+            } else {
+                // A condição de largura mínima (implícita) é verificada abaixo
+                if (posY > -MAX_SPLIT_LENGTH * 1.5 && Math.random() < SPLIT_START_PROBABILITY) {
+                    let potentialIslandWidth = MIN_ISLAND_WIDTH + Math.random() * (MAX_ISLAND_WIDTH - MIN_ISLAND_WIDTH);
+                    // Garante que a ilha potencial não seja maior que o rio atual menos espaço mínimo para 2 canais MÍNIMOS
+                    potentialIslandWidth = Math.min(potentialIslandWidth, currentRiverWidth - (MIN_CHANNEL_WIDTH * 2));
+                    // Calcula quanto espaço realmente sobra para os canais APÓS considerar a ilha mínima/potencial
+                    const remainingWidthForChannels = currentRiverWidth - Math.max(MIN_ISLAND_WIDTH, potentialIslandWidth);
+
+                    // CONDIÇÃO CRÍTICA: Verifica se é possível dividir
+                    if (potentialIslandWidth >= MIN_ISLAND_WIDTH && remainingWidthForChannels >= MIN_CHANNEL_WIDTH * 2) {
+                        isInSplitSection = true;
+                        createSplitThisSegment = true;
+                        const splitLength = MIN_SPLIT_LENGTH + Math.random() * (MAX_SPLIT_LENGTH - MIN_SPLIT_LENGTH);
+                        splitTargetEndY = posY - splitLength;
+
+                        currentSplitIslandWidth = potentialIslandWidth; // Usa a largura validada
+                        const leftChannelRatio = 0.4 + Math.random() * 0.2; // Entre 40% e 60%
+
+                        // Calcula larguras iniciais dos canais
+                        let initialLeftWidth = remainingWidthForChannels * leftChannelRatio;
+                        let initialRightWidth = remainingWidthForChannels * (1 - leftChannelRatio);
+
+                        // Garante larguras mínimas para os canais no início da divisão
+                        currentLeftChannelWidth = Math.max(MIN_CHANNEL_WIDTH, initialLeftWidth);
+                        currentRightChannelWidth = Math.max(MIN_CHANNEL_WIDTH, initialRightWidth);
+
+                        // Reajusta ilha se necessário (importante se initialWidths eram < MIN_CHANNEL_WIDTH)
+                        currentSplitIslandWidth = currentRiverWidth - currentLeftChannelWidth - currentRightChannelWidth;
+
+                        // Verificação final de sanidade da ilha após ajuste dos canais
+                        if (currentSplitIslandWidth < MIN_ISLAND_WIDTH * 0.5) { // Se ficou ridiculamente pequena
+                            isInSplitSection = false;
+                            createSplitThisSegment = false;
+                            console.warn("Split cancelado - ajuste de canal mínimo tornou ilha inviável.");
+                        } else {
+                            // Calcula X inicial da ilha
+                            const currentLeftBankEnd = riverCenter - currentRiverWidth / 2; // Usa largura total do rio ANTES de dividir
+                            currentSplitIslandX = currentLeftBankEnd + currentLeftChannelWidth;
+                        }
+                    } else {
+                        // Não foi possível dividir (rio estreito demais para ilha+canais mínimos)
+                        createSplitThisSegment = false;
+                    }
+                }
+            }
+
+            // --- Geração dos segmentos de margem ---
+            if (createSplitThisSegment) {
+                // Tenta aplicar variação suave na ilha
+                const maxShift = currentSplitIslandWidth * MAX_ISLAND_EDGE_SHIFT_FACTOR;
+                const leftEdgeShift = (Math.random() - 0.5) * 2 * maxShift;
+                const rightEdgeShift = (Math.random() - 0.5) * 2 * maxShift;
+
+                let potentialIslandX = currentSplitIslandX + leftEdgeShift;
+                let potentialIslandWidth = currentSplitIslandWidth - leftEdgeShift + rightEdgeShift;
+
+                // Limites externos atuais como referência
+                const totalCurrentSplitWidth = currentLeftChannelWidth + currentSplitIslandWidth + currentRightChannelWidth;
+                const currentSplitOuterLeft = riverCenter - totalCurrentSplitWidth / 2;
+                const currentSplitOuterRight = riverCenter + totalCurrentSplitWidth / 2;
+
+                let potentialLeftChannelWidth = potentialIslandX - currentSplitOuterLeft;
+                let potentialRightChannelWidth = currentSplitOuterRight - (potentialIslandX + potentialIslandWidth);
+
+                // Validação da variação
+                const islandWidthStillValid = potentialIslandWidth >= MIN_ISLAND_WIDTH * 0.8;
+                const leftChannelStillValid = potentialLeftChannelWidth >= MIN_CHANNEL_WIDTH;
+                const rightChannelStillValid = potentialRightChannelWidth >= MIN_CHANNEL_WIDTH;
+
+                let islandDrawX = currentSplitIslandX;
+                let islandDrawWidth = currentSplitIslandWidth;
+
+                // Aplica variação SOMENTE se for válida
+                if (islandWidthStillValid && leftChannelStillValid && rightChannelStillValid) {
+                    currentSplitIslandX = potentialIslandX;
+                    currentSplitIslandWidth = potentialIslandWidth;
+                    currentLeftChannelWidth = potentialLeftChannelWidth;
+                    currentRightChannelWidth = potentialRightChannelWidth;
+
+                    islandDrawX = currentSplitIslandX;
+                    islandDrawWidth = currentSplitIslandWidth;
+                } // else: usa valores antigos (linha reta)
+
+                // Calcula limites finais para desenho
+                const finalTotalWidth = currentLeftChannelWidth + currentSplitIslandWidth + currentRightChannelWidth;
+                const finalOuterLeft = Math.max(0, riverCenter - finalTotalWidth / 2);
+                const finalOuterRight = Math.min(canvas.width, riverCenter + finalTotalWidth / 2);
+                // Recalcula X da ilha baseado nos canais FINAIS (pós-variação ou não)
+                const finalIslandX = finalOuterLeft + currentLeftChannelWidth;
+
+                // Cria os 3 bancos
+                riverBanks.push({ y: posY, x: 0, width: finalOuterLeft, height: BANK_SEGMENT_HEIGHT + 1, isBank: true, isIsland: false });
+                // Garante que a ilha seja desenhada corretamente dentro dos limites
+                if (currentSplitIslandWidth > 0 && finalIslandX < finalOuterRight) {
+                    riverBanks.push({ y: posY, x: finalIslandX, width: Math.min(currentSplitIslandWidth, finalOuterRight - finalIslandX), height: BANK_SEGMENT_HEIGHT + 1, isBank: true, isIsland: true });
+                }
+                riverBanks.push({ y: posY, x: finalOuterRight, width: canvas.width - finalOuterRight, height: BANK_SEGMENT_HEIGHT + 1, isBank: true, isIsland: false });
+
+            } else {
+                // Gera 2 segmentos (rio normal)
+                const change = (Math.random() - 0.5) * (canvas.width * 0.08);
+                let nextRiverWidth = currentRiverWidth + change;
+                // Garante que a largura fique entre MIN_RIVER_WIDTH (agora >= 4.1 * PW) e MAX_RIVER_WIDTH
+                nextRiverWidth = Math.max(MIN_RIVER_WIDTH, Math.min(MAX_RIVER_WIDTH, nextRiverWidth));
+
+                const leftBankEndX = Math.max(0, riverCenter - nextRiverWidth / 2);
+                const rightBankStartX = Math.min(canvas.width, riverCenter + nextRiverWidth / 2);
+
+                riverBanks.push({ y: posY, x: 0, width: leftBankEndX, height: BANK_SEGMENT_HEIGHT + 1, isBank: true, isIsland: false });
+                riverBanks.push({ y: posY, x: rightBankStartX, width: canvas.width - rightBankStartX, height: BANK_SEGMENT_HEIGHT + 1, isBank: true, isIsland: false });
+
+                currentRiverWidth = nextRiverWidth; // Atualiza largura para próximo segmento normal
+            }
+        }
+
+
+        // --- Funções de Colisão, getBounds, getRandomX ---
+
+        // getRiverBoundsAtY - INALTERADO desde v10.1
+        function getRiverBoundsAtY(posY) {
+            let leftX = 0; let rightX = canvas.width; let foundLeft = false; let foundRight = false;
+            const searchMargin = BANK_SEGMENT_HEIGHT * 3;
+
+            for (let i = riverBanks.length - 1; i >= 0; i--) {
+                const bank = riverBanks[i];
+                if (bank.isBank && !bank.isIsland && bank.y < posY + searchMargin && bank.y + bank.height > posY - searchMargin) {
+                    if (bank.x === 0 && bank.width > 0) {
+                        leftX = Math.max(leftX, bank.width); foundLeft = true;
+                    } else if (bank.x > 0 && bank.x + bank.width >= canvas.width - 1) {
+                        rightX = Math.min(rightX, bank.x); foundRight = true;
+                    }
+                }
+                if (foundLeft && foundRight) break;
+            }
+
+            if (!foundLeft || !foundRight) {
+                const estimatedOuterWidth = isInSplitSection ? (currentLeftChannelWidth + currentSplitIslandWidth + currentRightChannelWidth) : currentRiverWidth;
+                const estimatedLeft = canvas.width / 2 - estimatedOuterWidth / 2;
+                const estimatedRight = canvas.width / 2 + estimatedOuterWidth / 2;
+                if (!foundLeft) leftX = Math.max(0, estimatedLeft);
+                if (!foundRight) rightX = Math.min(canvas.width, estimatedRight);
+            }
+
+            return { left: Math.max(0, leftX), right: Math.min(canvas.width, rightX) };
+        }
+
+        // getRandomXInRiver - INALTERADO desde v10.1
+        function getRandomXInRiver(objectWidth, posY = 0) {
+            const outerBounds = getRiverBoundsAtY(posY);
+            let island = null;
+            const searchMargin = BANK_SEGMENT_HEIGHT * 2;
+
+            for (let i = riverBanks.length - 1; i >= 0; i--) {
+                const bank = riverBanks[i];
+                if (bank.isIsland && bank.y < posY + searchMargin && bank.y + bank.height > posY - searchMargin) {
+                    if (bank.x >= outerBounds.left && bank.x + bank.width <= outerBounds.right) {
+                        island = bank;
+                        break;
+                    }
+                }
+            }
+
+            if (island) {
+                const leftChannelMinX = outerBounds.left + PIXEL_SCALE;
+                const leftChannelMaxX = island.x - objectWidth - PIXEL_SCALE;
+                const leftSpawnableWidth = Math.max(0, leftChannelMaxX - leftChannelMinX);
+
+                const rightChannelMinX = island.x + island.width + PIXEL_SCALE;
+                const rightChannelMaxX = outerBounds.right - objectWidth - PIXEL_SCALE;
+                const rightSpawnableWidth = Math.max(0, rightChannelMaxX - rightChannelMinX);
+
+                const totalSpawnableWidth = leftSpawnableWidth + rightSpawnableWidth;
+
+                if (totalSpawnableWidth <= 0) {
+                    return outerBounds.left + Math.max(0, (outerBounds.right - outerBounds.left - objectWidth)) / 2;
+                }
+
+                if (Math.random() * totalSpawnableWidth < leftSpawnableWidth) {
+                    return leftChannelMinX + Math.random() * leftSpawnableWidth;
+                } else {
+                    return rightChannelMinX + Math.random() * rightSpawnableWidth;
+                }
+
+            } else {
+                let minX = outerBounds.left + PIXEL_SCALE;
+                let maxX = outerBounds.right - objectWidth - PIXEL_SCALE;
+                if (minX >= maxX) {
+                    return outerBounds.left + Math.max(0, (outerBounds.right - outerBounds.left - objectWidth)) / 2;
+                }
+                return Math.random() * (maxX - minX) + minX;
+            }
+        }
+
+        // collides - INALTERADO
+        function collides(rect1, rect2) {
+            if (!rect1 || !rect2) return false;
+            return rect1.x < rect2.x + rect2.width && rect1.x + rect1.width > rect2.x &&
+                rect1.y < rect2.y + rect2.height && rect1.y + rect1.height > rect2.y;
+        }
+        // collidesWithBridge - INALTERADO
+        function collidesWithBridge(obj, bridge) {
+            if (!bridge || !obj || bridge.destroyed) return false;
+            const bridgeWaterRect = { x: bridge.x, y: bridge.y, width: bridge.width, height: bridge.height };
+            if (collides(obj, bridgeWaterRect)) {
+                return true;
+            }
+
+            const bridgeYLevelRect = { x: 0, y: bridge.y, width: canvas.width, height: bridge.height };
+            if (!collides(obj, bridgeYLevelRect)) {
+                return false;
+            }
+
+            const leftRoadRect = { x: 0, y: bridge.y, width: bridge.x, height: bridge.height };
+            const rightRoadRect = { x: bridge.x + bridge.width, y: bridge.y, width: canvas.width - (bridge.x + bridge.width), height: bridge.height };
+
+            if (collides(obj, leftRoadRect)) return true;
+            if (collides(obj, rightRoadRect)) return true;
+
+            return false;
+        }
+
+        // collidesWithAnyBank - INALTERADO
+        function collidesWithAnyBank(rect) {
+            const checkMargin = BANK_SEGMENT_HEIGHT * 2; // Ajuste a margem se necessário
+            // Adiciona verificação de limites básicos para otimização rápida
+            if (!rect || rect.x > canvas.width || rect.x + rect.width < 0 || rect.y > canvas.height || rect.y + rect.height < 0) {
+                return false; // Objeto completamente fora da tela
+            }
+
+            for (let i = riverBanks.length - 1; i >= 0; i--) {
+                const bank = riverBanks[i];
+                // Verifica se é um banco (margem ou ilha) E se há sobreposição vertical aproximada
+                if (bank.isBank &&
+                    bank.y < rect.y + rect.height + checkMargin &&
+                    bank.y + bank.height > rect.y - checkMargin) {
+                    // Verifica colisão horizontal precisa
+                    const bankRect = { x: bank.x, y: bank.y, width: bank.width, height: bank.height };
+                    if (collides(rect, bankRect)) {
+                        return true; // Colidiu!
+                    }
+                }
+            }
+            return false; // Não colidiu com nenhum banco relevante
+        }
+
+        // --- Desenho ---
+        function drawPlayer() { // Inalterado
+            if (player && player.currentSpriteInfo) {
+                drawSprite(player.x, player.y, player.currentSpriteInfo);
+            }
+        }
+        function drawBullets() { bullets.forEach(b => drawSprite(b.x, b.y, { data: spriteBulletData, width: B_W, height: B_H })); } // Inalterado
+        function drawShips() { ships.forEach(s => drawSprite(s.x, s.y, shipSpriteInfo, s.speedX > 0)); } // Inalterado
+        function drawHelicopters() { helicopters.forEach(h => drawSprite(h.x, h.y, helicopterSpriteInfo, h.speedX < 0)); } // Inalterado
+        function drawEnemyPlanes() { enemyPlanes.forEach(ep => drawSprite(ep.x, ep.y, enemyPlaneSpriteInfo, ep.speedX > 0)); } // Inalterado
+
+        // drawFuelTanks - INALTERADO desde v10.2 (desenha mesmo se coletado)
+        function drawFuelTanks() {
+            fuelTanks.forEach(tank => {
+                if (!tank.destroyed) {
+                    drawSprite(tank.x, tank.y, fuelTankSpriteInfo);
+                }
+            });
+        }
+        function drawExplosions() { // Inalterado
+            explosions.forEach(exp => {
+                const frameData = spriteExplosionData[exp.frame];
+                if (frameData) {
+                    const frameW_Orig = frameData[0].length; const frameH_Orig = frameData.length;
+                    const frameW_Scaled = frameW_Orig * PIXEL_SCALE; const frameH_Scaled = frameH_Orig * PIXEL_SCALE;
+                    const drawX = exp.x - frameW_Scaled / 2; const drawY = exp.y - frameH_Scaled / 2;
+                    drawSprite(drawX, drawY, { data: frameData, width: frameW_Orig, height: frameH_Orig });
+                }
+            });
+        }
+        function drawRiverBanks() { // Inalterado
+            ctx.fillStyle = BANK_COLOR;
+            riverBanks.forEach(bank => {
+                if (bank.isBank) {
+                    const drawStartY = bank.y;
+                    const drawEndY = Math.min(bank.y + bank.height, canvas.height - UI_BOTTOM_BAR_HEIGHT);
+                    const drawHeight = drawEndY - drawStartY;
+                    if (drawHeight > 0 && bank.width > 0) {
+                        ctx.fillRect(bank.x, drawStartY, bank.width, drawHeight);
+                    }
+                }
+            });
+        }
+
+        function drawUI() { // Inalterado
+            const barY = canvas.height - UI_BOTTOM_BAR_HEIGHT;
+            ctx.fillStyle = C_UI_BOTTOM_BAR;
+            ctx.fillRect(0, barY, canvas.width, UI_BOTTOM_BAR_HEIGHT);
+
+            ctx.font = `${UI_FONT_SIZE}px ${UI_FONT_FAMILY}`;
+            ctx.fillStyle = C_UI_TEXT;
+            ctx.textBaseline = 'top';
+
+            const barCenterX = canvas.width / 2;
+            const gaugeX = barCenterX - FUEL_GAUGE_DIAL_WIDTH / 2;
+            const gaugeY = barY + UI_BOTTOM_BAR_HEIGHT - FUEL_GAUGE_DIAL_HEIGHT - UI_PADDING;
+            const scoreY = barY + UI_PADDING;
+            const scoreFormatted = String(score).padStart(6, '0');
+            ctx.textAlign = 'center';
+            ctx.fillText(scoreFormatted, barCenterX, scoreY);
+
+            const needleStartRelativeX = NEEDLE_START_X_OFFSET_UNSCALED * PIXEL_SCALE;
+            const needleOffsetX = NEEDLE_RANGE_X_UNSCALED * PIXEL_SCALE * displayFuelPercentage;
+            const currentNeedleX = gaugeX + needleStartRelativeX + needleOffsetX;
+            const needleY = gaugeY + (NEEDLE_Y_OFFSET_UNSCALED * PIXEL_SCALE);
+
+            drawSprite(currentNeedleX, needleY, fuelGaugeNeedleSpriteInfo);
+            drawSprite(gaugeX, gaugeY, fuelGaugeDialSpriteInfo);
+        }
+
+        function drawBridgeRoadSegment(x, y, width, height) { // Inalterado
+            if (width <= 0) return;
+            const BORDER_H_ORIG = 3; const LINE_H_ORIG = 2; const LINE_Y_ORIG = 11;
+            const borderH = BORDER_H_ORIG * PIXEL_SCALE;
+            const lineH = LINE_H_ORIG * PIXEL_SCALE;
+            const lineY = y + LINE_Y_ORIG * PIXEL_SCALE;
+            const roadY = y + borderH;
+            const roadH = height - 2 * borderH;
+
+            ctx.fillStyle = C_BRIDGE_BORDER;
+            ctx.fillRect(x, y, width, borderH);
+            ctx.fillStyle = C_BRIDGE_ROAD;
+            if (roadH > 0) {
+                ctx.fillRect(x, roadY, width, roadH);
+            }
+            ctx.fillStyle = C_BRIDGE_LINE;
+            if (lineY >= roadY && lineY + lineH <= roadY + roadH) {
+                ctx.fillRect(x, lineY, width, lineH);
+            }
+            ctx.fillStyle = C_BRIDGE_BORDER;
+            ctx.fillRect(x, y + height - borderH, width, borderH);
+        }
+
+        function drawBridges() { // Inalterado
+            bridges.forEach(bridge => {
+                const drawStartY = bridge.y;
+                const drawEndY = Math.min(bridge.y + bridge.height, canvas.height - UI_BOTTOM_BAR_HEIGHT);
+                const drawHeight = drawEndY - drawStartY;
+
+                if (drawHeight > 0) {
+                    const segmentHeightToDraw = bridge.height;
+
+                    const leftRoadX = 0;
+                    const leftRoadWidth = bridge.x;
+                    if (leftRoadWidth > 0) {
+                        drawBridgeRoadSegment(leftRoadX, drawStartY, leftRoadWidth, segmentHeightToDraw);
+                    }
+
+                    const rightRoadX = bridge.x + bridge.width;
+                    const rightRoadWidth = canvas.width - rightRoadX;
+                    if (rightRoadWidth > 0) {
+                        drawBridgeRoadSegment(rightRoadX, drawStartY, rightRoadWidth, segmentHeightToDraw);
+                    }
+
+                    if (!bridge.destroyed) {
+                        drawBridgeRoadSegment(bridge.x, drawStartY, bridge.width, segmentHeightToDraw);
+                    }
+                }
+            });
+        }
+
+        function drawCRTFilter() { // Inalterado
+            if (!CRT_FILTER_ENABLED) return;
+
+            const width = canvas.width;
+            const height = canvas.height;
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+            for (let y = 0; y < height; y += 3) {
+                ctx.fillRect(0, y, width, 1);
+            }
+
+            const outerRadius = width * 0.7;
+            const gradient = ctx.createRadialGradient(
+                width / 2, height / 2, height * 0.1,
+                width / 2, height / 2, outerRadius
+            );
+            gradient.addColorStop(0.2, 'rgba(0, 0, 0, 0)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0.25)');
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, width, height);
+        }
+
+
+        // --- Atualizações ---
+        function updatePlayer() { // Inalterado
+            let requestedX = player.x;
+            let movingLeft = keys['arrowleft'] || keys['a'];
+            let movingRight = keys['arrowright'] || keys['d'];
+
+            if (movingLeft && !movingRight) {
+                player.currentSpriteInfo = playerPlaneLeftSpriteInfo;
+                requestedX -= PLAYER_SPEED;
+            } else if (movingRight && !movingLeft) {
+                player.currentSpriteInfo = playerPlaneRightSpriteInfo;
+                requestedX += PLAYER_SPEED;
+            } else {
+                player.currentSpriteInfo = playerPlaneStraightSpriteInfo;
+            }
+
+            const nextPosRect = { ...player, x: requestedX };
+            let finalX = player.x;
+
+            if (collidesWithAnyBank(nextPosRect)) {
+                if (CRASH_ON_BANK_COLLISION) {
+                    createExplosion(player.x + player.width / 2, player.y + player.height / 2);
+                    gameOver("CRASHED INTO BANK/ISLAND");
+                    return;
+                } else {
+                    let collidedBank = null;
+                    const checkMargin = BANK_SEGMENT_HEIGHT * 1;
+                    for (let i = riverBanks.length - 1; i >= 0; i--) {
+                        const bank = riverBanks[i];
+                        if (bank.isBank && bank.y < nextPosRect.y + nextPosRect.height + checkMargin && bank.y + bank.height > nextPosRect.y - checkMargin) {
+                            const bankRect = { x: bank.x, y: bank.y, width: bank.width, height: bank.height };
+                            if (collides(nextPosRect, bankRect)) {
+                                collidedBank = bank;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (collidedBank) {
+                        const playerCenterX = nextPosRect.x + nextPosRect.width / 2;
+                        const bankCenterX = collidedBank.x + collidedBank.width / 2;
+
+                        if (movingRight && playerCenterX < bankCenterX) {
+                            finalX = collidedBank.x - player.width - 1;
+                        } else if (movingLeft && playerCenterX > bankCenterX) {
+                            finalX = collidedBank.x + collidedBank.width + 1;
+                        } else {
+                            if (player.x < collidedBank.x) {
+                                finalX = collidedBank.x - player.width - 1;
+                            } else {
+                                finalX = collidedBank.x + collidedBank.width + 1;
+                            }
+                        }
+                    } else {
+                        const bounds = getRiverBoundsAtY(player.y + player.height / 2);
+                        if (requestedX <= bounds.left) finalX = bounds.left + 1;
+                        else if (requestedX + player.width >= bounds.right) finalX = bounds.right - player.width - 1;
+                        else finalX = player.x;
+                    }
+                    finalX = Math.max(0, Math.min(canvas.width - player.width, finalX));
+                }
+            } else {
+                finalX = requestedX;
+            }
+
+            player.x = Math.max(0, Math.min(canvas.width - player.width, finalX));
+
+
+            if ((keys[' '] || keys['arrowup'] || keys['w']) && shootCooldownTimer <= 0) {
+                bullets.push({ x: player.x + PLAYER_WIDTH / 2 - BULLET_WIDTH / 2, y: player.y - BULLET_HEIGHT, width: BULLET_WIDTH, height: BULLET_HEIGHT });
+                shootCooldownTimer = SHOOT_COOLDOWN;
+                playSoundShoot();
+            }
+            if (shootCooldownTimer > 0) shootCooldownTimer--;
+
+            fuel -= FUEL_CONSUMPTION_RATE * (gameSpeed / 1.8);
+            if (fuel <= 0) {
+                fuel = 0;
+                gameOver("OUT OF FUEL");
+                return;
+            }
+
+            const lowFuelThreshold = INITIAL_FUEL * LOW_FUEL_THRESHOLD_PERCENT;
+            if (!isGameOver && fuel <= lowFuelThreshold) {
+                if (lowFuelBeepTimer <= 0) {
+                    playSoundLowFuelWarningBeep();
+                    lowFuelBeepTimer = LOW_FUEL_BEEP_INTERVAL;
+                } else {
+                    lowFuelBeepTimer--;
+                }
+            } else {
+                lowFuelBeepTimer = 0;
+            }
+        }
+
+
+        function updateBullets() { // Inalterado
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                bullets[i].y -= BULLET_SPEED;
+                if (bullets[i].y < BULLET_MAX_RANGE_Y || bullets[i].y > canvas.height - UI_BOTTOM_BAR_HEIGHT) {
+                    bullets.splice(i, 1);
+                }
+            }
+        }
+
+
+        function updateExplosions() { // Inalterado
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const exp = explosions[i];
+                exp.timer++;
+                if (exp.timer >= EXPLOSION_DURATION) {
+                    exp.timer = 0; exp.frame++;
+                    if (exp.frame >= EXPLOSION_FRAMES) explosions.splice(i, 1);
+                }
+            }
+        }
+
+        function createExplosion(x, y) { // Inalterado
+            explosions.push({ x: x, y: y, frame: 0, timer: 0 });
+            playSoundExplosion();
+        }
+
+        function updateFuelGaugeAnimation() { // Inalterado
+            const targetFuelPercentage = Math.max(0, fuel) / INITIAL_FUEL;
+            const difference = targetFuelPercentage - displayFuelPercentage;
+            const animationSpeed = 0.05;
+            if (Math.abs(difference) < 0.001) {
+                displayFuelPercentage = targetFuelPercentage;
+            } else {
+                displayFuelPercentage += difference * animationSpeed;
+            }
+        }
+
+
+        function increaseDifficulty() { // Inalterado
+            const scoreThreshold = 300;
+            if (score > 0 && score >= lastSpeedIncreaseScore + scoreThreshold) {
+                if (gameSpeed < 4.0) { gameSpeed += 0.08; lastSpeedIncreaseScore = score; }
+            }
+        }
+
+        function isEnemySpawnLocationClear(newX, newY, newWidth, newHeight) { // Inalterado
+            const checkRect = { x: newX, y: newY, width: newWidth, height: newHeight };
+            const minSpacing = MIN_VERTICAL_ENEMY_SPACING;
+            if (collides(checkRect, player)) return false;
+
+            const allEnemies = [...ships, ...helicopters, ...enemyPlanes];
+            for (const existingEnemy of allEnemies) {
+                const verticallyClose = (checkRect.y < existingEnemy.y + existingEnemy.height + minSpacing) && (checkRect.y + checkRect.height + minSpacing > existingEnemy.y);
+                const horizontallyOverlapping = (checkRect.x < existingEnemy.x + existingEnemy.width) && (checkRect.x + checkRect.width > existingEnemy.x);
+                if (verticallyClose && horizontallyOverlapping) return false;
+            }
+            for (const existingTank of fuelTanks) {
+                if (!existingTank.destroyed && !existingTank.collected) {
+                    const verticallyClose = (checkRect.y < existingTank.y + existingTank.height + minSpacing / 2) && (checkRect.y + checkRect.height + minSpacing / 2 > existingTank.y);
+                    const horizontallyOverlapping = (checkRect.x < existingTank.x + existingTank.width) && (checkRect.x + checkRect.width > existingTank.x);
+                    if (verticallyClose && horizontallyOverlapping) return false;
+                }
+            }
+            return true;
+        }
+        function isFuelSpawnLocationClear(newX, newY, newWidth, newHeight) { // Inalterado
+            const checkRect = { x: newX, y: newY, width: newWidth, height: newHeight };
+            const minSpacing = MIN_VERTICAL_FUEL_SPACING;
+            if (collides(checkRect, player)) return false;
+
+            for (const existingTank of fuelTanks) {
+                if (!existingTank.destroyed && !existingTank.collected) {
+                    const verticallyClose = (checkRect.y < existingTank.y + existingTank.height + minSpacing) && (checkRect.y + checkRect.height + minSpacing > existingTank.y);
+                    const horizontallyOverlapping = (checkRect.x < existingTank.x + existingTank.width) && (checkRect.x + checkRect.width > existingTank.x);
+                    if (verticallyClose && horizontallyOverlapping) return false;
+                }
+            }
+            const allEnemies = [...ships, ...helicopters, ...enemyPlanes];
+            for (const existingEnemy of allEnemies) {
+                const verticallyClose = (checkRect.y < existingEnemy.y + existingEnemy.height + minSpacing / 2) && (checkRect.y + checkRect.height + minSpacing / 2 > existingEnemy.y);
+                const horizontallyOverlapping = (checkRect.x < existingEnemy.x + existingEnemy.width) && (checkRect.x + checkRect.width > existingEnemy.x);
+                if (verticallyClose && horizontallyOverlapping) return false;
+            }
+            return true;
+        }
+
+        // updateEnemies - INALTERADO desde v10.2 (já verifica colisão com banco no spawn)
+        function updateEnemies(arr, spawnProb, width, height, type, speedMultiplier = 1.0) {
+            if (Math.random() < spawnProb * (gameSpeed / 1.8)) {
+                const spawnY = -height * 1.5;
+                const spawnX = getRandomXInRiver(width, spawnY + height / 2);
+                const spawnRect = { x: spawnX, y: spawnY, width: width, height: height };
+
+                if (isEnemySpawnLocationClear(spawnX, spawnY, width, height) && !collidesWithAnyBank(spawnRect)) {
+                    arr.push({ x: spawnX, y: spawnY, width: width, height: height, speedX: ENEMY_SPEED_X_BASE * (Math.random() < 0.5 ? 1 : -1) * (gameSpeed / 1.8) * speedMultiplier, type: type });
+                }
+            }
+
+            for (let i = arr.length - 1; i >= 0; i--) {
+                const enemy = arr[i]; enemy.y += gameSpeed; let nextX = enemy.x + enemy.speedX;
+
+                const enemyRectNext = { x: nextX, y: enemy.y, width: enemy.width, height: enemy.height };
+                if (collidesWithAnyBank(enemyRectNext)) {
+                    enemy.speedX *= -1;
+                    nextX = enemy.x + enemy.speedX;
+
+                    const enemyRectAdjusted = { x: nextX, y: enemy.y, width: enemy.width, height: enemy.height };
+                    if (collidesWithAnyBank(enemyRectAdjusted)) {
+                        let collidedBank = null;
+                        const checkMargin = BANK_SEGMENT_HEIGHT * 1;
+                        for (let b_idx = riverBanks.length - 1; b_idx >= 0; b_idx--) {
+                            const bank = riverBanks[b_idx];
+                            if (bank.isBank && bank.y < enemyRectAdjusted.y + enemyRectAdjusted.height + checkMargin && bank.y + bank.height > enemyRectAdjusted.y - checkMargin) {
+                                const bankRect = { x: bank.x, y: bank.y, width: bank.width, height: bank.height };
+                                if (collides(enemyRectAdjusted, bankRect)) {
+                                    collidedBank = bank;
+                                    break;
+                                }
+                            }
+                        }
+                        if (collidedBank) {
+                            if (enemy.speedX < 0) {
+                                nextX = collidedBank.x + collidedBank.width + 1;
+                            } else {
+                                nextX = collidedBank.x - enemy.width - 1;
+                            }
+                        } else {
+                            const bounds = getRiverBoundsAtY(enemy.y + enemy.height / 2);
+                            if (nextX <= bounds.left) nextX = bounds.left + 1;
+                            else if (nextX + enemy.width >= bounds.right) nextX = bounds.right - enemy.width - 1;
+                        }
+                    }
+                }
+
+                enemy.x = Math.max(0, Math.min(canvas.width - enemy.width, nextX));
+
+
+                if (enemy.y > canvas.height - UI_BOTTOM_BAR_HEIGHT) {
+                    arr.splice(i, 1);
+                }
+            }
+        }
+
+        // updateFuelTanks - INALTERADO
+        function updateFuelTanks() {
+            if (Math.random() < 0.010 * (gameSpeed / 1.8)) {
+                const spawnY = -FUEL_TANK_HEIGHT * 1.5;
+                const spawnX = getRandomXInRiver(FUEL_TANK_WIDTH, spawnY + FUEL_TANK_HEIGHT / 2);
+                if (isFuelSpawnLocationClear(spawnX, spawnY, FUEL_TANK_WIDTH, FUEL_TANK_HEIGHT)) {
+                    // Adiciona verificação para não spawnar tanque diretamente sobre terra também
+                    const spawnRect = { x: spawnX, y: spawnY, width: FUEL_TANK_WIDTH, height: FUEL_TANK_HEIGHT };
+                    if (!collidesWithAnyBank(spawnRect)) {
+                        fuelTanks.push({ x: spawnX, y: spawnY, width: FUEL_TANK_WIDTH, height: FUEL_TANK_HEIGHT, destroyed: false, collected: false });
+                    }
+                }
+            }
+            for (let i = fuelTanks.length - 1; i >= 0; i--) {
+                fuelTanks[i].y += gameSpeed;
+                if (fuelTanks[i].y > canvas.height - UI_BOTTOM_BAR_HEIGHT) {
+                    fuelTanks.splice(i, 1);
+                }
+            }
+        }
+
+        // updateBridges - INALTERADO
+        function updateBridges() {
+            const BRIDGE_SPAWN_PROBABILITY = 0.0030;
+            const existingBridgeVisible = bridges.some(b => b.y + b.height > 0 && b.y < canvas.height - UI_BOTTOM_BAR_HEIGHT);
+
+            if (!isInSplitSection && !existingBridgeVisible && Math.random() < BRIDGE_SPAWN_PROBABILITY * (gameSpeed / 1.8)) {
+                const spawnY = -BRIDGE_SPRITE_HEIGHT;
+                const bounds = getRiverBoundsAtY(spawnY + BRIDGE_SPRITE_HEIGHT / 2);
+                const riverWidthAtSpawn = bounds.right - bounds.left;
+                const MIN_BRIDGE_WIDTH = PLAYER_WIDTH * 1.5;
+                if (riverWidthAtSpawn > MIN_BRIDGE_WIDTH) {
+                    bridges.push({
+                        y: spawnY,
+                        x: bounds.left,
+                        width: riverWidthAtSpawn,
+                        height: BRIDGE_SPRITE_HEIGHT,
+                        destroyed: false,
+                        isBridge: true
+                    });
+                }
+            }
+            for (let i = bridges.length - 1; i >= 0; i--) {
+                bridges[i].y += gameSpeed;
+                if (bridges[i].y > canvas.height - UI_BOTTOM_BAR_HEIGHT) {
+                    bridges.splice(i, 1);
+                }
+            }
+        }
+
+        // updateRiverBanks - INALTERADO
+        function updateRiverBanks() {
+            for (let i = riverBanks.length - 1; i >= 0; i--) {
+                riverBanks[i].y += gameSpeed;
+                if (riverBanks[i].y > canvas.height - UI_BOTTOM_BAR_HEIGHT + BANK_SEGMENT_HEIGHT) {
+                    riverBanks.splice(i, 1);
+                }
+            }
+
+            let highestY = canvas.height - UI_BOTTOM_BAR_HEIGHT;
+            if (riverBanks.length > 0) {
+                highestY = riverBanks.reduce((minY, bank) => bank.isBank ? Math.min(minY, bank.y) : minY, highestY);
+            } else {
+                highestY = nextBankY + BANK_SEGMENT_HEIGHT;
+            }
+
+            const generationThreshold = -BANK_SEGMENT_HEIGHT * 5;
+            let safety = 0;
+            let currentGenY = highestY;
+
+            while (currentGenY > generationThreshold && safety < 25) {
+                generateRiverSegment(currentGenY - BANK_SEGMENT_HEIGHT);
+                currentGenY -= BANK_SEGMENT_HEIGHT;
+                safety++;
+            }
+            nextBankY = currentGenY;
+        }
+
+
+        // --- Checagem de Colisões --- (Funções inalteradas)
+        function checkCollisions() {
+            if (player.y + player.height > canvas.height - UI_BOTTOM_BAR_HEIGHT) {
+                createExplosion(player.x + player.width / 2, player.y + player.height / 2);
+                gameOver("UI COLLISION?");
+                return;
+            }
+
+            for (let j = ships.length - 1; j >= 0; j--) { if (collides(player, ships[j])) { createExplosion(player.x + player.width / 2, player.y + player.height / 2); createExplosion(ships[j].x + ships[j].width / 2, ships[j].y + ships[j].height / 2); ships.splice(j, 1); gameOver("ENEMY COLLISION"); return; } }
+            for (let j = helicopters.length - 1; j >= 0; j--) { if (collides(player, helicopters[j])) { createExplosion(player.x + player.width / 2, player.y + player.height / 2); createExplosion(helicopters[j].x + helicopters[j].width / 2, helicopters[j].y + helicopters[j].height / 2); helicopters.splice(j, 1); gameOver("ENEMY COLLISION"); return; } }
+            for (let j = enemyPlanes.length - 1; j >= 0; j--) { if (collides(player, enemyPlanes[j])) { createExplosion(player.x + player.width / 2, player.y + player.height / 2); createExplosion(enemyPlanes[j].x + enemyPlanes[j].width / 2, enemyPlanes[j].y + enemyPlanes[j].height / 2); enemyPlanes.splice(j, 1); gameOver("ENEMY PLANE COLLISION"); return; } }
+
+            for (let j = bridges.length - 1; j >= 0; j--) {
+                const bridge = bridges[j];
+                if (collidesWithBridge(player, bridge)) {
+                    const bridgeWaterRect = { x: bridge.x, y: bridge.y, width: bridge.width, height: bridge.height };
+                    if (!bridge.destroyed && collides(player, bridgeWaterRect)) {
+                        bridge.destroyed = true;
+                        score += 50;
+                        createExplosion(player.x + player.width / 2, bridge.y + bridge.height / 2);
+                    } else {
+                        createExplosion(player.x + player.width / 2, player.y + player.height / 2);
+                    }
+                    gameOver("CRASHED INTO BRIDGE");
+                    return;
+                }
+            }
+
+            for (let j = fuelTanks.length - 1; j >= 0; j--) {
+                const tank = fuelTanks[j];
+                if (!tank.destroyed && !tank.collected && collides(player, tank)) {
+                    fuel = Math.min(INITIAL_FUEL, fuel + FUEL_REFILL_AMOUNT);
+                    tank.collected = true;
+                    score += 15;
+                    playSoundFuelPickup();
+                }
+            }
+
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i]; if (!bullet) continue; let bulletRemoved = false;
+                for (let j = ships.length - 1; j >= 0; j--) { if (collides(bullet, ships[j])) { createExplosion(ships[j].x + ships[j].width / 2, ships[j].y + ships[j].height / 2); score += 35; ships.splice(j, 1); bullets.splice(i, 1); bulletRemoved = true; break; } } if (bulletRemoved) { increaseDifficulty(); continue; }
+                for (let j = helicopters.length - 1; j >= 0; j--) { if (collides(bullet, helicopters[j])) { createExplosion(helicopters[j].x + helicopters[j].width / 2, helicopters[j].y + helicopters[j].height / 2); score += 55; helicopters.splice(j, 1); bullets.splice(i, 1); bulletRemoved = true; break; } } if (bulletRemoved) { increaseDifficulty(); continue; }
+                for (let j = enemyPlanes.length - 1; j >= 0; j--) { if (collides(bullet, enemyPlanes[j])) { createExplosion(enemyPlanes[j].x + enemyPlanes[j].width / 2, enemyPlanes[j].y + enemyPlanes[j].height / 2); score += 45; enemyPlanes.splice(j, 1); bullets.splice(i, 1); bulletRemoved = true; break; } } if (bulletRemoved) { increaseDifficulty(); continue; }
+
+                for (let j = bridges.length - 1; j >= 0; j--) {
+                    const bridge = bridges[j];
+                    const bridgeWaterRect = { x: bridge.x, y: bridge.y, width: bridge.width, height: bridge.height };
+                    if (!bridge.destroyed && collides(bullet, bridgeWaterRect)) {
+                        bridge.destroyed = true;
+                        createExplosion(bullet.x, bridge.y + bridge.height / 2);
+                        score += 110;
+                        bullets.splice(i, 1);
+                        bulletRemoved = true;
+                        break;
+                    }
+                } if (bulletRemoved) { increaseDifficulty(); continue; }
+
+                for (let j = fuelTanks.length - 1; j >= 0; j--) {
+                    const tank = fuelTanks[j];
+                    if (!tank.collected && !tank.destroyed && collides(bullet, tank)) {
+                        tank.destroyed = true;
+                        createExplosion(tank.x + tank.width / 2, tank.y + tank.height / 2);
+                        score += 20;
+                        bullets.splice(i, 1);
+                        bulletRemoved = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+
+        // --- Game Over e Restart --- (Funções inalteradas)
+        function gameOver(reason = "CRASHED") {
+            if (isGameOver) return;
+            isGameOver = true;
+            isPaused = false;
+            console.log("Game Over:", reason);
+            gameOverMessageElement.innerHTML = `GAME OVER!<br><small>${reason}</small><br>SCORE: ${score}<br>Pressione 'R' para reiniciar`;
+            gameOverMessageElement.style.display = 'block';
+
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (audioCtx && audioCtx.state === 'running') {
+                audioCtx.suspend().then(() => console.log("AudioContext suspended for Game Over."));
+            }
+        }
+
+        function restartGame() {
+            isPaused = false;
+            isGameOver = false;
+            gameOverMessageElement.style.display = 'none';
+            initGame();
+        }
+
+        // --- Pausa --- (Funções inalteradas)
+        function togglePause() {
+            if (isGameOver) return;
+
+            isPaused = !isPaused;
+
+            if (isPaused) {
+                if (audioCtx && audioCtx.state === 'running') {
+                    audioCtx.suspend().then(() => console.log("AudioContext suspended for pause."));
+                }
+            } else {
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume().then(() => console.log("AudioContext resumed from pause."));
+                }
+            }
+            console.log("Game paused:", isPaused);
+        }
+
+        function drawPauseMessage() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height - UI_BOTTOM_BAR_HEIGHT);
+
+            ctx.font = `bold ${UI_FONT_SIZE * 2}px ${UI_FONT_FAMILY}`;
+            ctx.fillStyle = C_UI_TEXT;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("PAUSADO", canvas.width / 2, (canvas.height - UI_BOTTOM_BAR_HEIGHT) / 2);
+            ctx.font = `${UI_FONT_SIZE * 0.8}px ${UI_FONT_FAMILY}`;
+            ctx.fillText("Pressione 'P' para continuar", canvas.width / 2, (canvas.height - UI_BOTTOM_BAR_HEIGHT) / 2 + 40);
+        }
+
+
+        // --- Event Listeners --- (Funções inalteradas)
+        document.addEventListener('keydown', (e) => {
+            initAudio();
+            const keyLower = e.key.toLowerCase();
+            if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(keyLower)) e.preventDefault();
+
+            keys[keyLower] = true;
+
+            if (isGameOver && keys['r']) {
+                restartGame();
+            } else if (!isGameOver && keys['p']) {
+                togglePause();
+                keys['p'] = false;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            const keyLower = e.key.toLowerCase();
+            if (keyLower !== 'p') {
+                keys[keyLower] = false;
+            }
+        });
+
+        // --- Game Loop Principal --- (Lógica inalterada)
+        function gameLoop(timestamp) {
+            if (!isGameOver) {
+                animationFrameId = requestAnimationFrame(gameLoop);
+            }
+
+            if (isPaused) {
+                ctx.fillStyle = RIVER_COLOR;
+                ctx.fillRect(0, 0, canvas.width, canvas.height - UI_BOTTOM_BAR_HEIGHT);
+                drawRiverBanks();
+                drawBridges();
+                drawShips();
+                drawHelicopters();
+                drawEnemyPlanes();
+                drawFuelTanks();
+                drawExplosions();
+                drawBullets();
+                if (!isGameOver) drawPlayer();
+                drawUI();
+                drawPauseMessage();
+                drawCRTFilter();
+                return;
+            }
+
+            gameTime++;
+
+            ctx.fillStyle = RIVER_COLOR;
+            ctx.fillRect(0, 0, canvas.width, canvas.height - UI_BOTTOM_BAR_HEIGHT);
+
+            if (!isGameOver) {
+                updateRiverBanks();
+                updatePlayer();
+                updateBullets();
+                updateEnemies(ships, 0.010, SHIP_WIDTH, SHIP_HEIGHT, 'ship');
+                updateEnemies(helicopters, 0.007, HELI_WIDTH, HELI_HEIGHT, 'heli');
+                updateEnemies(enemyPlanes, 0.008, ENEMY_PLANE_WIDTH, ENEMY_PLANE_HEIGHT, 'eplane', 1.1);
+                updateFuelTanks();
+                updateBridges();
+                updateExplosions();
+                updateFuelGaugeAnimation();
+                checkCollisions();
+                increaseDifficulty();
+            } else {
+                updateExplosions();
+                updateFuelGaugeAnimation();
+            }
+
+            drawRiverBanks();
+            drawBridges();
+            drawShips();
+            drawHelicopters();
+            drawEnemyPlanes();
+            drawFuelTanks();
+            drawExplosions();
+            drawBullets();
+            if (!isGameOver) drawPlayer();
+            drawUI();
+            drawCRTFilter();
+        }
+
+        // --- Iniciar ---
+        console.log("Iniciando River Raid Clone v10.3 (Split Freq Fix)..."); // <<< VERSÃO ATUALIZADA
+        initGame();
+
+    </script>
+</body>
+
+</html>

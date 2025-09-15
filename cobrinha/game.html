@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jogo da Cobrinha Pixelado</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #1a1a2e; /* Fundo escuro azulado/roxo */
+            font-family: 'Courier New', Courier, monospace; /* Fonte monoespaçada retro */
+            color: #e0f2e9; /* Cor de texto clara */
+        }
+        canvas {
+            border: 5px solid #4e4e8e; /* Borda mais escura e azulada */
+            background-color: #2a2a4a; /* Fundo do canvas um pouco mais claro */
+            image-rendering: pixelated; /* Estilo pixel art */
+            image-rendering: -moz-crisp-edges; /* Firefox */
+            image-rendering: crisp-edges; /* Browsers baseados em WebKit/Blink */
+            box-shadow: 0 0 20px rgba(128, 128, 255, 0.5); /* Brilho sutil azulado */
+        }
+        #game-container {
+            text-align: center;
+        }
+        #info {
+            margin-bottom: 10px;
+            font-size: 1.2em;
+            color: #a2d5f2; /* Azul claro para info */
+        }
+        #instructions {
+            margin-top: 15px;
+            font-size: 0.9em;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="info">
+            Pontos: <span id="score">0</span> | Nível: <span id="level">1</span> | Recorde: <span id="highScore">0</span>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="instructions">
+            Use as Setas para mover. Pressione ESPAÇO para reiniciar após Game Over.
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const levelElement = document.getElementById('level');
+        const highScoreElement = document.getElementById('highScore');
+
+        // --- Configurações do Jogo ---
+        const GRID_SIZE = 25; // Tamanho de cada célula do grid em pixels
+        const GRID_WIDTH = 20; // Largura do grid em número de células
+        const GRID_HEIGHT = 16; // Altura do grid em número de células
+        const CANVAS_WIDTH = GRID_SIZE * GRID_WIDTH;
+        const CANVAS_HEIGHT = GRID_SIZE * GRID_HEIGHT;
+
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+
+        // Paleta de Cores Vibrante (Estilo Retro/Pixel)
+        const COLOR_BACKGROUND_DARK = "#3b3b58"; // Chão escuro (como pedras cinzas da ref)
+        const COLOR_BACKGROUND_LIGHT = "#4f4f76"; // Chão claro (como pedras cinzas mais claras)
+        const COLOR_SNAKE_HEAD = "#ff6b6b"; // Vermelho vibrante para a cabeça
+        const COLOR_SNAKE_BODY = "#ff8e71"; // Laranja/Vermelho claro para o corpo
+        const COLOR_SNAKE_SHADOW = "#c44d4d"; // Sombra da cobra
+        const COLOR_FOOD = "#86ff70"; // Verde limão vibrante para comida
+        const COLOR_FOOD_SHADOW = "#5db04d"; // Sombra da comida
+        const COLOR_EYE = "#ffffff"; // Olhos brancos
+        const COLOR_PUPIL = "#000000"; // Pupilas pretas
+        const COLOR_GAME_OVER_BG = "rgba(42, 42, 74, 0.8)"; // Fundo translúcido para Game Over
+        const COLOR_GAME_OVER_TEXT = "#ffdd59"; // Texto amarelo para Game Over
+        const COLOR_SHADOW_OFFSET = Math.max(1, Math.floor(GRID_SIZE * 0.1)); // Deslocamento da sombra
+
+        // --- Estado do Jogo ---
+        let snake;
+        let food;
+        let direction; // 'up', 'down', 'left', 'right'
+        let nextDirection; // Buffer para a próxima direção (evita auto-reversão)
+        let score;
+        let level;
+        let gameInterval;
+        let isGameOver;
+        let baseSpeed = 200; // Millissegundos por passo (inicial)
+        let speedDecrement = 15; // Quanto diminuir a cada nível
+        let minSpeed = 60; // Velocidade máxima
+        let highScore = localStorage.getItem('snakeHighScorePixel') || 0;
+        let foodPulseState = 0; // Para animação da comida
+
+        // --- Funções Auxiliares de Desenho ---
+
+        // Desenha um tile (célula) com sombra simples
+        function drawTile(gridX, gridY, color, shadowColor) {
+            const pixelX = gridX * GRID_SIZE;
+            const pixelY = gridY * GRID_SIZE;
+
+            // Sombra
+            if (shadowColor) {
+                ctx.fillStyle = shadowColor;
+                ctx.fillRect(pixelX + COLOR_SHADOW_OFFSET, pixelY + COLOR_SHADOW_OFFSET, GRID_SIZE, GRID_SIZE);
+            }
+
+            // Cor principal
+            ctx.fillStyle = color;
+            ctx.fillRect(pixelX, pixelY, GRID_SIZE, GRID_SIZE);
+        }
+
+        // Desenha os olhos da cobra
+        function drawEyes(headX, headY) {
+            const eyeSize = Math.max(2, Math.floor(GRID_SIZE * 0.2));
+            const pupilSize = Math.max(1, Math.floor(eyeSize * 0.5));
+            const eyeOffsetX = Math.floor(GRID_SIZE * 0.25);
+            const eyeOffsetY = Math.floor(GRID_SIZE * 0.25);
+
+            const pixelX = headX * GRID_SIZE;
+            const pixelY = headY * GRID_SIZE;
+
+            let pupilShiftX = 0;
+            let pupilShiftY = 0;
+
+            // Pupila acompanha a direção
+            switch (direction) {
+                case 'up':    pupilShiftY = -Math.floor(eyeSize * 0.2); break;
+                case 'down':  pupilShiftY = Math.floor(eyeSize * 0.2); break;
+                case 'left':  pupilShiftX = -Math.floor(eyeSize * 0.2); break;
+                case 'right': pupilShiftX = Math.floor(eyeSize * 0.2); break;
+            }
+
+
+            // Olho Esquerdo
+            ctx.fillStyle = COLOR_EYE;
+            ctx.fillRect(pixelX + eyeOffsetX - eyeSize / 2, pixelY + eyeOffsetY - eyeSize / 2, eyeSize, eyeSize);
+             // Arredondar um pouco (opcional, pode pesar performance se feito muito)
+            // ctx.beginPath();
+            // ctx.arc(pixelX + eyeOffsetX, pixelY + eyeOffsetY, eyeSize / 2, 0, Math.PI * 2);
+            // ctx.fill();
+            ctx.fillStyle = COLOR_PUPIL;
+            ctx.fillRect(
+                pixelX + eyeOffsetX - pupilSize / 2 + pupilShiftX,
+                pixelY + eyeOffsetY - pupilSize / 2 + pupilShiftY,
+                pupilSize, pupilSize
+            );
+            // ctx.beginPath();
+            // ctx.arc(pixelX + eyeOffsetX + pupilShiftX, pixelY + eyeOffsetY + pupilShiftY, pupilSize / 2, 0, Math.PI * 2);
+            // ctx.fill();
+
+
+            // Olho Direito
+            const eye2OffsetX = GRID_SIZE - eyeOffsetX;
+             ctx.fillStyle = COLOR_EYE;
+             ctx.fillRect(pixelX + eye2OffsetX - eyeSize / 2, pixelY + eyeOffsetY - eyeSize / 2, eyeSize, eyeSize);
+            // ctx.beginPath();
+            // ctx.arc(pixelX + eye2OffsetX, pixelY + eyeOffsetY, eyeSize / 2, 0, Math.PI * 2);
+            // ctx.fill();
+            ctx.fillStyle = COLOR_PUPIL;
+             ctx.fillRect(
+                pixelX + eye2OffsetX - pupilSize / 2 + pupilShiftX,
+                pixelY + eyeOffsetY - pupilSize / 2 + pupilShiftY,
+                pupilSize, pupilSize
+            );
+            // ctx.beginPath();
+            // ctx.arc(pixelX + eye2OffsetX + pupilShiftX, pixelY + eyeOffsetY + pupilShiftY, pupilSize / 2, 0, Math.PI * 2);
+            // ctx.fill();
+        }
+
+        // Desenha a cobra inteira
+        function drawSnake() {
+            // Corpo
+            for (let i = 1; i < snake.length; i++) {
+                drawTile(snake[i].x, snake[i].y, COLOR_SNAKE_BODY, COLOR_SNAKE_SHADOW);
+            }
+            // Cabeça (desenhada por último para ficar por cima)
+            drawTile(snake[0].x, snake[0].y, COLOR_SNAKE_HEAD, COLOR_SNAKE_SHADOW);
+            drawEyes(snake[0].x, snake[0].y);
+        }
+
+        // Desenha a comida com pulsação
+        function drawFood() {
+            const pulseAmount = Math.sin(foodPulseState) * (GRID_SIZE * 0.1); // Pequena variação de tamanho
+            const currentSize = GRID_SIZE - pulseAmount * 2; // Diminui dos dois lados
+            const offset = pulseAmount;
+
+            const pixelX = food.x * GRID_SIZE;
+            const pixelY = food.y * GRID_SIZE;
+
+            // Sombra (não pulsante para simplicidade)
+            ctx.fillStyle = COLOR_FOOD_SHADOW;
+            ctx.fillRect(pixelX + COLOR_SHADOW_OFFSET, pixelY + COLOR_SHADOW_OFFSET, GRID_SIZE, GRID_SIZE);
+
+            // Comida pulsante
+            ctx.fillStyle = COLOR_FOOD;
+            ctx.fillRect(pixelX + offset, pixelY + offset, currentSize, currentSize);
+
+             // Desenha um brilho sutil (opcional)
+             const innerSize = currentSize * 0.5;
+             const innerOffset = (currentSize - innerSize) / 2;
+             ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; // Branco translúcido
+             ctx.fillRect(pixelX + offset + innerOffset, pixelY + offset + innerOffset, innerSize, innerSize);
+
+            foodPulseState += 0.15; // Velocidade da pulsação
+            if (foodPulseState > Math.PI * 2) {
+                foodPulseState = 0;
+            }
+        }
+
+        // Desenha o fundo quadriculado
+        function drawBackground() {
+            for (let y = 0; y < GRID_HEIGHT; y++) {
+                for (let x = 0; x < GRID_WIDTH; x++) {
+                    const color = (x + y) % 2 === 0 ? COLOR_BACKGROUND_DARK : COLOR_BACKGROUND_LIGHT;
+                    // Não desenha sombra no fundo para performance
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x * GRID_SIZE, y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+                }
+            }
+        }
+
+        // --- Lógica do Jogo ---
+
+        // Move a cobra
+        function moveSnake() {
+            if (isGameOver) return;
+
+            // Atualiza a direção atual com a próxima direção definida pelo jogador
+             if (nextDirection) {
+                // Impede inversão direta de direção
+                if ((nextDirection === 'up' && direction !== 'down') ||
+                    (nextDirection === 'down' && direction !== 'up') ||
+                    (nextDirection === 'left' && direction !== 'right') ||
+                    (nextDirection === 'right' && direction !== 'left')) {
+                    direction = nextDirection;
+                }
+                nextDirection = null; // Limpa o buffer da próxima direção
+            }
+
+            // Calcula a nova posição da cabeça
+            let head = { ...snake[0] }; // Copia a cabeça atual
+            switch (direction) {
+                case 'up':    head.y -= 1; break;
+                case 'down':  head.y += 1; break;
+                case 'left':  head.x -= 1; break;
+                case 'right': head.x += 1; break;
+            }
+
+            // Adiciona a nova cabeça no início da cobra
+            snake.unshift(head);
+
+            // Verifica colisão com a comida
+            if (head.x === food.x && head.y === food.y) {
+                score += 10;
+                // Aumenta o nível a cada 5 comidas
+                if (score % 50 === 0) {
+                    level++;
+                    updateSpeed();
+                }
+                updateGameInfo();
+                generateFood();
+                // Não remove o rabo (cobra cresce)
+            } else {
+                // Remove o último segmento do rabo (cobra move)
+                snake.pop();
+            }
+        }
+
+        // Verifica colisões (paredes e corpo)
+        function checkCollision() {
+            const head = snake[0];
+
+            // Colisão com paredes
+            if (head.x < 0 || head.x >= GRID_WIDTH || head.y < 0 || head.y >= GRID_HEIGHT) {
+                return true;
+            }
+
+            // Colisão com o próprio corpo
+            for (let i = 1; i < snake.length; i++) {
+                if (head.x === snake[i].x && head.y === snake[i].y) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Gera uma nova posição para a comida
+        function generateFood() {
+            let newFoodPosition;
+            do {
+                newFoodPosition = {
+                    x: Math.floor(Math.random() * GRID_WIDTH),
+                    y: Math.floor(Math.random() * GRID_HEIGHT)
+                };
+            } while (isFoodOnSnake(newFoodPosition)); // Garante que não apareça sobre a cobra
+
+            food = newFoodPosition;
+        }
+
+        // Verifica se a posição da comida está sobre a cobra
+        function isFoodOnSnake(position) {
+            for (let segment of snake) {
+                if (segment.x === position.x && segment.y === position.y) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Atualiza a velocidade do jogo baseado no nível
+        function updateSpeed() {
+            let newSpeed = baseSpeed - (level - 1) * speedDecrement;
+            newSpeed = Math.max(newSpeed, minSpeed); // Limita a velocidade mínima
+
+            clearInterval(gameInterval); // Limpa o intervalo antigo
+            gameInterval = setInterval(gameLoop, newSpeed); // Cria um novo com a nova velocidade
+        }
+
+        // Atualiza as informações na tela (Score, Nível, Recorde)
+        function updateGameInfo() {
+            scoreElement.textContent = score;
+            levelElement.textContent = level;
+            highScoreElement.textContent = highScore;
+        }
+
+        // Desenha a tela de Game Over
+        function drawGameOver() {
+            ctx.fillStyle = COLOR_GAME_OVER_BG;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            ctx.font = "bold 40px 'Courier New', Courier, monospace";
+            ctx.fillStyle = COLOR_GAME_OVER_TEXT;
+            ctx.textAlign = "center";
+            ctx.fillText("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+
+            ctx.font = "20px 'Courier New', Courier, monospace";
+            ctx.fillStyle = "#e0f2e9";
+            ctx.fillText(`Pontos: ${score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+             ctx.fillText(`Nível: ${level}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+
+            ctx.font = "16px 'Courier New', Courier, monospace";
+             ctx.fillText("Pressione ESPAÇO para reiniciar", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80);
+        }
+
+        // Loop principal do jogo
+        function gameLoop() {
+            if (isGameOver) return;
+
+            // 1. Limpar Canvas
+            // ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT); // Limpa tudo
+            // É mais eficiente desenhar o fundo por cima
+            drawBackground();
+
+            // 2. Mover a cobra
+            moveSnake();
+
+            // 3. Verificar Colisões
+            if (checkCollision()) {
+                gameOver();
+                return; // Sai do loop se o jogo acabou
+            }
+
+            // 4. Desenhar Elementos
+            drawFood();
+            drawSnake();
+
+            // Não precisa redesenhar score/level a cada frame, já que está no HTML
+            // A atualização é feita quando necessário em updateGameInfo()
+        }
+
+        // Função de Game Over
+        function gameOver() {
+            isGameOver = true;
+            clearInterval(gameInterval); // Para o loop do jogo
+
+             // Atualiza o recorde se necessário
+             if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('snakeHighScorePixel', highScore);
+                updateGameInfo(); // Atualiza o display do recorde imediatamente
+            }
+
+            // Espera um pouco antes de desenhar a tela de game over para ver a colisão
+            setTimeout(drawGameOver, 50);
+        }
+
+        // Inicializa o jogo
+        function startGame() {
+            isGameOver = false;
+            snake = [ // Posição inicial da cobra
+                { x: Math.floor(GRID_WIDTH / 2), y: Math.floor(GRID_HEIGHT / 2) },
+                { x: Math.floor(GRID_WIDTH / 2) - 1, y: Math.floor(GRID_HEIGHT / 2) },
+                { x: Math.floor(GRID_WIDTH / 2) - 2, y: Math.floor(GRID_HEIGHT / 2) }
+            ];
+            direction = 'right'; // Começa movendo para a direita
+            nextDirection = null; // Reseta a próxima direção
+            score = 0;
+            level = 1;
+            foodPulseState = 0;
+
+            updateGameInfo(); // Atualiza a interface inicial
+            generateFood(); // Gera a primeira comida
+
+            // Limpa qualquer intervalo anterior e inicia o novo
+            clearInterval(gameInterval);
+            updateSpeed(); // Configura a velocidade inicial e inicia o gameInterval
+
+             // Limpa a tela caso esteja mostrando Game Over
+             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+             drawBackground();
+             drawFood();
+             drawSnake();
+        }
+
+        // --- Controles ---
+        function handleKeyDown(event) {
+             // Previne comportamento padrão das setas (scroll da página)
+             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(event.key)) {
+                event.preventDefault();
+            }
+
+            if (isGameOver) {
+                if (event.key === ' ') { // Espaço para reiniciar
+                    startGame();
+                }
+                return;
+            }
+
+            // Define a PRÓXIMA direção, que será aplicada no próximo ciclo de 'moveSnake'
+            // Isso evita que a cobra se inverta rapidamente no mesmo ciclo
+            switch (event.key) {
+                case 'ArrowUp':    if (direction !== 'down') nextDirection = 'up'; break;
+                case 'ArrowDown':  if (direction !== 'up') nextDirection = 'down'; break;
+                case 'ArrowLeft':  if (direction !== 'right') nextDirection = 'left'; break;
+                case 'ArrowRight': if (direction !== 'left') nextDirection = 'right'; break;
+            }
+        }
+
+        // --- Inicialização ---
+        document.addEventListener('keydown', handleKeyDown);
+        updateGameInfo(); // Mostra o recorde inicial ao carregar
+        startGame(); // Começa o jogo automaticamente
+
+    </script>
+</body>
+</html>

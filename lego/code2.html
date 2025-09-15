@@ -1,0 +1,1417 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Construtor Lego Avançado v9.3 (Projeção Corrigida + Yaw)</title>
+    <style>
+        /* --- CSS (Sem alterações) --- */
+        body {
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            font-family: sans-serif;
+            background-color: #eee;
+            overflow: hidden; /* Evita barras de rolagem no body */
+        }
+
+        #sidebar {
+            width: 180px;
+            background-color: #e0e0e0;
+            border-right: 1px solid #ccc;
+            padding: 10px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0; /* Impede que a sidebar encolha */
+        }
+
+        #sidebar h3 {
+            margin: 0 0 5px 0;
+            font-size: 1em;
+            text-align: center;
+            width: 100%;
+        }
+
+        #category-select {
+            width: 100%;
+            padding: 5px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+
+        #palette {
+            flex-grow: 1; /* Permite que a paleta cresça e ocupe espaço */
+            overflow-y: auto; /* Adiciona scroll se necessário */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-right: 5px; /* Espaço para a barra de rolagem */
+        }
+
+        .palette-item {
+            width: 95%; /* Um pouco menos para caber padding */
+            min-height: 55px;
+            border: 2px solid #aaa;
+            background-color: #f8f8f8;
+            margin-bottom: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between; /* Canvas à esquerda, texto à direita */
+            text-align: left;
+            font-size: .8em;
+            position: relative; /* Para pseudo-elementos se necessário */
+            overflow: hidden; /* Garante que nada vaze */
+            transition: border-color .2s, background-color .2s;
+            padding: 5px;
+            box-sizing: border-box; /* Padding incluído na largura/altura */
+        }
+
+        .palette-item canvas {
+            width: 45px;
+            height: 45px;
+            border: 1px solid #ccc;
+            background-color: #e8f0f8; /* Fundo azulado claro para o preview */
+            flex-shrink: 0; /* Impede que o canvas encolha */
+            margin-right: 8px; /* Espaço entre canvas e texto */
+        }
+
+        .palette-item span {
+            flex-grow: 1; /* O texto ocupa o espaço restante */
+            overflow: hidden; /* Esconde texto que não cabe */
+            text-overflow: ellipsis; /* Adiciona "..." */
+            white-space: normal; /* Permite quebra de linha se necessário */
+        }
+
+        .palette-item::before { /* Remove marcador de lista se fosse usado */
+            display: none;
+        }
+
+        .palette-item:hover {
+            border-color: #777;
+            background-color: #fff;
+        }
+
+        .palette-item.selected {
+            border-color: #3498db; /* Azul para selecionado */
+            border-width: 3px;
+            background-color: #d0e8f8; /* Fundo azul claro para selecionado */
+        }
+
+        #main-content {
+            flex-grow: 1; /* Ocupa o resto do espaço horizontal */
+            display: flex;
+            flex-direction: column;
+            align-items: center; /* Centraliza o canvas se houver espaço extra */
+            overflow: hidden; /* Impede conteúdo de vazar */
+            position: relative; /* Para o loading overlay */
+        }
+
+         #loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(200, 200, 200, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.2em;
+            color: #333;
+            z-index: 10;
+            /* display: none; é controlado pelo JS */
+        }
+
+        #controls {
+            padding: 8px;
+            background: #f8f8f8;
+            border-bottom: 1px solid #ccc;
+            width: 100%;
+            box-sizing: border-box;
+            text-align: center;
+            flex-shrink: 0; /* Impede que os controles encolham */
+        }
+
+        #controls label,
+        #controls select,
+        #controls button {
+            margin: 0 5px;
+            font-size: .9em;
+        }
+
+        #info {
+            font-size: .85em;
+            margin-top: 3px;
+            color: #555;
+        }
+
+        canvas#gameCanvas {
+            display: block; /* Remove espaço extra abaixo do canvas */
+            margin: 10px; /* Espaçamento externo */
+            background-color: #d0e0f0; /* Fundo azul claro para o canvas principal */
+            cursor: pointer;
+            border: 1px solid #aaa;
+            /* Tamanho controlado por JS, mas max garante que não exceda */
+            max-width: calc(100% - 20px);
+            max-height: calc(100% - 20px);
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- HTML Estrutura (Sem alterações) -->
+    <div id="sidebar">
+        <h3>Categoria</h3>
+        <select id="category-select"></select>
+        <h3>Peças</h3>
+        <div id="palette"></div>
+    </div>
+
+    <div id="main-content">
+        <div id="loading-overlay" style="display: none;">Carregando definições de peças...</div>
+        <div id="controls">
+            <label for="color-select">Cor:</label>
+            <select id="color-select">
+                <option value="#D90000">Vermelho</option>
+                <option value="#0050A0">Azul</option>
+                <option value="#257A25">Verde</option>
+                <option value="#FFCF00">Amarelo</option>
+                <option value="#000000">Preto</option>
+                <option value="#A0A5A9">Cinza Claro</option>
+                <option value="#6B6B6B">Cinza Escuro</option>
+                <option value="#FFFFFF">Branco</option>
+                <option value="#FFA500">Laranja</option>
+                <!-- Adicione mais cores se desejar -->
+            </select>
+            <button id="clear-all">Limpar Tudo</button>
+            <div id="info">Hover: Preview. Clique Esq: Add. Clique Dir: Remove. Drag Esq: Gira (X/Y). Roda: Zoom.</div>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        // --- Variáveis Globais e Constantes ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const sidebar = document.getElementById('sidebar');
+        const paletteContainer = document.getElementById('palette');
+        const categorySelect = document.getElementById('category-select');
+        const colorSelect = document.getElementById('color-select');
+        const clearAllButton = document.getElementById('clear-all');
+        const controlsDiv = document.getElementById('controls');
+        const infoDiv = document.getElementById('info');
+        const loadingOverlay = document.getElementById('loading-overlay');
+
+        const BRICK_HEIGHT = 1.0; // Altura lógica de um brick padrão
+        const PLATE_HEIGHT = BRICK_HEIGHT / 3.0; // Altura lógica de um plate
+        let pieceDefinitions = {}; // Será carregado do JSON
+        let selectedPieceType = null; // ID da peça selecionada na paleta
+
+        // Configurações visuais e de projeção
+        const blockSize = 20; // Tamanho base de 1 stud em pixels (antes da escala)
+        const blockVisualHeightUnit = blockSize * 0.8; // Fator visual para a altura Z
+        const studRadiusFactor = 0.3; // Raio do stud relativo ao blockSize
+        const studHeightFactor = 0.15; // Altura do stud relativo a BRICK_HEIGHT (lógico)
+        const projectionAngle = Math.PI / 6; // Ângulo base da projeção (30 graus)
+        const cosProjectionAngle = Math.cos(projectionAngle);
+        const sinProjectionAngle = Math.sin(projectionAngle);
+        const gridMaxX = 24; // Limite da grade (positivo e negativo)
+        const gridMaxY = 24;
+        const gridMaxZ = 30; // Limite de altura
+
+        // Fatores de sombreamento (fixos - veja comentário sobre bug)
+        const SHADING_FACTOR_TOP = 1.0;
+        const SHADING_FACTOR_SIDE_LIGHT = 0.85; // Usado para faces 'frontais/direitas' fixas
+        const SHADING_FACTOR_SIDE_DARK = 0.65;  // Usado para faces 'traseiras/esquerdas' fixas
+        const SHADING_FACTOR_BOTTOM = 0.5;
+        const SHADING_FACTOR_STUD_TOP = 1.1;
+        const SHADING_FACTOR_STUD_SIDE = 0.75;
+        const SHADING_FACTOR_OUTLINE = 0.4;
+
+        let blocks = {}; // Objeto para armazenar as peças colocadas { 'x,y,z': blockData }
+
+        // Estado da Câmera/Visualização
+        let cameraAngleX = Math.PI / 6; // Ângulo Pitch (vertical) inicial (mais baixo)
+        let cameraAngleY = Math.PI / 4; // Ângulo Yaw (lateral) inicial (45 graus)
+        let scaleFactor = 1.0; // Zoom
+        const minScaleFactor = 0.2;
+        const maxScaleFactor = 5.0;
+        const zoomStep = 1.1;
+        let originX = 0, originY = 0; // Centro da visualização no canvas
+
+        // Estado da Interação do Mouse
+        let isDragging = false;   // Usuário está arrastando (para rotacionar)
+        let isRotating = false;  // Flag específica para rotação (distingue de drag-select futuro?)
+        let lastMouseX = 0, lastMouseY = 0; // Última posição do mouse
+        let previewBlockData = null; // Dados da peça em modo preview { x, y, z, type, color }
+        const previewOpacity = 0.6; // Transparência do preview
+
+        // --- Funções Auxiliares ---
+
+        /** Retorna a definição da peça ou um fallback seguro. */
+        function getPieceDefinition(type) {
+            const defaultDef = { width: 1, depth: 1, height: 1.0, shape: 'brick', category: 'Fallback', name: 'Fallback 1x1' };
+            if (!type || typeof type !== 'string') { return defaultDef; }
+            // Se as definições ainda não foram carregadas, retorna o default
+            if (Object.keys(pieceDefinitions).length === 0) { return defaultDef; }
+
+            const definition = pieceDefinitions[type];
+            // Verifica se a definição encontrada é válida (tem pelo menos 'width')
+            if (definition && typeof definition.width === 'number') {
+                return definition;
+            } else {
+                // Se o tipo não for encontrado, tenta retornar a primeira peça carregada como fallback
+                const firstKey = Object.keys(pieceDefinitions)[0];
+                const firstDef = firstKey ? pieceDefinitions[firstKey] : null;
+                return (firstDef && typeof firstDef.width === 'number') ? firstDef : defaultDef;
+            }
+        }
+
+        /** Gera uma chave única para um bloco baseado na sua posição. */
+        function getBlockKey(x, y, z) {
+            // Usar toFixed para normalizar e evitar problemas de ponto flutuante
+            return `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
+        }
+
+        /** Calcula a altura lógica da peça (Brick ou Plate). */
+        function getPieceHeight(def) {
+            if (def.height === PLATE_HEIGHT) return PLATE_HEIGHT;
+            if (def.height === BRICK_HEIGHT) return BRICK_HEIGHT;
+            // Permite alturas customizadas baseadas em BRICK_HEIGHT
+            return (def.height || 1.0) * BRICK_HEIGHT;
+        }
+
+        /** Encontra um bloco que cobre uma determinada coordenada (x, y) na base em uma altura Z específica. */
+        function findBlockCoveringCell(targetX, targetY, targetZ) {
+            const checkX = Math.floor(targetX); // Célula da grade X
+            const checkY = Math.floor(targetY); // Célula da grade Y
+            const toleranceZ = 0.01; // Pequena tolerância para comparação de Z
+
+            for (const key in blocks) {
+                const block = blocks[key];
+                const def = getPieceDefinition(block.type);
+
+                // Verifica se o Z do bloco corresponde (com tolerância)
+                if (Math.abs(block.z - targetZ) < toleranceZ) {
+                    // Verifica se a célula (checkX, checkY) está dentro dos limites da base do bloco
+                    if (checkX >= block.x && checkX < block.x + def.width &&
+                        checkY >= block.y && checkY < block.y + def.depth) {
+                        return block; // Encontrou o bloco que cobre a célula
+                    }
+                }
+            }
+            return null; // Nenhum bloco encontrado naquela posição Z cobrindo a célula
+        }
+
+        /** Calcula as coordenadas 3D dos centros dos studs na superfície de um bloco. */
+        function getStudFootprint(blockData) {
+            const studs = [];
+            const def = getPieceDefinition(blockData.type);
+            const blockHeight = getPieceHeight(def);
+            const studZ = blockData.z + blockHeight; // Z da superfície onde os studs estão
+
+            for (let dx = 0; dx < def.width; dx++) {
+                for (let dy = 0; dy < def.depth; dy++) {
+                    // Tratamento especial para peças com formatos irregulares (ex: canto)
+                    if (def.shape === 'corner_1x2x2' && dx === 0 && dy === 0) {
+                        continue; // Pula o stud ausente no canto interno
+                    }
+                    // Adiciona o centro do stud
+                    studs.push({
+                        x: blockData.x + dx + 0.5, // Centro X do stud
+                        y: blockData.y + dy + 0.5, // Centro Y do stud
+                        z: studZ                   // Centro Z do stud (topo)
+                    });
+                }
+            }
+            return studs;
+        }
+
+        /** Ajusta o brilho de uma cor hexadecimal e retorna em formato RGBA. */
+        function adjustColor(hexColor, factor, alpha = 1.0) {
+            if (!hexColor || !hexColor.startsWith('#')) {
+                 console.warn("AdjustColor: Cor inválida", hexColor);
+                 hexColor = "#FF00FF"; // Magenta como fallback
+            }
+            let r = parseInt(hexColor.slice(1, 3), 16);
+            let g = parseInt(hexColor.slice(3, 5), 16);
+            let b = parseInt(hexColor.slice(5, 7), 16);
+
+            // Aplica o fator de brilho
+            r = Math.max(0, Math.min(255, Math.round(r * factor)));
+            g = Math.max(0, Math.min(255, Math.round(g * factor)));
+            b = Math.max(0, Math.min(255, Math.round(b * factor)));
+
+            const clampedAlpha = Math.max(0, Math.min(1, alpha)); // Garante alpha entre 0 e 1
+
+            return `rgba(${r}, ${g}, ${b}, ${clampedAlpha})`;
+        }
+
+        /** Converte cor hexadecimal para RGBA. */
+        function hexToRgba(hexColor, alpha = 1.0) {
+             if (!hexColor || !hexColor.startsWith('#')) {
+                 console.warn("HexToRgba: Cor inválida", hexColor);
+                 hexColor = "#FF00FF"; // Magenta como fallback
+            }
+            const r = parseInt(hexColor.slice(1, 3), 16);
+            const g = parseInt(hexColor.slice(3, 5), 16);
+            const b = parseInt(hexColor.slice(5, 7), 16);
+            const clampedAlpha = Math.max(0, Math.min(1, alpha)); // Garante alpha entre 0 e 1
+            return `rgba(${r}, ${g}, ${b}, ${clampedAlpha})`;
+        }
+
+
+        // --- Projeção 3D -> 2D (Com Rotação Yaw e Pitch) ---
+        /**
+         * Projeta coordenadas 3D (x, y, z) para coordenadas 2D (x, y) na tela.
+         * Inclui rotação da câmera (Yaw e Pitch) e projeção isométrica.
+         * @param {number} x Coordenada X no mundo Lego.
+         * @param {number} y Coordenada Y no mundo Lego.
+         * @param {number} z Coordenada Z no mundo Lego (altura).
+         * @param {number} currentOriginX Posição X da origem da visualização no canvas.
+         * @param {number} currentOriginY Posição Y da origem da visualização no canvas.
+         * @param {number} currentScale Fator de zoom atual.
+         * @param {number} currentAngleX Ângulo de rotação Pitch (vertical) da câmera.
+         * @param {number} currentAngleY Ângulo de rotação Yaw (lateral) da câmera.
+         * @returns {{x: number, y: number, z_orig: number}} Coordenadas projetadas na tela e Z original.
+         */
+        function project(x, y, z, currentOriginX, currentOriginY, currentScale, currentAngleX, currentAngleY) {
+            // 1. Converter para coordenadas "mundo" (pixels antes da projeção/rotação)
+            const worldX = x * blockSize;
+            const worldY = y * blockSize; // Y no plano base
+            const worldZ = z * blockVisualHeightUnit; // Z vertical
+
+            // 2. Rotação Yaw (ao redor do eixo Y vertical global)
+            const cosY = Math.cos(currentAngleY);
+            const sinY = Math.sin(currentAngleY);
+            const yawRotatedX = worldX * cosY - worldY * sinY;
+            const yawRotatedY = worldX * sinY + worldY * cosY; // Esta é a coordenada no plano horizontal após rotação Yaw
+
+            // 3. Rotação Pitch (ao redor do eixo X' local, que foi rotacionado pelo Yaw)
+            // Usamos yawRotatedY (que está no plano horizontal rotacionado) e worldZ (altura global)
+            const cosX = Math.cos(currentAngleX);
+            const sinX = Math.sin(currentAngleX);
+            // Rotaciona no plano Y'Z (Y' é yawRotatedY)
+            const pitchRotatedY = yawRotatedY * cosX - worldZ * sinX;
+            const pitchRotatedZ = yawRotatedY * sinX + worldZ * cosX; // Z final após ambas as rotações
+
+            // 4. Projeção Isométrica Clássica (aplicada às coordenadas após rotação)
+            // Usa X após Yaw (yawRotatedX) e Y após Pitch (pitchRotatedY)
+            const projectedX_iso = (yawRotatedX - pitchRotatedY) * cosProjectionAngle;
+            const projectedY_iso = (yawRotatedX + pitchRotatedY) * sinProjectionAngle; // Componente XY da projeção
+
+            // 5. Combina a projeção XY com o Z final (após rotações) e aplica escala/origem
+            const screenX = currentOriginX + projectedX_iso * currentScale;
+            // O Z final (pitchRotatedZ) afeta a posição Y na tela (coordenadas do canvas: Y aumenta para baixo)
+            // A correção de adicionar `projectedY_iso` parece estar funcionando aqui
+            const screenY = currentOriginY + (projectedY_iso - pitchRotatedZ) * currentScale;
+
+            return { x: screenX, y: screenY, z_orig: z }; // Retorna Z original para ordenação
+        }
+
+        /** Função de conveniência para projeção usando estado global da câmera/view. */
+        function projectMain(x, y, z) {
+            return project(x, y, z, originX, originY, scaleFactor, cameraAngleX, cameraAngleY);
+        }
+
+        // --- Funções Auxiliares para Desenho ---
+
+        /** Calcula a área com sinal de um polígono (para back-face culling). */
+        function calculateSignedArea(points) {
+            let area = 0;
+            for (let i = 0; i < points.length; i++) {
+                const p1 = points[i];
+                const p2 = points[(i + 1) % points.length]; // Próximo ponto, volta ao início no final
+                area += (p1.x * p2.y - p2.x * p1.y);
+            }
+            return area / 2; // Área com sinal (negativo ou positivo dependendo do winding)
+        }
+
+        // --- Função Principal de Desenho de Bloco ---
+        /**
+         * Desenha um único bloco no canvas.
+         * @param {object} block Dados do bloco { x, y, z, type, color }.
+         * @param {CanvasRenderingContext2D} targetCtx Contexto do canvas onde desenhar.
+         * @param {function} projectionFn Função a ser usada para projetar pontos 3D->2D.
+         * @param {boolean} drawStuds Desenhar os studs no topo?
+         * @param {number} baseScale Escala atual (para ajustar espessura de linha, etc.).
+         * @param {boolean} isPreview É um bloco de preview (desenhado com transparência)?
+         */
+        function drawBlock(block, targetCtx, projectionFn, drawStuds = true, baseScale = 1.0, isPreview = false) {
+            const def = getPieceDefinition(block.type);
+            const baseColor = block.color;
+            const baseX = block.x, baseY = block.y, baseZ = block.z;
+            const width = def.width, depth = def.depth;
+            const height = getPieceHeight(def); // Altura lógica (1.0 ou 1/3)
+            let corners = []; // Vértices 3D do bloco
+            let faces = [];   // Definição das faces (índices dos vértices e cor base)
+            const effectiveOpacity = isPreview ? previewOpacity : 1.0;
+
+            // 1. Definir Vértices (Corners) 3D
+            // Por enquanto, apenas o formato padrão 'brick' (paralelepípedo)
+            // TODO: Adicionar mais 'shapes' (slope, corner, etc.) se necessário
+            switch (def.shape) {
+                // Adicionar cases para 'slope', 'corner', etc. aqui se tiver
+                case 'corner_1x2x2': // Exemplo: Peça de canto (requer vértices diferentes)
+                    // Implementar a definição dos vértices para este formato específico
+                    // ... (código omitido por simplicidade no exemplo, usará default)
+                    // break;
+                default: // 'brick', 'plate', 'tile', etc. (formatos retangulares básicos)
+                    corners = [
+                        { x: baseX,         y: baseY,         z: baseZ },        // 0: Base frente-esquerda
+                        { x: baseX + width, y: baseY,         z: baseZ },        // 1: Base frente-direita
+                        { x: baseX + width, y: baseY + depth, z: baseZ },        // 2: Base trás-direita
+                        { x: baseX,         y: baseY + depth, z: baseZ },        // 3: Base trás-esquerda
+                        { x: baseX,         y: baseY,         z: baseZ + height }, // 4: Topo frente-esquerda
+                        { x: baseX + width, y: baseY,         z: baseZ + height }, // 5: Topo frente-direita
+                        { x: baseX + width, y: baseY + depth, z: baseZ + height }, // 6: Topo trás-direita
+                        { x: baseX,         y: baseY + depth, z: baseZ + height }  // 7: Topo trás-esquerda
+                    ];
+                    break;
+            }
+
+             // 2. Definir Faces (índices dos vértices e cor base com sombreamento)
+             // !!! ATENÇÃO: BUG/LIMITAÇÃO ATUAL !!!
+             // As cores SHADING_FACTOR_SIDE_LIGHT/DARK são fixas. Elas NÃO se ajustam
+             // corretamente quando cameraAngleY (Yaw) muda. Uma solução real precisaria
+             // calcular a orientação da face em relação à câmera dinamicamente.
+             faces = [
+                 // Face Superior (sempre visível de cima)
+                 { indices: [4, 5, 6, 7], color: adjustColor(baseColor, SHADING_FACTOR_TOP, effectiveOpacity), type: 'top' },
+                 // Face Inferior (geralmente não visível)
+                 { indices: [0, 3, 2, 1], color: adjustColor(baseColor, SHADING_FACTOR_BOTTOM, effectiveOpacity), type: 'bottom' },
+                 // Faces Laterais (SOMENTE UMA APROXIMAÇÃO FIXA DE SOMBREAMENTO)
+                 // Assumindo vista isométrica padrão inicial (ângulo Y = PI/4)
+                 { indices: [0, 1, 5, 4], color: adjustColor(baseColor, SHADING_FACTOR_SIDE_LIGHT, effectiveOpacity), type: 'side' }, // Seria a face -Y ("frontal" na vista inicial)
+                 { indices: [1, 2, 6, 5], color: adjustColor(baseColor, SHADING_FACTOR_SIDE_LIGHT, effectiveOpacity), type: 'side' }, // Seria a face +X ("direita" na vista inicial)
+                 { indices: [2, 3, 7, 6], color: adjustColor(baseColor, SHADING_FACTOR_SIDE_DARK, effectiveOpacity), type: 'side' },  // Seria a face +Y ("traseira" na vista inicial)
+                 { indices: [3, 0, 4, 7], color: adjustColor(baseColor, SHADING_FACTOR_SIDE_DARK, effectiveOpacity), type: 'side' }   // Seria a face -X ("esquerda" na vista inicial)
+             ];
+             // Adicionar faces específicas para outros shapes aqui, se necessário
+
+            // 3. Projetar Vértices para 2D
+            const projectedCorners = corners.map(corner => projectionFn(corner.x, corner.y, corner.z));
+
+            // 4. Back-face Culling e Ordenação de Faces do Bloco
+            const visibleFaces = [];
+            faces.forEach(face => {
+                // Pega os pontos 2D projetados para esta face
+                const facePoints = face.indices.map(index => projectedCorners[index]);
+                // Calcula a área: se for negativa (com winding padrão), a face está visível
+                const area = calculateSignedArea(facePoints);
+
+                // Um limiar pequeno para evitar problemas de precisão
+                if (area < -0.1) {
+                    // Calcula o Z médio da face (usando Z original) para ordenação
+                    let avgZ = 0;
+                    face.indices.forEach(index => avgZ += corners[index].z);
+                    avgZ /= face.indices.length;
+                    // Adiciona a face à lista de visíveis com seus pontos 2D, cor e Z médio
+                    visibleFaces.push({ points: facePoints, color: face.color, avgZ: avgZ });
+                }
+            });
+
+            // Ordena as faces visíveis do bloco (da mais distante para a mais próxima em Z)
+            // Importante para blocos côncavos ou com detalhes internos (raro em Lego básico)
+            visibleFaces.sort((a, b) => a.avgZ - b.avgZ);
+
+            // 5. Desenhar as Faces Visíveis
+            const outlineColor = adjustColor(baseColor, SHADING_FACTOR_OUTLINE, effectiveOpacity);
+            targetCtx.lineWidth = Math.max(0.2, 0.6 * Math.sqrt(baseScale)); // Linha mais fina com zoom out
+            targetCtx.strokeStyle = outlineColor;
+
+            visibleFaces.forEach(face => {
+                targetCtx.fillStyle = face.color;
+                targetCtx.beginPath();
+                targetCtx.moveTo(face.points[0].x, face.points[0].y);
+                for (let i = 1; i < face.points.length; i++) {
+                    targetCtx.lineTo(face.points[i].x, face.points[i].y);
+                }
+                targetCtx.closePath();
+                targetCtx.fill();
+                // Só desenha contorno se o zoom for suficiente
+                if (baseScale > 0.3) {
+                    targetCtx.stroke();
+                }
+            });
+
+            // 6. Desenhar os Studs (se aplicável)
+            // Não desenha studs em preview, tiles, technic bricks, slopes
+            const shouldDrawStuds = drawStuds && !isPreview && def.shape !== 'tile' && def.shape !== 'technic_brick' && !def.shape?.startsWith('slope');
+            if (shouldDrawStuds) {
+                const studRadius = blockSize * studRadiusFactor; // Raio base do stud
+                const studBaseZ = baseZ + height; // Z da base do stud (topo do bloco)
+                const studTopZ = studBaseZ + studHeightFactor * BRICK_HEIGHT; // Z do topo do stud
+                const studTopColor = adjustColor(baseColor, SHADING_FACTOR_STUD_TOP, effectiveOpacity);
+                const studSideColor = adjustColor(baseColor, SHADING_FACTOR_STUD_SIDE, effectiveOpacity);
+                const studOutlineColor = adjustColor(baseColor, SHADING_FACTOR_OUTLINE, effectiveOpacity);
+                targetCtx.lineWidth = Math.max(0.1, 0.4 * Math.sqrt(baseScale)); // Linha fina para studs
+
+                for (let dx = 0; dx < width; dx++) {
+                    for (let dy = 0; dy < depth; dy++) {
+                        // Pula studs ausentes em peças especiais
+                        if (def.shape === 'corner_1x2x2' && dx === 0 && dy === 0) continue;
+
+                        const studCenterX = baseX + dx + 0.5;
+                        const studCenterY = baseY + dy + 0.5;
+
+                        // Projeta o centro da base e do topo do stud
+                        const projectedBaseCenter = projectionFn(studCenterX, studCenterY, studBaseZ);
+                        const projectedTopCenter = projectionFn(studCenterX, studCenterY, studTopZ);
+
+                        // Calcula o raio projetado (aproximação: desenha como círculo)
+                        // Uma projeção real faria elipses, mas círculo é mais simples
+                        const projectedRadius = Math.max(0.5, studRadius * baseScale * cosProjectionAngle); // Ajusta com escala e ângulo base
+
+                        if (projectedRadius < 0.5) continue; // Não desenha se for muito pequeno
+
+                        // Desenha a "lateral" do stud (círculo na base)
+                        targetCtx.fillStyle = studSideColor;
+                        targetCtx.strokeStyle = studOutlineColor;
+                        targetCtx.beginPath();
+                        targetCtx.arc(projectedBaseCenter.x, projectedBaseCenter.y, projectedRadius, 0, Math.PI * 2);
+                        targetCtx.fill();
+                        if (projectedRadius > 0.8) { targetCtx.stroke(); } // Contorno se visível
+
+                        // Desenha o "topo" do stud (círculo no topo)
+                        targetCtx.fillStyle = studTopColor;
+                        targetCtx.beginPath();
+                        targetCtx.arc(projectedTopCenter.x, projectedTopCenter.y, projectedRadius, 0, Math.PI * 2);
+                        targetCtx.fill();
+                        if (projectedRadius > 0.8) { targetCtx.stroke(); } // Contorno se visível
+                    }
+                }
+            }
+        } // --- Fim drawBlock ---
+
+
+        /** Desenha a grade no plano Z=0. */
+        function drawGrid() {
+            ctx.strokeStyle = '#aaa'; // Cor cinza para a grade
+            ctx.lineWidth = 0.5;      // Linha fina
+
+            // Define limites para desenhar a grade (um pouco maior que a área de construção)
+            const drawLimitX = Math.ceil(gridMaxX * 1.2);
+            const drawLimitY = Math.ceil(gridMaxY * 1.2);
+
+            // Linhas paralelas ao eixo X (variando Y)
+            for (let i = -drawLimitX; i <= drawLimitX; i++) {
+                const p1 = projectMain(i, -drawLimitY, 0); // Ponto inicial da linha
+                const p2 = projectMain(i, drawLimitY, 0);  // Ponto final da linha
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+            // Linhas paralelas ao eixo Y (variando X)
+            for (let j = -drawLimitY; j <= drawLimitY; j++) {
+                const p1 = projectMain(-drawLimitX, j, 0); // Ponto inicial da linha
+                const p2 = projectMain(drawLimitX, j, 0);  // Ponto final da linha
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+        }
+
+
+        // --- Ordenação dos Blocos para Desenho (Painter's Algorithm) ---
+        /**
+         * Ordena os blocos para serem desenhados na ordem correta (de trás para frente).
+         * Usa uma combinação de Z base, Y projetado e X projetado.
+         * @returns {Array<object>} Array de blocos ordenados.
+         */
+        function sortBlocksForDrawing() {
+            // Cache para dados de ordenação, evita recalcular projeção para cada comparação
+            const blockSortDataCache = new Map();
+
+            function getSortData(block) {
+                const key = getBlockKey(block.x, block.y, block.z);
+                if (blockSortDataCache.has(key)) {
+                    return blockSortDataCache.get(key);
+                }
+
+                const def = getPieceDefinition(block.type);
+                const width = def.width || 1;
+                const depth = def.depth || 1;
+                const interpretedHeight = getPieceHeight(def);
+
+                // Centro geométrico do bloco
+                const centerX = block.x + width / 2.0;
+                const centerY = block.y + depth / 2.0;
+                const centerZ = block.z + interpretedHeight / 2.0;
+
+                let projectedCenter;
+                try {
+                    projectedCenter = projectMain(centerX, centerY, centerZ);
+                } catch (projError) {
+                    console.error("Erro na projeção durante ordenação:", projError, block);
+                    projectedCenter = { x: 0, y: 0 }; // Fallback
+                }
+
+                // Dados usados para ordenação
+                const data = {
+                    baseZ: block.z || 0, // Z da base do bloco
+                    // Y projetado: quanto maior, mais "para baixo/frente" na tela
+                    centerProjectedY: (projectedCenter && typeof projectedCenter.y === 'number') ? projectedCenter.y : 0,
+                     // X projetado: usado como desempate
+                    centerProjectedX: (projectedCenter && typeof projectedCenter.x === 'number') ? projectedCenter.x : 0
+                };
+                blockSortDataCache.set(key, data);
+                return data;
+            }
+
+            // Pega todos os blocos e ordena
+            const sorted = Object.values(blocks).sort((a, b) => {
+                const dataA = getSortData(a);
+                const dataB = getSortData(b);
+
+                // 1. Ordena por Z da base (mais baixo primeiro)
+                const zDiff = dataA.baseZ - dataB.baseZ;
+                if (Math.abs(zDiff) > 0.01) { // Usa tolerância
+                    return zDiff; // Menor Z primeiro
+                }
+
+                // 2. Se Z for igual, ordena por Y projetado (maior Y primeiro)
+                // Maior Y projetado significa mais "fundo" na cena (mais abaixo na tela)
+                // Desenhar os mais fundos primeiro (Painter's Algorithm)
+                const yDiff = dataB.centerProjectedY - dataA.centerProjectedY;
+                if (Math.abs(yDiff) > 0.1) { // Usa tolerância maior para projeção
+                    return yDiff; // Maior Y projetado primeiro
+                }
+
+                // 3. Se Z e Y projetado forem iguais, usa X projetado como desempate (direita primeiro)
+                // Menos importante, mas ajuda na consistência
+                const xDiff = dataB.centerProjectedX - dataA.centerProjectedX;
+                return xDiff; // Maior X projetado primeiro
+            });
+
+            return sorted;
+        }
+
+
+        // --- Loop Principal de Desenho ---
+        function drawScene() {
+            // Limpa o canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Desenha a grade
+            drawGrid();
+
+            // Ordena os blocos
+            const sortedBlocks = sortBlocksForDrawing();
+
+            // Desenha cada bloco na ordem correta
+            sortedBlocks.forEach(block => {
+                drawBlock(block, ctx, projectMain, true, scaleFactor, false);
+            });
+
+            // Desenha o bloco de preview (se houver e não estiver arrastando/rotacionando)
+            if (previewBlockData && !isDragging) {
+                drawBlock(previewBlockData, ctx, projectMain, true, scaleFactor, true);
+            }
+
+            // Solicita o próximo quadro de animação
+            requestAnimationFrame(drawScene);
+        }
+
+
+        // --- Lógica de Interação: Encontrar Posição para Colocar ---
+        /**
+         * Encontra o stud mais próximo sob o cursor do mouse.
+         * Verifica primeiro os studs de blocos existentes, depois a grade Z=0.
+         * @param {number} mouseX Posição X do mouse no canvas.
+         * @param {number} mouseY Posição Y do mouse no canvas.
+         * @returns {{studCenter: {x, y, z}, blockBelow: object|null}|null} O centro do stud encontrado
+         *          e o bloco abaixo dele (ou null se for na grade), ou null se nada for encontrado.
+         */
+        function findNearestStudLocation(mouseX, mouseY) {
+            let closestStud = null;
+            let minDistanceSq = Infinity;
+            let blockBelow = null; // Bloco que contém o stud mais próximo
+
+            // 1. Procurar em studs de blocos existentes (do mais alto para o mais baixo)
+            // Iterar na ordem inversa do desenho (peças de cima primeiro)
+            const sortedBlocks = sortBlocksForDrawing().reverse(); // Mais altos primeiro
+            for (const block of sortedBlocks) {
+                const def = getPieceDefinition(block.type);
+                // Pula peças sem studs (tiles, slopes, etc.)
+                if (def.shape === 'tile' || def.shape?.startsWith('slope') || def.shape === 'technic_brick') {
+                     continue;
+                }
+
+                const studsOnBlock = getStudFootprint(block); // Coords 3D dos studs deste bloco
+                for (const stud of studsOnBlock) {
+                    const projectedStud = projectMain(stud.x, stud.y, stud.z); // Projeta o centro do stud
+                    const dx = mouseX - projectedStud.x;
+                    const dy = mouseY - projectedStud.y;
+                    const distSq = dx * dx + dy * dy; // Distância ao quadrado (mais rápido)
+
+                    // Define um raio de clique em torno do stud (ajustado pela escala)
+                    const clickRadiusSq = (blockSize * scaleFactor * 0.6) ** 2; // Raio de 60% do tamanho do bloco
+
+                    // Se o clique está dentro do raio e é o mais próximo até agora
+                    if (distSq < clickRadiusSq && distSq < minDistanceSq) {
+                        minDistanceSq = distSq;
+                        closestStud = { x: stud.x, y: stud.y, z: stud.z }; // Armazena coords 3D
+                        blockBelow = block; // Armazena o bloco dono do stud
+                    }
+                }
+                 // Otimização: Se já achamos um stud neste bloco (que é o mais alto sob o mouse),
+                 // não precisamos verificar blocos abaixo dele na mesma área XY.
+                 // (Comentado pois pode haver casos de peças sobrepostas complexas onde isso falha)
+                 // if (closestStud && blockBelow === block) {
+                 //    break;
+                 // }
+            }
+
+            // 2. Se nenhum stud de bloco foi encontrado perto o suficiente, procurar na grade Z=0
+            // Considera encontrado se a distância for maior que um raio maior (evita 'saltar' para a base se mouse está perto de stud alto)
+            const studFoundThresholdSq = (blockSize * scaleFactor * 0.8) ** 2;
+            if (!closestStud || minDistanceSq > studFoundThresholdSq) {
+                blockBelow = null; // Resetar bloco abaixo, pois será na grade
+                const targetZ = 0; // Procurar na base
+                let closestGridX = -1, closestGridY = -1;
+                let minDistGridSq = Infinity;
+
+                // --- Aproximação para encontrar célula da grade sob o mouse ---
+                // A projeção inversa é complexa. Vamos estimar grosseiramente
+                // e depois procurar em uma vizinhança ao redor da estimativa.
+                // Fatores empíricos podem precisar de ajuste dependendo dos ângulos/projeção.
+                 try {
+                    // Tentativa muito simples de estimar (pode ser bem imprecisa)
+                    const estGridX = (mouseX - originX) / (blockSize * scaleFactor * cosProjectionAngle * Math.cos(cameraAngleY) * 1.2);
+                    const estGridY = (mouseY - originY) / (blockSize * scaleFactor * sinProjectionAngle * Math.cos(cameraAngleX) * 1.2); // Muito simplificado
+
+                    const searchRadius = 6; // Procurar +/- N células ao redor da estimativa
+                    const startX = Math.max(-gridMaxX, Math.floor(estGridX) - searchRadius);
+                    const endX = Math.min(gridMaxX, Math.ceil(estGridX) + searchRadius);
+                    const startY = Math.max(-gridMaxY, Math.floor(estGridY) - searchRadius);
+                    const endY = Math.min(gridMaxY, Math.ceil(estGridY) + searchRadius);
+
+                    // Verifica cada ponto central da célula na área de busca
+                    for (let gx = startX; gx < endX; gx++) {
+                        for (let gy = startY; gy < endY; gy++) {
+                            const studCenterX = gx + 0.5;
+                            const studCenterY = gy + 0.5;
+                            const projectedStud = projectMain(studCenterX, studCenterY, targetZ); // Projeta centro da célula
+                            const dx = mouseX - projectedStud.x;
+                            const dy = mouseY - projectedStud.y;
+                            const distSq = dx * dx + dy * dy;
+
+                            if (distSq < minDistGridSq) {
+                                minDistGridSq = distSq;
+                                closestGridX = studCenterX; // Armazena centro 3D da célula
+                                closestGridY = studCenterY;
+                            }
+                        }
+                    }
+                 } catch(e) {
+                    console.error("Erro na estimativa/busca da grade:", e);
+                 }
+                // --- Fim da Aproximação ---
+
+                // Define um raio de clique para a grade
+                const gridClickRadiusSq = (blockSize * scaleFactor * 0.7) ** 2; // Raio um pouco maior para a base
+
+                // Se um ponto na grade foi encontrado dentro do raio de clique
+                if (closestGridX !== -1 && minDistGridSq < gridClickRadiusSq) {
+                    // Atualiza closestStud para ser o ponto da grade Z=0
+                    closestStud = { x: closestGridX, y: closestGridY, z: targetZ };
+                    minDistanceSq = minDistGridSq; // Atualiza a distância mínima (para referência)
+                } else {
+                    // Se nem na grade achou, realmente não achou nada perto
+                    closestStud = null;
+                }
+            }
+
+            // Retorna o resultado ou null
+            return closestStud ? { studCenter: closestStud, blockBelow: blockBelow } : null;
+        }
+
+
+        // --- Manipuladores de Eventos Mouse ---
+
+        function handleMouseDown(event) {
+            event.preventDefault(); // Previne comportamento padrão (ex: seleção de texto)
+            lastMouseX = event.clientX;
+            lastMouseY = event.clientY;
+
+            if (event.button === 0) { // Botão Esquerdo
+                isDragging = true; // Inicia o arraste
+                isRotating = true; // Assume que é para rotacionar inicialmente
+            } else if (event.button === 2) { // Botão Direito (Remover Bloco)
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = event.clientX - rect.left;
+                const mouseY = event.clientY - rect.top;
+                let blockToRemove = null;
+                let minDistanceToCenterSq = Infinity;
+
+                // Procura o bloco cujo centro projetado está mais perto do clique
+                // Itera do mais alto para o mais baixo (pega o de cima primeiro)
+                const sortedBlocks = sortBlocksForDrawing().reverse();
+                for (const block of sortedBlocks) {
+                    const def = getPieceDefinition(block.type);
+                    const height = getPieceHeight(def);
+                    // Centro geométrico do bloco
+                    const blockCenterX = block.x + def.width / 2;
+                    const blockCenterY = block.y + def.depth / 2;
+                    const blockCenterZ = block.z + height / 2;
+
+                    const projectedCenter = projectMain(blockCenterX, blockCenterY, blockCenterZ);
+                    const dx = mouseX - projectedCenter.x;
+                    const dy = mouseY - projectedCenter.y;
+                    const distSq = dx * dx + dy * dy;
+
+                    // Raio para remoção (maior para peças maiores)
+                    const removeRadius = blockSize * scaleFactor * Math.max(def.width, def.depth) * 0.4; // 40% da maior dimensão
+                    const removeRadiusSq = removeRadius * removeRadius;
+
+                    if (distSq < removeRadiusSq && distSq < minDistanceToCenterSq) {
+                        minDistanceToCenterSq = distSq;
+                        blockToRemove = block;
+                    }
+                }
+
+                // Se encontrou um bloco para remover
+                if (blockToRemove) {
+                    const key = getBlockKey(blockToRemove.x, blockToRemove.y, blockToRemove.z);
+                    delete blocks[key]; // Remove do objeto de blocos
+                    previewBlockData = null; // Limpa o preview caso estivesse sobre o bloco removido
+                    // Redesenho ocorre no próximo frame do requestAnimationFrame
+                }
+            }
+        }
+
+        function handleMouseMove(event) {
+            event.preventDefault();
+            const currentMouseX = event.clientX;
+            const currentMouseY = event.clientY;
+
+            if (isDragging && isRotating) { // Arrastando para Rotacionar
+                const deltaX = currentMouseX - lastMouseX;
+                const deltaY = currentMouseY - lastMouseY;
+
+                // Atualiza os ângulos da câmera baseado no movimento do mouse
+                cameraAngleY += deltaX * 0.007; // Movimento X controla Yaw (lateral)
+                cameraAngleX += deltaY * 0.007; // Movimento Y controla Pitch (vertical)
+
+                // Limita o ângulo Pitch para evitar que a câmera vire de cabeça para baixo
+                const verticalMargin = 0.05; // Pequena margem para não chegar a 0 ou PI/2
+                cameraAngleX = Math.max(verticalMargin, Math.min(Math.PI / 2 - verticalMargin, cameraAngleX));
+
+                // Mantém o Yaw entre 0 e 2*PI (opcional, mas evita números muito grandes)
+                // cameraAngleY = cameraAngleY % (Math.PI * 2);
+                // if (cameraAngleY < 0) cameraAngleY += Math.PI * 2;
+
+                lastMouseX = currentMouseX;
+                lastMouseY = currentMouseY;
+                previewBlockData = null; // Esconde o preview durante a rotação
+
+            } else if (!isDragging) { // Apenas Hover (Mostrar Preview)
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = currentMouseX - rect.left;
+                const mouseY = currentMouseY - rect.top;
+                const location = findNearestStudLocation(mouseX, mouseY); // Encontra onde colocar
+
+                if (location && selectedPieceType) {
+                    const targetStud = location.studCenter; // {x, y, z} do centro do stud alvo
+                    const def = getPieceDefinition(selectedPieceType);
+
+                    // Calcula a posição de origem (canto) do novo bloco
+                    // O stud alvo corresponde ao canto (0.5, 0.5) da base da nova peça
+                    const placeX = targetStud.x - 0.5;
+                    const placeY = targetStud.y - 0.5;
+                    const placeZ = targetStud.z; // O Z do novo bloco será o Z do topo do stud alvo
+
+                    // Verifica se a peça caberia dentro dos limites da grade
+                    // Permite coordenadas X/Y negativas
+                    const fitsX = placeX >= -gridMaxX && placeX + def.width <= gridMaxX;
+                    const fitsY = placeY >= -gridMaxY && placeY + def.depth <= gridMaxY;
+                    const fitsZ = placeZ < gridMaxZ; // Não pode passar da altura máxima
+
+                    if (fitsX && fitsY && fitsZ) {
+                        // Cria os dados para o bloco de preview
+                        previewBlockData = {
+                            x: placeX,
+                            y: placeY,
+                            z: placeZ,
+                            type: selectedPieceType,
+                            color: colorSelect.value // Pega a cor selecionada
+                        };
+                    } else {
+                        previewBlockData = null; // Não mostra preview se fora dos limites
+                    }
+                } else {
+                    previewBlockData = null; // Sem local ou sem peça selecionada, sem preview
+                }
+                // Atualiza lastMouse para referência (útil se o próximo evento for um clique rápido)
+                 lastMouseX = currentMouseX;
+                 lastMouseY = currentMouseY;
+            }
+        }
+
+        function handleMouseUp(event) {
+            event.preventDefault();
+            if (event.button === 0) { // Botão Esquerdo
+                const dx = event.clientX - lastMouseX;
+                const dy = event.clientY - lastMouseY;
+                const dragThresholdSq = 5 * 5; // Pequeno threshold para diferenciar clique de arraste
+
+                // Se o mouse mal se moveu E estava arrastando/rotacionando -> foi um CLIQUE para adicionar
+                if (isDragging && isRotating && (dx * dx + dy * dy < dragThresholdSq)) {
+                    if (previewBlockData) {
+                        // --- Validação antes de adicionar ---
+                        const newBlock = { ...previewBlockData }; // Copia os dados do preview
+                        const def = getPieceDefinition(newBlock.type);
+                        const key = getBlockKey(newBlock.x, newBlock.y, newBlock.z);
+                        let canPlace = true;
+
+                        // 1. Verificação de Colisão: Já existe um bloco na mesma posição Z ocupando alguma célula?
+                        for (let dx_coll = 0; dx_coll < def.width; dx_coll++) {
+                            for (let dy_coll = 0; dy_coll < def.depth; dy_coll++) {
+                                // Verifica o centro de cada célula que o novo bloco ocuparia
+                                const cellX = newBlock.x + dx_coll;
+                                const cellY = newBlock.y + dy_coll;
+                                // findBlockCoveringCell já compara o Z
+                                if (findBlockCoveringCell(cellX + 0.1, cellY + 0.1, newBlock.z)) {
+                                    canPlace = false;
+                                    // console.log(`Colisão detectada em (${cellX}, ${cellY}, ${newBlock.z.toFixed(3)})`);
+                                    break;
+                                }
+                            }
+                            if (!canPlace) break;
+                        }
+
+                        // 2. Verificação de Suporte: Se não estiver na base (Z=0), precisa ter algo embaixo?
+                        // (Regra opcional, mas comum em construtores Lego)
+                        if (canPlace && newBlock.z > PLATE_HEIGHT / 2) { // Considera suportado se Z for muito próximo de 0
+                            let hasSupport = true;
+                             // Verifica se *cada célula* da base da nova peça tem suporte embaixo
+                            for (let dx_supp = 0; dx_supp < def.width; dx_supp++) {
+                                for (let dy_supp = 0; dy_supp < def.depth; dy_supp++) {
+                                    const baseCellX = newBlock.x + dx_supp;
+                                    const baseCellY = newBlock.y + dy_supp;
+
+                                    // Onde procurar por suporte? Logo abaixo (considerando plate e brick)
+                                    const targetZBelowPlate = newBlock.z - PLATE_HEIGHT;
+                                    const targetZBelowBrick = newBlock.z - BRICK_HEIGHT; // Menos provável, mas possível
+
+                                    const blockBelowPlate = findBlockCoveringCell(baseCellX + 0.1, baseCellY + 0.1, targetZBelowPlate);
+                                    const blockBelowBrick = findBlockCoveringCell(baseCellX + 0.1, baseCellY + 0.1, targetZBelowBrick);
+
+                                    // Se não encontrou NENHUM bloco de suporte naquela célula abaixo
+                                    if (!blockBelowPlate && !blockBelowBrick) {
+                                        hasSupport = false;
+                                        // console.log(`Falta suporte sob (${baseCellX}, ${baseCellY}) para peça em Z=${newBlock.z.toFixed(3)}`);
+                                        break;
+                                    }
+                                }
+                                if (!hasSupport) break;
+                            }
+                            if (!hasSupport) {
+                                canPlace = false; // Não pode colocar por falta de suporte
+                            }
+                        }
+
+                        // Adiciona o bloco se todas as verificações passaram
+                        if (canPlace) {
+                            blocks[key] = newBlock;
+                            // Simula um movimento rápido do mouse na posição atual para
+                            // recalcular o preview para a próxima peça (melhora UX)
+                            const rect = canvas.getBoundingClientRect();
+                             handleMouseMove({
+                                clientX: event.clientX,
+                                clientY: event.clientY,
+                                preventDefault: () => {} // Mock preventDefault
+                            });
+                        } else {
+                            console.log("Não pode colocar: colisão ou falta de suporte.");
+                            previewBlockData = null; // Limpa preview inválido
+                        }
+                    } else {
+                        // console.log("Clique inválido (sem preview no momento do clique).");
+                    }
+                } // else -> foi um arraste de rotação, só termina a ação
+
+                // Finaliza o estado de arraste/rotação
+                isDragging = false;
+                isRotating = false;
+            }
+            // Ignora botão direito no mouse up
+        }
+
+        function handleMouseLeave(event) {
+            // Se o mouse sair do canvas enquanto arrastava, cancela a ação
+            if (isDragging) {
+                isDragging = false;
+                isRotating = false;
+            }
+            previewBlockData = null; // Esconde o preview
+        }
+
+        function handleMouseWheel(event) {
+            event.preventDefault(); // Impede o scroll da página
+            const scaleAmount = (event.deltaY < 0) ? zoomStep : 1 / zoomStep; // Zoom in ou out
+            const newScaleFactor = Math.max(minScaleFactor, Math.min(maxScaleFactor, scaleFactor * scaleAmount)); // Limita o zoom
+
+            // Calcula a posição do mouse em relação ao canvas
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const mouseY = event.clientY - rect.top;
+
+            // Calcula a posição no "mundo" (coordenadas antes da escala) sob o mouse
+            const worldXBefore = (mouseX - originX) / scaleFactor;
+            const worldYBefore = (mouseY - originY) / scaleFactor;
+
+            // Aplica a nova escala
+            scaleFactor = newScaleFactor;
+
+            // Ajusta a origem para que o ponto sob o mouse permaneça no mesmo lugar
+            originX = mouseX - worldXBefore * scaleFactor;
+            originY = mouseY - worldYBefore * scaleFactor;
+
+            // Atualiza o preview se não estiver arrastando/rotacionando
+            if (!isDragging) {
+                // Simula um evento de movimento para atualizar o preview com o novo zoom
+                handleMouseMove(event);
+            }
+            // Redesenho ocorre no próximo frame
+        }
+
+        // --- Paleta e Categorias ---
+
+        /** Popula o seletor de categorias com base nas peças carregadas. */
+        function setupCategorySelector() {
+            // Extrai categorias únicas das definições, ordena e adiciona "Todas"
+            const categories = [...new Set(Object.values(pieceDefinitions)
+                .map(p => p.category || 'Uncategorized'))] // Usa 'Uncategorized' se faltar
+                .sort(); // Ordena alfabeticamente
+
+            categorySelect.innerHTML = '<option value="All">Todas</option>'; // Opção padrão
+            categories.forEach(cat => {
+                const option = document.createElement('option');
+                option.value = cat;
+                option.textContent = cat;
+                categorySelect.appendChild(option);
+            });
+
+            // Event listener para atualizar a paleta quando a categoria muda
+            categorySelect.addEventListener('change', () => {
+                setupPalette(categorySelect.value); // Filtra a paleta
+                // Seleciona automaticamente a primeira peça da nova categoria (se houver)
+                const firstItem = paletteContainer.querySelector('.palette-item');
+                if (firstItem) {
+                    const currentSelected = paletteContainer.querySelector('.palette-item.selected');
+                    if (currentSelected) currentSelected.classList.remove('selected');
+                    firstItem.classList.add('selected');
+                    selectedPieceType = firstItem.dataset.type;
+                    // Atualiza o preview no canvas principal
+                    const rect = canvas.getBoundingClientRect();
+                    const fakeEvent = {
+                         clientX: lastMouseX || rect.left + canvas.width / 2, // Usa última pos ou centro
+                         clientY: lastMouseY || rect.top + canvas.height / 2,
+                         preventDefault: () => {}
+                        };
+                    handleMouseMove(fakeEvent);
+                } else {
+                    // Se a categoria filtrada for vazia
+                    selectedPieceType = null;
+                    previewBlockData = null;
+                }
+            });
+        }
+
+        /** Desenha o preview de uma peça individualmente para a paleta. */
+        function drawPalettePreview(previewCtx, pieceType, color) {
+            previewCtx.clearRect(0, 0, previewCtx.canvas.width, previewCtx.canvas.height);
+            const def = getPieceDefinition(pieceType);
+            if (!def) return; // Segurança
+
+            // Calcula escala e origem para caber a peça no pequeno canvas da paleta
+            const canvasW = previewCtx.canvas.width;
+            const canvasH = previewCtx.canvas.height;
+            // Tenta escalar baseado na largura, profundidade e altura da peça
+             const maxDim = Math.max(def.width, def.depth) * blockSize;
+             const heightVisual = getPieceHeight(def) * blockVisualHeightUnit;
+             // Escala para caber horizontalmente e verticalmente, com margem
+             const scaleX = (canvasW * 0.7) / maxDim;
+             const scaleY = (canvasH * 0.6) / heightVisual;
+             const previewScale = Math.min(scaleX, scaleY, 1.5); // Limita a escala máxima
+
+            // Centraliza a peça no canvas da paleta
+            const previewOriginX = canvasW / 2;
+            // Ajusta a origem Y para parecer mais centralizado verticalmente
+             const blockHeightOnScreen = heightVisual * previewScale;
+             const previewOriginY = canvasH * 0.55 + blockHeightOnScreen * 0.3; // Experimente ajustar 0.55 e 0.3
+
+            // --- Define ângulos de câmera FIXOS para o preview da paleta ---
+            // Isso garante que todas as peças na paleta tenham a mesma orientação visual
+            const previewAngleX = Math.PI / 7; // Um pouco mais inclinado que o padrão
+            const previewAngleY = Math.PI / 5; // Um pouco mais virado
+            // --- ---
+
+            // Cria um bloco temporário para desenhar, centralizado na origem (0,0,0) lógico
+            const previewBlock = {
+                x: -def.width / 2,
+                y: -def.depth / 2,
+                z: 0,
+                type: pieceType,
+                color: color
+             };
+
+            // --- Cria uma função de projeção específica para este preview ---
+            // Ela usa a origem, escala e ângulos FIXOS do preview
+            const projectPreviewFn = (x, y, z) =>
+                project(x, y, z, previewOriginX, previewOriginY, previewScale, previewAngleX, previewAngleY);
+            // --- ---
+
+            // Desenha o bloco usando a função de projeção do preview
+            // Não desenha studs se for muito pequeno (baseado em previewScale)
+            drawBlock(previewBlock, previewCtx, projectPreviewFn, previewScale > 0.4, previewScale, false);
+        }
+
+
+        /** Monta a paleta de peças na sidebar, filtrando por categoria. */
+        function setupPalette(filterCategory = 'All') {
+            paletteContainer.innerHTML = ''; // Limpa a paleta atual
+            const currentSelectedColor = colorSelect.value; // Cor atual para os previews
+            const pieceKeys = Object.keys(pieceDefinitions);
+
+            if (pieceKeys.length === 0) {
+                paletteContainer.innerHTML = '<div>Erro ao carregar peças.</div>';
+                return;
+            }
+
+            let isFirstVisiblePiece = true; // Flag para selecionar o primeiro item se necessário
+            // Garante que selectedPieceType seja resetado se não estiver na categoria filtrada
+            if (selectedPieceType && pieceDefinitions[selectedPieceType] && filterCategory !== 'All' && pieceDefinitions[selectedPieceType].category !== filterCategory) {
+                 selectedPieceType = null; // Desseleciona se a peça atual não pertence à categoria
+            }
+
+
+            pieceKeys.sort((a, b) => { // Ordena peças pelo nome dentro da categoria
+                const nameA = pieceDefinitions[a]?.name || a;
+                const nameB = pieceDefinitions[b]?.name || b;
+                return nameA.localeCompare(nameB);
+            }).forEach(type => {
+                const def = pieceDefinitions[type];
+                // Filtra pela categoria selecionada
+                if (filterCategory === 'All' || def.category === filterCategory) {
+                    // Cria o elemento div para o item da paleta
+                    const item = document.createElement('div');
+                    item.classList.add('palette-item');
+                    item.dataset.type = type; // Armazena o ID da peça no dataset
+
+                    // Cria o canvas para o preview
+                    const previewCanvas = document.createElement('canvas');
+                    previewCanvas.width = 45; // Tamanho fixo definido no CSS
+                    previewCanvas.height = 45;
+                    previewCanvas.dataset.pieceType = type; // Redundante, mas pode ser útil
+                    item.appendChild(previewCanvas);
+
+                    // Cria o span para o nome da peça
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = def.name || type.replace(/_/g, ' '); // Usa nome definido ou formata o ID
+                    item.appendChild(nameSpan);
+
+                    // Marca como selecionado se for a peça atual ou a primeira visível
+                    if (type === selectedPieceType || (!selectedPieceType && isFirstVisiblePiece)) {
+                        item.classList.add('selected');
+                        if (!selectedPieceType && isFirstVisiblePiece) {
+                            selectedPieceType = type; // Define como selecionada se nenhuma estava
+                        }
+                        isFirstVisiblePiece = false; // Já encontramos a primeira
+                    }
+
+                    // Event listener para selecionar a peça ao clicar
+                    item.addEventListener('click', () => {
+                        const currentSelected = paletteContainer.querySelector('.palette-item.selected');
+                        if (currentSelected) {
+                            currentSelected.classList.remove('selected');
+                        }
+                        item.classList.add('selected');
+                        selectedPieceType = type; // Atualiza a peça selecionada globalmente
+
+                        // Atualiza o preview no canvas principal imediatamente após selecionar
+                         if (!isDragging) { // Só atualiza se não estiver rotacionando
+                            const rect = canvas.getBoundingClientRect();
+                            const fakeEvent = {
+                                clientX: lastMouseX || rect.left + canvas.width / 2,
+                                clientY: lastMouseY || rect.top + canvas.height / 2,
+                                preventDefault: () => {}
+                            };
+                            handleMouseMove(fakeEvent);
+                        }
+                    });
+
+                    paletteContainer.appendChild(item); // Adiciona o item à paleta
+
+                    // Desenha o preview no canvas do item
+                    const previewCtx = previewCanvas.getContext('2d');
+                    drawPalettePreview(previewCtx, type, currentSelectedColor);
+                }
+            });
+
+            // Mensagem se nenhuma peça for encontrada na categoria filtrada
+            if (paletteContainer.children.length === 0 && filterCategory !== 'All') {
+                paletteContainer.innerHTML = '<div>Nenhuma peça nesta categoria.</div>';
+                selectedPieceType = null; // Garante que nada esteja selecionado
+                previewBlockData = null;
+            }
+
+            // (Re)adiciona listener para atualizar previews quando a cor global muda
+            // Remove antes para evitar múltiplos listeners
+            colorSelect.removeEventListener('change', updateAllPalettePreviews);
+            colorSelect.addEventListener('change', updateAllPalettePreviews);
+        }
+
+        /** Atualiza a cor de todos os previews na paleta quando a cor global é alterada. */
+        function updateAllPalettePreviews() {
+            const newColor = colorSelect.value;
+            const items = paletteContainer.querySelectorAll('.palette-item');
+            items.forEach(item => {
+                const previewCanvas = item.querySelector('canvas');
+                const type = item.dataset.type;
+                if (previewCanvas && type) {
+                    const previewCtx = previewCanvas.getContext('2d');
+                    // Redesenha o preview com a nova cor
+                    drawPalettePreview(previewCtx, type, newColor);
+                }
+            });
+            // Atualiza a cor do preview no canvas principal também, se existir
+            if (previewBlockData) {
+                 previewBlockData.color = newColor;
+            }
+        }
+
+        // --- Carregamento JSON e Inicialização ---
+
+        /** Carrega as definições das peças do arquivo JSON. */
+        async function loadPieceDefinitions() {
+            loadingOverlay.style.display = 'flex'; // Mostra indicador de carregamento
+            try {
+                // !!! IMPORTANTE: Certifique-se que 'pieces.json' está no mesmo diretório do HTML !!!
+                const response = await fetch('pieces.json');
+                if (!response.ok) {
+                    throw new Error(`Erro HTTP ao carregar pieces.json! Status: ${response.status}`);
+                }
+                pieceDefinitions = await response.json();
+                console.log("Definições de peças carregadas:", Object.keys(pieceDefinitions).length);
+                // Verifica se o JSON carregado não está vazio
+                if (Object.keys(pieceDefinitions).length > 0) {
+                    // Seleciona a primeira peça da lista como padrão inicial
+                    selectedPieceType = Object.keys(pieceDefinitions).sort((a,b) => (pieceDefinitions[a].name || a).localeCompare(pieceDefinitions[b].name || b))[0];
+                } else {
+                    throw new Error("Arquivo 'pieces.json' está vazio ou em formato inválido.");
+                }
+            } catch (error) {
+                console.error("Erro crítico ao carregar/processar 'pieces.json':", error);
+                infoDiv.textContent = `ERRO CRÍTICO: Falha ao carregar 'pieces.json' (${error.message}). Verifique o console (F12).`;
+                infoDiv.style.color = 'red';
+                pieceDefinitions = {}; // Garante que está vazio
+                // Poderia mostrar um alerta mais direto ao usuário
+                 alert(`Erro fatal ao carregar definições de peças: ${error.message}\n\nVerifique se o arquivo 'pieces.json' existe e está correto.\nA aplicação não pode continuar.`);
+            } finally {
+                loadingOverlay.style.display = 'none'; // Esconde indicador de carregamento
+            }
+        }
+
+        /** Função principal de inicialização da aplicação. */
+        async function init() {
+            infoDiv.textContent = "Carregando definições de peças...";
+            await loadPieceDefinitions(); // Espera o carregamento
+
+            // Só continua a inicialização se as definições foram carregadas com sucesso
+            if (Object.keys(pieceDefinitions).length > 0) {
+                // Atualiza a mensagem de info padrão
+                infoDiv.textContent = "Hover: Preview. Clique Esq: Add. Clique Dir: Remove. Drag Esq: Gira (X/Y). Roda: Zoom.";
+                infoDiv.style.color = '#555'; // Reseta cor caso tenha dado erro antes
+
+                // Configura a interface
+                setupCategorySelector(); // Popula categorias
+                setupPalette();          // Monta a paleta inicial (Todas as categorias)
+
+                // Adiciona listener ao botão "Limpar Tudo"
+                clearAllButton.addEventListener('click', () => {
+                    if (confirm("Tem certeza que deseja limpar toda a construção?")) {
+                        blocks = {}; // Esvazia o objeto de blocos
+                        previewBlockData = null; // Limpa o preview
+                        // Redesenho ocorre no próximo frame
+                    }
+                });
+
+                // Adiciona listeners de mouse ao canvas principal
+                canvas.addEventListener('mousedown', handleMouseDown);
+                canvas.addEventListener('mousemove', handleMouseMove);
+                // Adiciona ao window para capturar mouse up mesmo fora do canvas
+                window.addEventListener('mouseup', handleMouseUp);
+                canvas.addEventListener('mouseleave', handleMouseLeave);
+                // Previne o menu de contexto do botão direito no canvas
+                canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+                // Adiciona listener de roda do mouse (zoom)
+                // { passive: false } é importante para poder chamar preventDefault()
+                canvas.addEventListener('wheel', handleMouseWheel, { passive: false });
+
+                // Função para redimensionar o canvas e ajustar a origem
+                function resizeCanvas() {
+                    const mainContent = document.getElementById('main-content');
+                    const controlsHeight = controlsDiv.offsetHeight;
+                    const padding = 20; // Margem total (10px de cada lado do canvas)
+
+                    // Calcula o espaço disponível para o canvas
+                    const availableWidth = mainContent.clientWidth - padding;
+                    const availableHeight = mainContent.clientHeight - controlsHeight - padding;
+
+                    // Tenta manter uma proporção (ex: 4:3), mas respeita o espaço disponível
+                    const aspectRatio = 4 / 3;
+                    let canvasWidth = availableWidth;
+                    let canvasHeight = canvasWidth / aspectRatio;
+
+                    // Se a altura calculada exceder o disponível, ajusta pela altura
+                    if (canvasHeight > availableHeight) {
+                        canvasHeight = availableHeight;
+                        canvasWidth = canvasHeight * aspectRatio;
+                    }
+
+                    // Define o tamanho do canvas (com um mínimo)
+                    canvas.width = Math.max(400, Math.floor(canvasWidth));
+                    canvas.height = Math.max(300, Math.floor(canvasHeight));
+
+                    // Recalcula a origem (centro da visualização) ao redimensionar
+                    // Coloca a origem X no meio e Y um pouco abaixo do meio para melhor visualização isométrica
+                    originX = canvas.width / 2;
+                    originY = canvas.height * 0.6; // Ajuste este valor (0.5 a 0.7) para mudar o centro vertical
+
+                    // O redesenho ocorrerá no próximo frame
+                }
+
+                // Chama resizeCanvas inicialmente e adiciona listener para redimensionamento da janela
+                window.addEventListener('resize', resizeCanvas);
+                resizeCanvas(); // Define o tamanho inicial
+
+                // Inicia o loop de desenho
+                requestAnimationFrame(drawScene);
+
+            } else {
+                // Falha crítica no carregamento, informa o usuário e não continua
+                console.error("Inicialização abortada devido à falha no carregamento das definições.");
+                // Opcional: Esconder a interface principal se o carregamento falhar
+                controlsDiv.style.display = 'none';
+                canvas.style.display = 'none';
+                sidebar.style.display = 'none';
+            }
+        }
+
+        // --- Inicia a Aplicação ---
+        // Garanta que pieces.json exista no mesmo diretório!
+        init();
+
+    </script>
+
+</body>
+</html>

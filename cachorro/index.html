@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Tamagotchi Cachorrinho 3D</title>
+  <style>
+    body {
+      background: #b3e0a7; /* Verde claro */
+      margin: 0;
+      overflow: hidden; /* Esconde barras de rolagem */
+      font-family: Arial, sans-serif;
+    }
+    #painel {
+      position: absolute; /* Painel flutuante */
+      top: 20px;
+      left: 18px;
+      z-index: 9; /* Acima do canvas 3D */
+      background: rgba(255,255,255,0.92); /* Fundo branco semi-transparente */
+      padding: 17px 14px;
+      border-radius: 14px; /* Cantos arredondados */
+      box-shadow: 0 0 10px #5553; /* Sombra suave */
+      width: 255px; /* Largura fixa */
+    }
+    h2 { margin: 0 0 10px 0; }
+    .barra {
+      height: 19px;
+      background: #e0e0e0; /* Fundo cinza claro */
+      border-radius: 7px;
+      margin-bottom: 7px;
+      overflow: hidden; /* Para o nível não vazar */
+    }
+    .nivel {
+      height: 100%;
+      border-radius: 7px; /* Cantos arredondados */
+      font-size: 13px;
+      color: #fff; /* Texto branco */
+      padding-right: 7px;
+      text-align: right; /* Texto alinhado à direita */
+      line-height: 19px; /* Centralizar texto verticalmente */
+      transition: width 0.3s ease, background-color 0.3s ease; /* Animação suave */
+      white-space: nowrap; /* Evita quebra de linha do número */
+      box-sizing: border-box; /* Inclui padding na largura */
+    }
+    /* Cores das barras */
+    .fome { background: #ffd54f; } /* Amarelo */
+    .saude { background: #81c784; } /* Verde */
+    .felicidade { background: #ba68c8; } /* Roxo */
+    .energia { background: #64b5f6; } /* Azul */
+
+    #botoes button {
+      margin: 7px 6px 0 0;
+      padding: 9px 12px;
+      border: none;
+      border-radius: 6px;
+      background: #1976d2; /* Azul */
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background .17s;
+    }
+    #botoes button:hover {
+      background: #125099; /* Azul mais escuro */
+    }
+    #aviso {
+      margin-top: 5px;
+      color: #b71c1c; /* Vermelho escuro */
+      font-weight: bold;
+      min-height: 1em; /* Evita que o painel pule quando o aviso some */
+    }
+    .zzzAnim {
+      font-family: Arial, sans-serif;
+      position: absolute;
+      color: #fff;
+      font-size: 32px;
+      -webkit-text-stroke: 2px #1a237e; /* Contorno azul escuro */
+      text-stroke: 2px #1a237e;
+      text-shadow: 0 2px 7px #0003; /* Sombra */
+      pointer-events: none; /* Não interfere com cliques */
+      opacity: 0.88;
+      left: 50%;
+      transform: translateX(-50%);
+      top: 40%;
+      z-index: 11; /* Acima de tudo, exceto talvez painel */
+    }
+  </style>
+</head>
+<body>
+  <div id="painel">
+    <h2>Seu Cachorrinho 🐶</h2>
+    <div>Fome:
+      <div class="barra"><div class="nivel fome" id="fome_bar">100</div></div>
+    </div>
+    <div>Saúde:
+      <div class="barra"><div class="nivel saude" id="saude_bar">100</div></div>
+    </div>
+    <div>Felicidade:
+      <div class="barra"><div class="nivel felicidade" id="felicidade_bar">100</div></div>
+    </div>
+    <div>Energia:
+      <div class="barra"><div class="nivel energia" id="energia_bar">100</div></div>
+    </div>
+    <div id="botoes">
+      <button id="btnAlimentar">🍖 Alimentar</button>
+      <button id="btnCuidar">💉 Cuidar</button>
+      <button id="btnBrincar">⚾ Brincar</button>
+      <button id="btnDormir">😴 Dormir</button>
+    </div>
+    <div id="aviso"></div>
+  </div>
+  <div id="zzzContainer"></div>
+
+  <!-- CORREÇÃO: Usar type="module" para importar Three.js e OrbitControls -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    // CORREÇÃO: Importar THREE e OrbitControls como módulos
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // --- Estrutura do jogo ---
+    let pet = {
+      fome: 80, saude: 82, felicidade: 80, energia: 94, vivo: true
+    };
+    let avisoTimeout = null;
+
+    // Referências aos elementos do DOM (melhor pegar uma vez)
+    const fomeBar = document.getElementById('fome_bar');
+    const saudeBar = document.getElementById('saude_bar');
+    const felicidadeBar = document.getElementById('felicidade_bar');
+    const energiaBar = document.getElementById('energia_bar');
+    const avisoDiv = document.getElementById('aviso');
+    const zzzContainer = document.getElementById('zzzContainer');
+    const btnAlimentar = document.getElementById('btnAlimentar');
+    const btnCuidar = document.getElementById('btnCuidar');
+    const btnBrincar = document.getElementById('btnBrincar');
+    const btnDormir = document.getElementById('btnDormir');
+
+
+    function atualizarBarras() {
+      function setBarra(barra, valor, classeBase) {
+        const valorInt = Math.max(0, Math.min(100, Math.round(valor))); // Garante 0-100 e arredonda
+        barra.style.width = `${valorInt}%`;
+        barra.innerText = valorInt; // Usar valor arredondado
+
+        // Resetar classe e cor antes de aplicar a nova
+        barra.className = "nivel"; // Reset básico
+        barra.style.backgroundColor = ""; // Resetar cor inline
+
+        if (valorInt < 30) {
+            barra.style.backgroundColor = "#d32f2f"; // Vermelho para baixo nível
+            barra.classList.add(classeBase); // Adiciona a classe base mesmo assim
+        } else {
+            barra.classList.add(classeBase); // Adiciona a classe para cor padrão
+        }
+      }
+      setBarra(fomeBar, pet.fome, "fome");
+      setBarra(saudeBar, pet.saude, "saude");
+      setBarra(felicidadeBar, pet.felicidade, "felicidade");
+      setBarra(energiaBar, pet.energia, "energia");
+    }
+
+    function mostrarAviso(texto) {
+      clearTimeout(avisoTimeout);
+      avisoDiv.innerText = texto;
+      avisoTimeout = setTimeout(() => { avisoDiv.innerText = ""; }, 2800);
+    }
+
+    // --- Variáveis do cenário e dog ---
+    let scene, camera, renderer, controls;
+    let cachorro, parts = {}, clock = new THREE.Clock();
+    let bowl, bone, serum, bola, casinha, dogEstado = 'andando', dogTarget = null;
+    let fenceGroup = new THREE.Group();
+    let dogSpeed = 0.007; // velocidade reduzida
+    let gramadoRadius = 8;
+    // Posições chave como Vector3
+    const dogCasaPos = new THREE.Vector3(-3.65, 0.36, 3.65);
+    const dogTigelaPos = new THREE.Vector3(4, 0.21, 2.4);
+    const dogSeringaPos = new THREE.Vector3(3.2, 0.17, -2.7);
+    const dogBolaPos = new THREE.Vector3(-4, 0.16, -3.2);
+    const dogPosIni = new THREE.Vector3(0, 0.16, 2.0); // Posição inicial ligeiramente ajustada em Y
+
+    let dogDormindo = false, dogEntrouCasa = false;
+    let blockAction = false; // Bloqueia ações durante animações
+
+    // --- Funções de Criação de Objetos 3D ---
+
+    function makeDogHouse() {
+        casinha = new THREE.Group();
+        const baseMat = new THREE.MeshPhongMaterial({ color: 0xc62828 }); // Vermelho escuro
+        const baseGeo = new THREE.BoxGeometry(1.55, 1.16, 1.25);
+        const base = new THREE.Mesh(baseGeo, baseMat);
+        base.position.y = 1.16 / 2; // Metade da altura da base
+        casinha.add(base);
+
+        const roofMat = new THREE.MeshPhongMaterial({ color: 0x6d1313, shininess: 35 }); // Marrom telhado
+        const roofGeo = new THREE.ConeGeometry(1.13, 0.82, 4); // 4 lados = pirâmide
+        const roof = new THREE.Mesh(roofGeo, roofMat);
+        roof.position.y = 1.16 + 0.82 / 2; // Acima da base + metade da altura do telhado
+        roof.rotation.y = Math.PI / 4; // Alinhar lados com eixos
+        casinha.add(roof);
+
+        const portaMat = new THREE.MeshPhongMaterial({ color: 0x222222 }); // Preto
+        const portaGeo = new THREE.TorusGeometry(0.27, 0.055, 12, 24, Math.PI); // Meio Torus
+        const porta = new THREE.Mesh(portaGeo, portaMat);
+        porta.position.set(0, 0.38, 1.25 / 2 + 0.01); // Na frente da base
+        porta.rotation.x = Math.PI / 2; // Deitar o torus
+        casinha.add(porta);
+
+        // Chão interno (opcional, visual)
+        const floorMat = new THREE.MeshPhongMaterial({ color: 0x999999 }); // Cinza
+        const floorGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.08, 24);
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.position.set(0, 0.08 / 2, 0); // No chão da casinha
+        // casinha.add(floor); // Descomentar se quiser chão visível
+
+        casinha.position.copy(dogCasaPos);
+        casinha.position.y = 0; // Ajustar base da casinha ao chão (Y=0)
+        scene.add(casinha);
+    }
+
+    function makeWhiteFence() {
+        fenceGroup.clear(); // Limpa cercas antigas se recriar
+        const seg = 28; // Número de segmentos/postes
+        const r = gramadoRadius + 0.23; // Raio da cerca
+        const postMat = new THREE.MeshPhongMaterial({ color: 0xfff9ef }); // Branco levemente amarelado
+        const hasteMat = new THREE.MeshPhongMaterial({ color: 0xfbeacb }); // Cor de madeira clara
+        const postGeo = new THREE.CylinderGeometry(0.12, 0.10, 1.12, 12);
+        const hasteGeo = new THREE.CylinderGeometry(0.05, 0.05, 1.0, 8); // Comprimento ajustado (distância entre postes)
+
+        for (let i = 0; i < seg; i++) {
+            const ang = Math.PI * 2 / seg * i;
+            const px = Math.cos(ang) * r;
+            const pz = Math.sin(ang) * r;
+
+            // Poste
+            const post = new THREE.Mesh(postGeo, postMat);
+            post.position.set(px, 1.12 / 2, pz); // Metade da altura para base no chão
+            fenceGroup.add(post);
+
+            // Haste conectando ao próximo poste
+            const nextAng = Math.PI * 2 / seg * ((i + 1) % seg);
+            const nx = Math.cos(nextAng) * r;
+            const nz = Math.sin(nextAng) * r;
+
+            // Calcular ponto médio e ângulo para a haste
+            const midX = (px + nx) / 2;
+            const midZ = (pz + nz) / 2;
+            const angleY = Math.atan2(nx - px, nz - pz); // Ângulo da linha entre postes
+            const dist = Math.sqrt(Math.pow(nx - px, 2) + Math.pow(nz - pz, 2)); // Distância real
+
+            const haste = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, dist, 8), hasteMat); // Usar distância real
+            haste.position.set(midX, 0.89, midZ); // Altura da haste
+            haste.rotation.y = angleY; // Rotacionar para alinhar
+            // haste.rotation.z = Math.PI / 2; // Cilindro já está na vertical, rotação Z não necessária se o comprimento for ajustado
+            fenceGroup.add(haste);
+        }
+        scene.add(fenceGroup);
+    }
+
+    function makeDogBowl() {
+        bowl = new THREE.Group();
+        const bowlMat = new THREE.MeshPhongMaterial({ color: 0x94b5ec, shininess: 22 }); // Azul claro
+        const bowlGeo = new THREE.CylinderGeometry(0.38, 0.44, 0.17, 22, 1, false); // Tigela externa (não aberta)
+        const bowlMesh = new THREE.Mesh(bowlGeo, bowlMat);
+        bowlMesh.position.y = 0.17 / 2;
+        bowl.add(bowlMesh);
+
+        // Parte interna simulada (ou usar geometria de torus/lathe)
+        const innerMat = new THREE.MeshPhongMaterial({ color: 0xfbf8ee, side: THREE.DoubleSide }); // Bege claro
+        const innerGeo = new THREE.CylinderGeometry(0.34, 0.39, 0.09, 18);
+        const innerMesh = new THREE.Mesh(innerGeo, innerMat);
+        innerMesh.position.y = 0.17 - 0.09 / 2; // Posicionar no topo da base
+        // bowl.add(innerMesh); // Adiciona a parte interna visual
+
+        bowl.position.copy(dogTigelaPos);
+        bowl.position.y = 0; // Base da tigela no chão
+        scene.add(bowl);
+    }
+
+    function makeBone() {
+        bone = new THREE.Group();
+        const boneMat = new THREE.MeshPhongMaterial({ color: 0xe8ecca }); // Cor de osso
+        const shaftGeo = new THREE.CylinderGeometry(0.10, 0.09, 0.42, 16);
+        const shaft = new THREE.Mesh(shaftGeo, boneMat);
+        shaft.rotation.z = Math.PI / 2; // Deitar o osso
+        bone.add(shaft);
+
+        const ballGeo = new THREE.SphereGeometry(0.13, 14, 14);
+        for (let s of [-1, 1]) { // Para cada lado do eixo
+            const ball1 = new THREE.Mesh(ballGeo, boneMat);
+            ball1.position.set(s * 0.19, 0.09, 0); // Ajustar posição relativa ao eixo deitado
+            bone.add(ball1);
+            const ball2 = ball1.clone();
+            ball2.position.set(s * 0.19, -0.09, 0);
+            bone.add(ball2);
+        }
+        // Posição inicial perto da tigela, mas ajustada para Y=0.1 (acima do chão)
+        bone.position.copy(dogTigelaPos).add(new THREE.Vector3(-0.4, 0.1, 0.0));
+        bone.visible = false; // Começa invisível
+        scene.add(bone);
+    }
+
+    function makeSerum() {
+        serum = new THREE.Group();
+        const ampMat = new THREE.MeshPhongMaterial({ color: 0xc0e6fa, transparent: true, opacity: 0.69 });
+        const ampGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.38, 14);
+        const amp = new THREE.Mesh(ampGeo, ampMat);
+        amp.position.y = 0.38 / 2;
+        serum.add(amp);
+
+        const topMat = new THREE.MeshPhongMaterial({ color: 0x333333 }); // Cinza escuro/borracha
+        const topGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.05, 10); // Tampa mais realista
+        const top = new THREE.Mesh(topGeo, topMat);
+        top.position.y = 0.38 + 0.05 / 2;
+        serum.add(top);
+
+        const needleMat = new THREE.MeshPhongMaterial({ color: 0xaaaaaa }); // Metal
+        const needleGeo = new THREE.CylinderGeometry(0.01, 0.01, 0.15, 8); // Agulha
+        const needle = new THREE.Mesh(needleGeo, needleMat);
+        needle.position.y = 0.38 + 0.05 + 0.15/2;
+        serum.add(needle);
+
+        // Posição inicial perto do local de cuidado, Y ajustado
+        serum.position.copy(dogSeringaPos).setY(0.1);
+        serum.visible = false;
+        scene.add(serum);
+    }
+
+    function makeBola() {
+        const bolaMat = new THREE.MeshPhongMaterial({ color: 0xfbc02d }); // Amarelo ouro
+        const bolaGeo = new THREE.SphereGeometry(0.16, 16, 12);
+        bola = new THREE.Mesh(bolaGeo, bolaMat);
+        // Posição inicial perto do local de brincar, Y ajustado
+        bola.position.copy(dogBolaPos).add(new THREE.Vector3(1, 0.16, 0)); // Y = raio da bola
+        bola.visible = false;
+        scene.add(bola);
+    }
+
+    function makeGrass() {
+        const lawnMat = new THREE.MeshPhongMaterial({ color: 0x78c850, shininess: 10 }); // Verde grama
+        const lawnGeo = new THREE.CylinderGeometry(gramadoRadius, gramadoRadius, 0.1, 64); // Base fina
+        const lawn = new THREE.Mesh(lawnGeo, lawnMat);
+        lawn.position.y = 0.05; // Metade da altura, base em Y=0
+        scene.add(lawn);
+
+        // Adicionar algumas flores/folhas simples
+        const flowerColors = [0xd81b60, 0xfff176, 0x00b8d4, 0x8dcc50];
+        const flowerGeo = new THREE.SphereGeometry(0.06, 7, 7);
+        const leafGeo = new THREE.BoxGeometry(0.18, 0.017, 0.04);
+        const leafMat = new THREE.MeshPhongMaterial({ color: 0x60a040 }); // Verde mais escuro
+
+        for (let i = 0; i < 90; i++) {
+            const theta = Math.random() * Math.PI * 2;
+            const rr = Math.random() * (gramadoRadius - 0.5); // Espalhar dentro do raio
+            const px = Math.cos(theta) * rr;
+            const pz = Math.sin(theta) * rr;
+            const py = 0.1 + Math.random() * 0.02; // Posição Y acima da grama base
+
+            if (Math.random() < 0.12) { // Chance de ser flor
+                const florMat = new THREE.MeshPhongMaterial({ color: flowerColors[Math.floor(Math.random() * flowerColors.length)] });
+                const flor = new THREE.Mesh(flowerGeo, florMat);
+                flor.position.set(px, py + 0.03, pz); // Levemente mais alto
+                scene.add(flor);
+            } else if (Math.random() < 0.34) { // Chance de ser folha
+                const leaf = new THREE.Mesh(leafGeo, leafMat);
+                leaf.position.set(px, py, pz);
+                leaf.rotation.y = Math.random() * Math.PI * 2; // Rotação aleatória
+                scene.add(leaf);
+            }
+        }
+    }
+
+    function criaCachorro() {
+        cachorro = new THREE.Group();
+        const matCorpo = new THREE.MeshPhongMaterial({ color: 0xd2b48c, shininess: 15 }); // Tan (Bege)
+        const matOrelha = new THREE.MeshPhongMaterial({ color: 0x8B4513, shininess: 10 }); // SaddleBrown (Marrom)
+        const matFocinho = new THREE.MeshPhongMaterial({ color: 0x7b5335 }); // Marrom mais escuro
+        const matNariz = new THREE.MeshPhongMaterial({ color: 0x111111 }); // Preto
+        const olhoMat = new THREE.MeshPhongMaterial({ color: 0x222222 }); // Preto olhos
+
+        // Corpo
+        const corpoGeo = new THREE.BoxGeometry(0.6, 0.5, 0.8); // Mais como um corpo
+        parts.corpo = new THREE.Mesh(corpoGeo, matCorpo);
+        parts.corpo.position.set(0, 0.35, -0.1); // Ajustar Y para base + metade altura
+        cachorro.add(parts.corpo);
+
+        // Cabeça
+        const cabecaGeo = new THREE.SphereGeometry(0.23, 32, 24);
+        parts.cabeca = new THREE.Mesh(cabecaGeo, matCorpo);
+        parts.cabeca.position.set(0, 0.65, 0.3); // Posição relativa ao corpo
+        cachorro.add(parts.cabeca);
+
+        // Orelhas
+        const orelhaGeo = new THREE.ConeGeometry(0.1, 0.3, 8); // Formato cônico
+        parts.orelhaDir = new THREE.Mesh(orelhaGeo, matOrelha);
+        parts.orelhaDir.position.set(-0.18, 0.80, 0.28); // Posição na cabeça
+        parts.orelhaDir.rotation.set(0, 0, -Math.PI / 6); // Inclinar um pouco
+        cachorro.add(parts.orelhaDir);
+        parts.orelhaEsq = parts.orelhaDir.clone();
+        parts.orelhaEsq.position.x = 0.18;
+        parts.orelhaEsq.rotation.z = Math.PI / 6;
+        cachorro.add(parts.orelhaEsq);
+
+        // Focinho
+        const focinhoGeo = new THREE.CylinderGeometry(0.08, 0.06, 0.15, 16);
+        const focinho = new THREE.Mesh(focinhoGeo, matFocinho);
+        focinho.position.set(0, 0.60, 0.45); // Na frente da cabeça
+        focinho.rotation.x = Math.PI / 2; // Deitar cilindro
+        cachorro.add(focinho);
+
+        // Nariz
+        const narizGeo = new THREE.SphereGeometry(0.03, 10, 10);
+        const nariz = new THREE.Mesh(narizGeo, matNariz);
+        nariz.position.set(0, 0.60, 0.53); // Ponta do focinho
+        cachorro.add(nariz);
+
+        // Olhos
+        const olhoGeo = new THREE.SphereGeometry(0.025, 10, 10);
+        const olhoR = new THREE.Mesh(olhoGeo, olhoMat);
+        olhoR.position.set(-0.07, 0.70, 0.40); // Posição na cabeça
+        cachorro.add(olhoR);
+        const olhoL = olhoR.clone();
+        olhoL.position.x = 0.07;
+        cachorro.add(olhoL);
+
+        // Pernas
+        const pernaGeo = new THREE.CylinderGeometry(0.07, 0.05, 0.30, 10);
+        const pernaMat = matCorpo; // Mesma cor do corpo
+        parts.patas = [];
+        // Frente
+        const pernaFL = new THREE.Mesh(pernaGeo, pernaMat);
+        pernaFL.position.set(0.20, 0.15, 0.2); // Posição relativa ao corpo
+        cachorro.add(pernaFL); parts.patas.push(pernaFL);
+        const pernaFR = pernaFL.clone();
+        pernaFR.position.x = -0.20;
+        cachorro.add(pernaFR); parts.patas.push(pernaFR);
+        // Trás
+        const pernaBL = pernaFL.clone();
+        pernaBL.position.set(0.18, 0.15, -0.35);
+        cachorro.add(pernaBL); parts.patas.push(pernaBL);
+        const pernaBR = pernaBL.clone();
+        pernaBR.position.x = -0.18;
+        cachorro.add(pernaBR); parts.patas.push(pernaBR);
+
+        // Rabo
+        const raboGeo = new THREE.CylinderGeometry(0.04, 0.02, 0.32, 14);
+        parts.rabo = new THREE.Mesh(raboGeo, matOrelha); // Cor da orelha
+        parts.rabo.position.set(0, 0.45, -0.5); // Atrás do corpo
+        parts.rabo.rotation.x = -Math.PI / 4; // Apontando para cima
+        cachorro.add(parts.rabo);
+
+        // Posição inicial e adicionar à cena
+        cachorro.position.copy(dogPosIni);
+        cachorro.position.y = 0.15; // Ajustar Y para patas tocarem o chão (base da perna em Y=0)
+        scene.add(cachorro);
+    }
+
+    function criaCenario() {
+        makeGrass();
+        makeDogHouse();
+        makeWhiteFence();
+        makeDogBowl();
+        makeBone();
+        makeSerum();
+        makeBola();
+    }
+
+    // --- Lógica de Movimento e Animação ---
+
+    function randomWalkTarget() {
+        for (let tries = 0; tries < 10; tries++) {
+            const ang = Math.random() * Math.PI * 2;
+            const r = 1.0 + Math.random() * (gramadoRadius - 2.0); // Andar mais pelo centro
+            const nv = new THREE.Vector3(Math.cos(ang) * r, cachorro.position.y, Math.sin(ang) * r); // Manter Y
+
+            // Verificar distância dos objetos fixos
+            if (nv.distanceTo(dogCasaPos) > 1.5 && // Não muito perto da casa
+                nv.distanceTo(dogTigelaPos) > 1.2 && // Não muito perto da tigela
+                nv.distanceTo(dogSeringaPos) > 1.0) { // Não muito perto da seringa (local imaginário)
+                return nv;
+            }
+        }
+        // Se falhar, volta pra perto do início
+        return dogPosIni.clone().setY(cachorro.position.y);
+    }
+
+    function updateDogWalk() {
+        if (dogEstado !== 'andando' || !cachorro) return;
+
+        if (!dogTarget || cachorro.position.distanceTo(dogTarget) < 0.2) {
+            dogTarget = randomWalkTarget();
+        }
+
+        const direction = dogTarget.clone().sub(cachorro.position);
+        const distance = direction.length();
+
+        if (distance < 0.01) { // Já chegou (evita divisão por zero)
+            dogTarget = null; // Pega novo alvo no próximo frame
+            return;
+        }
+
+        direction.normalize();
+
+        // Suavizar rotação
+        const targetAngle = Math.atan2(direction.x, direction.z);
+        // Lidar com wrap around de ângulos (ex: de PI para -PI)
+        let angleDiff = targetAngle - cachorro.rotation.y;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        cachorro.rotation.y += angleDiff * 0.1; // Ajustar velocidade de rotação
+
+        // Movimento
+        const moveSpeed = clock.getDelta() * dogSpeed * 500; // Velocidade baseada no tempo
+        const step = Math.min(moveSpeed, distance); // Não ultrapassar o alvo
+        cachorro.position.add(direction.multiplyScalar(step));
+        // Manter Y constante (ou ajustar ao terreno se houver)
+        // cachorro.position.y = 0.15;
+
+        // Animação simples de andar
+        const t = clock.elapsedTime * 10; // Usar tempo do clock para animação consistente
+        const walkAmplitude = 0.3;
+        parts.patas[0].rotation.x = Math.sin(t) * walkAmplitude; // Frente Esquerda
+        parts.patas[1].rotation.x = Math.sin(t + Math.PI) * walkAmplitude; // Frente Direita (oposto)
+        parts.patas[2].rotation.x = Math.sin(t + Math.PI) * walkAmplitude; // Trás Esquerda (oposto da FE)
+        parts.patas[3].rotation.x = Math.sin(t) * walkAmplitude; // Trás Direita (oposto da FD)
+
+        // Balanço sutil do corpo/cabeça
+        // parts.corpo.rotation.z = Math.sin(t) * 0.05;
+        // parts.cabeca.rotation.z = Math.sin(t * 0.9) * 0.08; // Cabeça balança um pouco diferente
+        parts.rabo.rotation.y = Math.sin(t * 1.5) * 0.5; // Abanar rabo andando
+    }
+
+    // --- Funções de Ação (async/await para sequências) ---
+
+    async function alimentar() {
+        if (blockAction || !pet.vivo) return;
+        if (pet.fome >= 97) { mostrarAviso("O cachorro já está cheio!"); return; }
+
+        blockAction = true;
+        dogEstado = 'indo-comer';
+        mostrarAviso("Indo comer...");
+
+        await dogGoTo(dogTigelaPos, 0.8); // Ir até perto da tigela
+        if (!pet.vivo) { blockAction = false; return; } // Checar se morreu no caminho
+
+        // Virar para a tigela (aproximadamente)
+        const lookAtPos = dogTigelaPos.clone();
+        lookAtPos.y = cachorro.position.y; // Manter altura do olhar
+        cachorro.lookAt(lookAtPos);
+
+        bone.position.copy(dogTigelaPos).add(new THREE.Vector3(0, 0.15, 0.5)); // Posição do osso perto
+        bone.visible = true;
+
+        await animDogEating(); // Animação de comer
+        bone.visible = false;
+
+        if (pet.vivo) { // Atualizar status apenas se ainda vivo
+            pet.fome = Math.min(100, pet.fome + 23 + Math.random() * 5); // Adiciona um pouco de variação
+            pet.felicidade = Math.min(100, pet.felicidade + 6 + Math.random() * 3);
+            pet.energia = Math.min(100, pet.energia + 2);
+            mostrarAviso("Você alimentou o cachorro! 🦴");
+            atualizarBarras();
+        }
+
+        dogEstado = 'andando';
+        blockAction = false;
+    }
+
+    async function cuidar() {
+      if(blockAction||!pet.vivo) return;
+      if (pet.saude>=97) { mostrarAviso("Já está saudável!"); return;}
+
+      blockAction = true;
+      dogEstado='indo-vacina';
+      mostrarAviso("Indo tomar remédio...");
+
+      await dogGoTo(dogSeringaPos, 0.60); // Ir para perto do local de cuidado
+      if (!pet.vivo) { blockAction = false; return; }
+
+       // Virar para a posição da seringa (aproximadamente)
+       const lookAtPos = dogSeringaPos.clone().setY(cachorro.position.y);
+       cachorro.lookAt(lookAtPos);
+
+      serum.position.copy(cachorro.position).add(new THREE.Vector3(0, 0.5, 0.3)); // Seringa aparece perto
+      serum.visible=true;
+
+      await animDogVaccine(); // Animação da vacina
+      serum.visible = false;
+
+       if (pet.vivo) {
+            pet.saude = Math.min(100, pet.saude + 18 + Math.random() * 4);
+            pet.felicidade = Math.max(0, pet.felicidade - 3 + Math.random() * 5); // Pode gostar ou não
+            pet.energia = Math.max(0, pet.energia - 7 - Math.random() * 3);
+            mostrarAviso("O cachorro tomou o remédio! 💉");
+            atualizarBarras();
+        }
+
+      dogEstado='andando';
+      blockAction=false;
+    }
+
+    async function brincar() {
+        if (blockAction || !pet.vivo) return;
+        if (pet.energia <= 13) { mostrarAviso("Está cansado demais para brincar!"); return; }
+
+        blockAction = true;
+        dogEstado = 'indo-brincar';
+        mostrarAviso("Oba, brincar!");
+
+        await dogGoTo(dogBolaPos, 0.8); // Ir para perto da bola
+         if (!pet.vivo) { blockAction = false; return; }
+
+        // Virar para a bola (aproximadamente)
+        const lookAtPos = dogBolaPos.clone().setY(cachorro.position.y);
+        cachorro.lookAt(lookAtPos);
+
+        bola.position.copy(dogBolaPos).add(new THREE.Vector3(0, 0.16, 0.5)); // Bola aparece perto
+        bola.visible = true;
+
+        await animDogPlayBall(); // Animação de brincar
+        bola.visible = false;
+
+        if (pet.vivo) {
+            pet.felicidade = Math.min(100, pet.felicidade + 15 + Math.random() * 5);
+            pet.energia = Math.max(0, pet.energia - 16 - Math.random() * 4);
+            pet.fome = Math.max(0, pet.fome - 8 - Math.random() * 3);
+            mostrarAviso("Vocês brincaram juntos! ⚽");
+            atualizarBarras();
+        }
+
+        dogEstado = 'andando';
+        blockAction = false;
+    }
+
+    async function dormir() {
+        if (blockAction || !pet.vivo) return;
+        if (pet.energia >= 96) { mostrarAviso("Não está com sono agora."); return; }
+
+        blockAction = true;
+        dogEstado = 'indo-dormir';
+        dogDormindo = true; // Estado especial
+        mostrarAviso("Hora de dormir...");
+
+        // Ponto de entrada da casa
+        const casaEntradaPos = dogCasaPos.clone().add(new THREE.Vector3(0, 0, 0.8)); // Um pouco na frente da porta
+        casaEntradaPos.y = cachorro.position.y;
+
+        await dogGoTo(casaEntradaPos, 0.1); // Ir até a entrada
+         if (!pet.vivo) { blockAction = false; dogDormindo = false; return; }
+
+        // Virar para entrar na casa
+        const lookAtPos = dogCasaPos.clone().setY(cachorro.position.y);
+        cachorro.lookAt(lookAtPos);
+
+        await animDogSleep(); // Animação de entrar e dormir
+
+        // ------ TEMPO DE DORMIR ------
+        // A animação interna cuida do Zzz e de esconder/mostrar o cachorro
+        // O tempo de espera é controlado dentro de animDogSleep com setTimeout
+
+        // --- FIM DO SONO (acontece após o setTimeout em animDogSleep) ---
+        // O cachorro já foi tornado visível novamente pela animação
+
+         if (pet.vivo) { // Só atualiza se ainda vivo após acordar
+            pet.energia = Math.min(100, pet.energia + 40 + Math.random() * 10); // Recupera bastante energia
+            pet.saude = Math.min(100, pet.saude + 10 + Math.random() * 5); // Dormir recupera saúde
+            pet.fome = Math.max(0, pet.fome - 7 - Math.random() * 3); // Gasta um pouco de fome
+            mostrarAviso("O cachorro acordou revigorado! ☀️");
+            atualizarBarras();
+         }
+
+        // Resetar estados
+        dogDormindo = false;
+        dogEntrouCasa = false;
+        dogEstado = 'andando';
+        blockAction = false;
+        // Mover cachorro para fora da casa após acordar
+        cachorro.position.copy(casaEntradaPos); // Coloca na entrada novamente
+    }
+
+    // --- Funções Auxiliares de Animação ---
+
+    function dogGoTo(target, stopDist) {
+        return new Promise(resolve => {
+            const targetPos = target.clone(); // Copiar para não modificar original
+            targetPos.y = cachorro.position.y; // Ignorar Y do alvo, manter Y atual do cachorro
+            const minStep = 0.01; // Distância mínima para considerar "chegou"
+
+            function frame() {
+                if (!pet.vivo || dogEstado.startsWith('cancel')) { // Permitir cancelamento
+                     if(dogEstado.startsWith('cancel')) dogEstado = 'andando'; // Resetar estado se cancelado
+                     resolve(false); // Resolvem indicando que não completou
+                     return;
+                }
+
+                const currentPos = cachorro.position;
+                const direction = targetPos.clone().sub(currentPos);
+                let distance = direction.length();
+
+                if (distance <= (stopDist || minStep)) {
+                    resolve(true); // Chegou ao destino
+                    return;
+                }
+
+                direction.normalize();
+
+                // Rotação suave
+                const targetAngle = Math.atan2(direction.x, direction.z);
+                let angleDiff = targetAngle - cachorro.rotation.y;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                cachorro.rotation.y += angleDiff * 0.15; // Velocidade de giro
+
+                // Movimento
+                const moveSpeed = clock.getDelta() * dogSpeed * 600; // Usar delta time
+                const step = Math.min(moveSpeed, distance);
+                cachorro.position.add(direction.multiplyScalar(step));
+                // cachorro.position.y = 0.15; // Manter Y fixo
+
+                // Animação de andar durante o GoTo
+                const t = clock.elapsedTime * 12;
+                const walkAmplitude = 0.35;
+                parts.patas.forEach((pata, i) => {
+                    pata.rotation.x = Math.sin(t + (i % 2 === 0 ? 0 : Math.PI)) * walkAmplitude * (i < 2 ? 1 : -1);
+                });
+                 parts.rabo.rotation.y = Math.sin(t * 1.5) * 0.6;
+
+                requestAnimationFrame(frame);
+            }
+            frame(); // Inicia o loop
+        });
+    }
+
+    function wait(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function animDogEating() {
+        const duration = 1500; // 1.5 segundos comendo
+        const startTime = clock.elapsedTime;
+        const headStartY = parts.cabeca.position.y;
+        const headStartRotX = parts.cabeca.rotation.x;
+
+        while (clock.elapsedTime < startTime + duration / 1000) {
+             if (!pet.vivo) return; // Parar se morrer
+            const elapsed = clock.elapsedTime - startTime;
+            const phase = (elapsed * 1000) % 500 / 500; // Ciclo de 0.5 seg
+
+            // Movimento cabeça para baixo e para cima
+            parts.cabeca.rotation.x = headStartRotX - Math.sin(phase * Math.PI) * 0.5; // Abaixar e levantar
+            parts.cabeca.position.y = headStartY - Math.sin(phase * Math.PI) * 0.05;
+
+            // Mexer rabo feliz
+            parts.rabo.rotation.z = Math.sin(clock.elapsedTime * 15) * 0.6;
+
+            await wait(16); // Espera aprox 1 frame
+        }
+        // Resetar posição/rotação da cabeça
+        parts.cabeca.position.y = headStartY;
+        parts.cabeca.rotation.x = headStartRotX;
+    }
+
+     async function animDogVaccine() {
+        const duration = 1200; // 1.2 segundos
+        const startTime = clock.elapsedTime;
+        const serumStartY = serum.position.y;
+        const dogStartRotX = cachorro.rotation.x;
+
+        // Aproximar seringa
+        const targetSerumY = cachorro.position.y + 0.3;
+        while(serum.position.y > targetSerumY + 0.05) {
+             if (!pet.vivo) return;
+             serum.position.y -= 0.02;
+             await wait(16);
+        }
+
+        // Pequena tremida/reclamada
+         parts.cabeca.rotation.z = 0.2; await wait(100);
+         parts.cabeca.rotation.z = -0.2; await wait(100);
+         parts.cabeca.rotation.z = 0;
+         cachorro.position.x += 0.05; await wait(80);
+         cachorro.position.x -= 0.05; await wait(80);
+
+        // Afastar seringa
+        while(serum.position.y < serumStartY) {
+             if (!pet.vivo) return;
+             serum.position.y += 0.03;
+             await wait(16);
+        }
+         serum.position.y = serumStartY; // Garantir posição final
+    }
+
+    async function animDogPlayBall() {
+        const duration = 2500; // 2.5 segundos brincando
+        const startTime = clock.elapsedTime;
+        const bolaStartY = bola.position.y;
+        const bolaStartZ = bola.position.z;
+        const dogStartX = cachorro.position.x;
+
+
+        while(clock.elapsedTime < startTime + duration/1000) {
+             if (!pet.vivo) return;
+             const elapsed = clock.elapsedTime - startTime;
+             const phase = elapsed * 4; // Velocidade da animação
+
+            // Mover bola (simples quicar e ir pra frente/trás)
+            bola.position.y = bolaStartY + Math.abs(Math.sin(phase * 1.5)) * 0.4; // Quicar
+            bola.position.z = bolaStartZ + Math.sin(phase) * 0.6; // Mover frente/trás
+
+            // Cachorro segue a bola (simplesmente)
+            cachorro.position.x += (bola.position.x - cachorro.position.x) * 0.05;
+            cachorro.position.z += (bola.position.z - cachorro.position.z) * 0.05;
+
+            // Olhar para a bola
+            const lookPos = bola.position.clone().setY(cachorro.position.y);
+            cachorro.lookAt(lookPos);
+
+            // Abanar rabo super feliz
+             parts.rabo.rotation.z = Math.sin(clock.elapsedTime * 25) * 0.8;
+
+            await wait(16);
+        }
+         // Resetar posição da bola e cachorro (opcional)
+         bola.position.y = bolaStartY;
+         bola.position.z = bolaStartZ;
+         // cachorro.position.x = dogStartX; // Pode deixar onde parou
+    }
+
+    async function animDogSleep() {
+        const sleepDuration = 3500; // Tempo total dormindo (3.5s)
+        const enterDuration = 500; // Tempo para entrar na casa
+
+        // 1. Animação de entrar na casa
+        const targetPos = dogCasaPos.clone().setY(cachorro.position.y); // Posição dentro da casa
+        const startTime = clock.elapsedTime;
+        while(clock.elapsedTime < startTime + enterDuration/1000) {
+             if (!pet.vivo) return;
+             const t = (clock.elapsedTime - startTime) / (enterDuration/1000); // Progresso 0 a 1
+             cachorro.position.lerp(targetPos, t * 0.15); // Interpolar para dentro suavemente
+             parts.cabeca.rotation.x = -t * 0.4; // Abaixar cabeça
+             await wait(16);
+        }
+
+        // 2. Esconder cachorro, mostrar Zzz
+        cachorro.visible = false;
+        dogEntrouCasa = true; // Flag para lógica principal saber
+        criaZzzAnim(); // Inicia animação Zzz
+
+        // 3. Esperar o tempo de sono
+        await wait(sleepDuration - enterDuration); // Espera o restante do tempo
+
+        // 4. Parar Zzz (já some sozinho), mostrar cachorro
+        // zzzContainer.innerHTML = ""; // Limpar Zzz se necessário
+        cachorro.visible = true;
+        parts.cabeca.rotation.x = 0; // Levantar cabeça
+        dogEntrouCasa = false; // Resetar flag
+    }
+
+    function criaZzzAnim() {
+        if (!dogDormindo) return; // Só cria se estiver no estado de dormir
+
+        let div = document.createElement("div");
+        div.className = "zzzAnim";
+        div.innerHTML = "z Z z"; // Zzz
+        // Calcular posição inicial perto da casa na tela
+        const screenPos = toScreenPosition(dogCasaPos, camera);
+        const startTop = screenPos.y - 80; // Acima da casa
+        const startLeft = screenPos.x;
+
+        div.style.top = startTop + "px";
+        div.style.left = startLeft + "px";
+        zzzContainer.appendChild(div);
+
+        let t = 0;
+        const maxTime = 1.5; // Duração da animação de um Zzz (em segundos)
+
+        function anim() {
+            if (!dogDormindo || !zzzContainer.contains(div)) { // Parar se acordar ou div for removido
+                if(zzzContainer.contains(div)) zzzContainer.removeChild(div);
+                return;
+            }
+
+            const dt = clock.getDelta(); // Tempo desde ultimo frame
+            t += dt;
+
+            div.style.top = (startTop - t * 40) + "px"; // Mover para cima
+            div.style.opacity = Math.max(0, 0.94 - (t / maxTime) * 0.94).toString(); // Fade out
+            div.style.transform = `translateX(-50%) scale(${1 + t * 0.2})`; // Expandir um pouco
+
+            if (t < maxTime) {
+                requestAnimationFrame(anim);
+            } else {
+                zzzContainer.removeChild(div); // Remove ao terminar
+                // Gera o próximo Zzz se ainda estiver dormindo
+                if(dogDormindo && dogEntrouCasa) setTimeout(criaZzzAnim, 300); // Intervalo entre Zzzs
+            }
+        }
+        anim(); // Inicia a animação
+    }
+
+    // Helper para converter posição 3D para 2D (tela)
+    function toScreenPosition(objPos, cam) {
+        const vector = objPos.clone();
+        vector.project(cam); // Converte 3D para NDC (-1 a +1)
+        const widthHalf = window.innerWidth / 2;
+        const heightHalf = window.innerHeight / 2;
+        vector.x = (vector.x * widthHalf) + widthHalf;
+        vector.y = -(vector.y * heightHalf) + heightHalf;
+        return { x: vector.x, y: vector.y };
+    }
+
+
+    // --- Game Loop Principal e Lógica de Status ---
+
+    function tick() {
+        if (!pet.vivo) return;
+
+        const delta = 0.8; // Simular passagem de tempo (intervalo fixo de 800ms)
+
+        // Reduções baseadas no estado atual
+        let fomeDec = 0.058 * delta;
+        let energiaDec = 0.030 * delta;
+        let felicidadeDec = 0.035 * delta;
+        let saudeDec = 0.035 * delta;
+
+        // Penalidades por status baixos
+        if (pet.fome < 33) felicidadeDec += 0.08 * delta;
+        if (pet.fome < 28) saudeDec += 0.18 * delta;
+        if (pet.fome < 22) energiaDec += 0.07 * delta;
+        if (pet.fome === 0) saudeDec += 0.20 * delta; // Penalidade extra se fome zerar
+        if (pet.felicidade < 30) energiaDec += 0.05 * delta; // Tristeza cansa
+        if (pet.energia < 20) felicidadeDec += 0.06 * delta; // Cansaço deixa triste
+        if (pet.saude < 40) { // Doente afeta tudo
+             felicidadeDec += 0.07 * delta;
+             energiaDec += 0.06 * delta;
+        }
+
+        // Aplicar decréscimos, garantindo mínimo 0
+        pet.fome = Math.max(0, pet.fome - fomeDec);
+        pet.energia = Math.max(0, pet.energia - energiaDec);
+        pet.felicidade = Math.max(0, pet.felicidade - felicidadeDec);
+        pet.saude = Math.max(0, pet.saude - saudeDec);
+
+        // Verificar condição de "morte"
+        if ((pet.saude === 0 || pet.fome === 0 || pet.energia === 0) && pet.vivo) {
+            pet.vivo = false; // Marca como não vivo
+            dogEstado = 'morto'; // Estado final
+            mostrarAviso("😢 Seu cachorro não está bem...");
+
+            // Animação de "morte" (simples fade out ou tombar)
+            let opacity = 1;
+            const fadeInterval = setInterval(() => {
+                opacity -= 0.05;
+                if (cachorro) {
+                    // Função recursiva para aplicar opacidade a todos os filhos Mesh
+                    function setOpacity(obj, value) {
+                        if (obj.material) {
+                            // Clonar material para não afetar outros objetos que possam usar o mesmo material
+                            if (!obj.userData.originalMaterial) {
+                                obj.userData.originalMaterial = obj.material;
+                                obj.material = obj.material.clone();
+                            }
+                            obj.material.transparent = true;
+                            obj.material.opacity = value;
+                        }
+                        obj.children.forEach(child => setOpacity(child, value));
+                    }
+                    setOpacity(cachorro, opacity);
+                }
+                if (opacity <= 0) {
+                     clearInterval(fadeInterval);
+                     if(cachorro) cachorro.visible = false; // Esconder completamente
+                     mostrarAviso("Você não cuidou bem dele... Atualize para recomeçar.");
+                     // Desabilitar botões
+                     btnAlimentar.disabled = true;
+                     btnCuidar.disabled = true;
+                     btnBrincar.disabled = true;
+                     btnDormir.disabled = true;
+                }
+            }, 50); // Fade out rápido
+
+            // Limpar timeouts e intervalos pendentes
+            clearInterval(gameTickInterval);
+            clearTimeout(avisoTimeout);
+        }
+
+        atualizarBarras(); // Atualiza a UI com os novos valores
+    }
+
+    // --- Inicialização 3D ---
+
+    function inicia3D() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x9be8b8); // Verde mais claro
+        scene.fog = new THREE.Fog(0x9be8b8, 15, 30); // Névoa suave
+
+        camera = new THREE.PerspectiveCamera(47, window.innerWidth / window.innerHeight, 0.1, 100); // Near/Far ajustados
+        camera.position.set(-5, 4.5, 9); // Posição inicial da câmera
+        camera.lookAt(0, 0.5, 0); // Olhar para o centro da cena
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio); // Melhor qualidade em telas HiDPI
+        // renderer.shadowMap.enabled = true; // Habilitar sombras se usar luzes que projetam sombra
+        // renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Tipo de sombra
+        document.body.appendChild(renderer.domElement);
+
+        // Controles de Órbita
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enablePan = true; // Permitir mover a câmera lateralmente
+        controls.enableDamping = true; // Efeito de suavização ao soltar
+        controls.dampingFactor = 0.08; // Quão rápido para a suavização
+        controls.minDistance = 4; // Zoom mínimo
+        controls.maxDistance = 25; // Zoom máximo
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; // Limitar ângulo vertical para não ver por baixo
+        controls.target.set(0, 0.7, 0); // Ponto para onde a câmera e controles olham
+        controls.update();
+
+        // Luzes
+        const ambLight = new THREE.AmbientLight(0xffffff, 0.6); // Luz ambiente geral
+        scene.add(ambLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffefd5, 0.8); // Luz direcional (sol)
+        dirLight.position.set(-8, 15, 10);
+        // dirLight.castShadow = true; // Habilitar sombra para esta luz
+        // Configurações de sombra (ajustar conforme necessário)
+        // dirLight.shadow.mapSize.width = 1024;
+        // dirLight.shadow.mapSize.height = 1024;
+        // dirLight.shadow.camera.near = 0.5;
+        // dirLight.shadow.camera.far = 50;
+        scene.add(dirLight);
+        // scene.add(dirLight.target); // Opcional: visualizar alvo da luz
+
+        // Criar os elementos da cena
+        criaCenario();
+        criaCachorro();
+
+        // Listeners
+        window.addEventListener('resize', onWindowResize, false);
+        btnAlimentar.addEventListener('click', alimentar);
+        btnCuidar.addEventListener('click', cuidar);
+        btnBrincar.addEventListener('click', brincar);
+        btnDormir.addEventListener('click', dormir);
+
+
+        atualizarBarras(); // Estado inicial das barras
+        anima(); // Iniciar loop de animação
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        // Recalcular posição Zzz se a janela mudar durante o sono
+        if(dogDormindo && dogEntrouCasa) {
+            zzzContainer.innerHTML = ""; // Limpar Zzzs antigos
+            criaZzzAnim(); // Recriar na nova posição
+        }
+    }
+
+    function anima() {
+        // Parar animação se não estiver vivo
+        if (!pet.vivo && dogEstado === 'morto') {
+             renderer.render(scene, camera); // Renderizar uma última vez (com fade out)
+             return; // Não chamar requestAnimationFrame novamente
+        }
+
+        requestAnimationFrame(anima);
+        clock.getDelta(); // Atualiza o delta time interno do clock
+
+        if (pet.vivo) {
+            if (dogEstado === 'andando') {
+                updateDogWalk(); // Movimento aleatório
+            } else if (dogEstado !== 'morto' && !dogDormindo) {
+                 // Abanar rabo se estiver parado mas acordado
+                 if(parts.rabo) parts.rabo.rotation.z = Math.sin(clock.elapsedTime * 8) * 0.4;
+            }
+             // Reset rabo rotation if sleeping/entering house?
+            // if(dogDormindo && parts.rabo) parts.rabo.rotation.z = 0;
+
+            // Se entrou na casa e está dormindo, garantir que está invisível
+             if(dogDormindo && dogEntrouCasa && cachorro) {
+                 cachorro.visible = false;
+             }
+        }
+
+        controls.update(); // Necessário se enableDamping = true
+        renderer.render(scene, camera);
+    }
+
+    // --- Iniciar o Jogo ---
+    inicia3D();
+    const gameTickInterval = setInterval(tick, 800); // Iniciar loop de atualização de status
+
+  </script>
+</body>
+</html>

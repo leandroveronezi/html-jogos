@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jogo da Cobrinha Pixelado com IA (Anti-Loop)</title>
+    <style>
+        /* CSS Mantido Igual */
+        body { display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; padding-top: 20px; margin: 0; background-color: #1a1a2e; font-family: 'Courier New', Courier, monospace; color: #e0f2e9; flex-wrap: wrap; }
+        canvas { border: 5px solid #4e4e8e; background-color: #2a2a4a; image-rendering: pixelated; image-rendering: -moz-crisp-edges; image-rendering: crisp-edges; box-shadow: 0 0 15px rgba(128, 128, 255, 0.4); margin: 10px; }
+        #game-container, #nn-container, #controls-container { text-align: center; margin: 10px; padding: 15px; background-color: #2a2a4a; border: 2px solid #4e4e8e; border-radius: 8px; }
+        #info, #ai-info { margin-bottom: 10px; font-size: 1.1em; color: #a2d5f2; }
+        #instructions, #ai-instructions { margin-top: 10px; font-size: 0.9em; color: #bbb; }
+        button { background-color: #4e4e8e; color: #e0f2e9; border: 2px solid #a2d5f2; padding: 8px 15px; margin: 5px; font-family: inherit; cursor: pointer; border-radius: 5px; transition: background-color 0.2s, transform 0.1s; }
+        button:hover { background-color: #6a6aaf; }
+        button:active { transform: scale(0.95); }
+        #nnCanvas { background-color: #353555; }
+        .neuron { transition: fill 0.1s ease-in-out; }
+    </style>
+</head>
+<body>
+    <!-- HTML Mantido Igual -->
+     <div id="game-container">
+        <h2>Jogo</h2>
+        <div id="info">
+            Modo: <span id="mode">Jogador</span> | Pontos: <span id="score">0</span> | Nível: <span id="level">1</span> | Recorde (Jogador): <span id="highScore">0</span>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="instructions">
+            Use as Setas para mover (Modo Jogador).
+        </div>
+    </div>
+
+    <div id="nn-container">
+        <h2>Visualizador da Rede Neural</h2>
+        <canvas id="nnCanvas"></canvas>
+         <div id="ai-instructions">
+            Círculos representam neurônios. Cor indica ativação (escuro=baixo, claro=alto).
+        </div>
+    </div>
+
+    <div id="controls-container">
+        <h2>Controles & Treinamento IA</h2>
+         <div id="ai-info">
+            Geração: <span id="generation">0</span> | Melhor Fitness: <span id="bestFitness">0</span> | Fitness Atual: <span id="currentFitness">0</span> <br>
+            Melhor NN Salvo? <span id="savedStatus">Não</span>
+        </div>
+        <button id="playerModeBtn">Modo Jogador</button>
+        <button id="aiModeBtn">Rodar Melhor IA</button>
+        <button id="trainBtn">Iniciar Treinamento</button>
+        <button id="stopTrainBtn" disabled>Parar Treinamento</button>
+        <button id="saveNNBtn" disabled>Salvar Melhor NN</button>
+        <button id="loadNNBtn">Carregar NN Salvo</button>
+        <button id="exportNNBtn" disabled>Exportar Melhor NN</button>
+        <button id="clearNNBtn">Limpar NN Salvo</button>
+        <input type="file" id="importNNInput" accept=".json" style="display: none;">
+        <button id="importNNBtn">Importar NN (.json)</button>
+         <br>
+         <label for="speedRange">Velocidade Simulação:</label>
+         <input type="range" id="speedRange" min="1" max="200" value="50"> <span id="speedValue">50</span>ms
+    </div>
+
+    <script>
+        // --- Elementos DOM (Mantidos) ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const nnCanvas = document.getElementById('nnCanvas');
+        const nnCtx = nnCanvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const levelElement = document.getElementById('level');
+        const highScoreElement = document.getElementById('highScore');
+        const modeElement = document.getElementById('mode');
+        const generationElement = document.getElementById('generation');
+        const bestFitnessElement = document.getElementById('bestFitness');
+        const currentFitnessElement = document.getElementById('currentFitness');
+        const savedStatusElement = document.getElementById('savedStatus');
+        const playerModeBtn = document.getElementById('playerModeBtn');
+        const aiModeBtn = document.getElementById('aiModeBtn');
+        const trainBtn = document.getElementById('trainBtn');
+        const stopTrainBtn = document.getElementById('stopTrainBtn');
+        const saveNNBtn = document.getElementById('saveNNBtn');
+        const loadNNBtn = document.getElementById('loadNNBtn');
+        const exportNNBtn = document.getElementById('exportNNBtn');
+        const clearNNBtn = document.getElementById('clearNNBtn');
+        const importNNInput = document.getElementById('importNNInput');
+        const importNNBtn = document.getElementById('importNNBtn');
+        const speedRange = document.getElementById('speedRange');
+        const speedValue = document.getElementById('speedValue');
+
+
+        // --- Configurações do Jogo (Mantidas) ---
+        const GRID_SIZE = 20;
+        const GRID_WIDTH = 20;
+        const GRID_HEIGHT = 16;
+        const CANVAS_WIDTH = GRID_SIZE * GRID_WIDTH;
+        const CANVAS_HEIGHT = GRID_SIZE * GRID_HEIGHT;
+
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+
+        // Paleta de Cores (Mantida)
+        const COLOR_BACKGROUND_DARK = "#3b3b58";
+        const COLOR_BACKGROUND_LIGHT = "#4f4f76";
+        const COLOR_SNAKE_HEAD = "#ff6b6b";
+        const COLOR_SNAKE_BODY = "#ff8e71";
+        const COLOR_SNAKE_SHADOW = "#c44d4d";
+        const COLOR_FOOD = "#86ff70";
+        const COLOR_FOOD_SHADOW = "#5db04d";
+        const COLOR_EYE = "#ffffff";
+        const COLOR_PUPIL = "#000000";
+        const COLOR_GAME_OVER_BG = "rgba(42, 42, 74, 0.8)";
+        const COLOR_GAME_OVER_TEXT = "#ffdd59";
+        const COLOR_SHADOW_OFFSET = Math.max(1, Math.floor(GRID_SIZE * 0.1));
+
+        // --- Configurações da IA e NN (Mantidas) ---
+        const NN_INPUT_NODES = 8;
+        const NN_HIDDEN_NODES = 12;
+        const NN_OUTPUT_NODES = 3;
+        const NN_VIS_WIDTH = 300;
+        const NN_VIS_HEIGHT = CANVAS_HEIGHT;
+        const NN_NEURON_RADIUS = 8;
+        const NN_LAYER_SPACING = 80;
+        const NN_NEURON_SPACING_V = 25;
+
+        nnCanvas.width = NN_VIS_WIDTH;
+        nnCanvas.height = NN_VIS_HEIGHT;
+
+        const GA_POPULATION_SIZE = 50;
+        const GA_MUTATION_RATE = 0.1;
+        const GA_MUTATION_AMOUNT = 0.2;
+        const GA_ELITISM_COUNT = 2;
+
+        // --- *NOVO* Configurações Anti-Loop ---
+        const LOOP_DETECTION_WINDOW = 20;   // Quantos passos recentes analisar
+        const LOOP_DETECTION_THRESHOLD = 5; // Quantas visitas à mesma célula na janela indicam loop
+        const LOOP_PUNISHMENT = -120;       // Penalidade de fitness por loop detectado
+
+        // --- Estado do Jogo (Adicionado positionHistory) ---
+        let snake;
+        let food;
+        let direction;
+        let nextDirection;
+        let score;
+        let level;
+        let gameInterval;
+        let isGameOver;
+        let baseSpeed = 150;
+        let highScore = localStorage.getItem('snakeHighScorePixelPlayer') || 0;
+        let foodPulseState = 0;
+        let gameMode = 'player';
+        let simulationSpeed = 50;
+        let gameTimer = 0;
+        let maxIdleSteps = GRID_WIDTH * GRID_HEIGHT; // Reduzido um pouco
+        let stepsSinceLastFood = 0;
+        let positionHistory = []; // *NOVO* Histórico de posições recentes da cabeça
+
+        // --- Estado da IA (Mantido) ---
+        let nn;
+        let population = [];
+        let currentGeneration = 0;
+        let bestFitness = -Infinity;
+        let bestNNWeights = null;
+        let currentFitness = 0;
+        let isTraining = false;
+        let currentGenomeIndex = 0;
+
+        // --- Classe NeuralNetwork (Mantida Igual) ---
+        class NeuralNetwork {
+            constructor(inputNodes, hiddenNodes, outputNodes, weights = null) {
+                this.inputNodes = inputNodes; this.hiddenNodes = hiddenNodes; this.outputNodes = outputNodes;
+                if (weights) {
+                    this.weights_ih = weights.ih; this.weights_ho = weights.ho;
+                    this.bias_h = weights.bh; this.bias_o = weights.bo;
+                } else {
+                    this.weights_ih = this.randomMatrix(this.hiddenNodes, this.inputNodes);
+                    this.weights_ho = this.randomMatrix(this.outputNodes, this.hiddenNodes);
+                    this.bias_h = this.randomMatrix(this.hiddenNodes, 1);
+                    this.bias_o = this.randomMatrix(this.outputNodes, 1);
+                }
+                this.input_activations = new Array(inputNodes).fill(0);
+                this.hidden_activations = new Array(hiddenNodes).fill(0);
+                this.output_activations = new Array(outputNodes).fill(0);
+            }
+            sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+            randomMatrix(rows, cols) { let m = []; for (let i = 0; i < rows; i++) { m[i] = []; for (let j = 0; j < cols; j++) { m[i][j] = Math.random() * 2 - 1; } } return m; }
+            feedForward(inputArray) {
+                if (inputArray.length !== this.inputNodes) { console.error("Input length mismatch"); return new Array(this.outputNodes).fill(0); }
+                this.input_activations = [...inputArray];
+                let hidden = this.matrixMultiply(this.weights_ih, this.arrayToMatrix(inputArray));
+                hidden = this.matrixAdd(hidden, this.bias_h);
+                for (let i = 0; i < hidden.length; i++) { hidden[i][0] = this.sigmoid(hidden[i][0]); }
+                this.hidden_activations = hidden.flat();
+                let output = this.matrixMultiply(this.weights_ho, hidden);
+                output = this.matrixAdd(output, this.bias_o);
+                for (let i = 0; i < output.length; i++) { output[i][0] = this.sigmoid(output[i][0]); }
+                this.output_activations = output.flat();
+                return this.output_activations;
+             }
+            arrayToMatrix(arr) { return arr.map(e => [e]); }
+            matrixMultiply(m1, m2) { const r1=m1.length,c1=m1[0].length,r2=m2.length,c2=m2[0].length; if(c1!==r2){console.error("Matrix multiply mismatch");return null;} let r=new Array(r1).fill(0).map(()=>new Array(c2).fill(0)); for(let i=0;i<r1;i++){for(let j=0;j<c2;j++){let s=0;for(let k=0;k<c1;k++){s+=m1[i][k]*m2[k][j];}r[i][j]=s;}} return r;}
+            matrixAdd(m1, m2) { const r=m1.length,c=m1[0].length; if(r!==m2.length||c!==m2[0].length){console.error("Matrix add mismatch");return null;} let res=new Array(r).fill(0).map(()=>new Array(c).fill(0)); for(let i=0;i<r;i++){for(let j=0;j<c;j++){res[i][j]=m1[i][j]+m2[i][j];}} return res;}
+            getWeights() { return { ih: this.weights_ih, ho: this.weights_ho, bh: this.bias_h, bo: this.bias_o }; }
+            mutate(rate, amount) { const mut=(m)=>{return m.map(row=>row.map(v=>Math.random()<rate?v+(Math.random()*2-1)*amount:v));}; let nw={ih:mut(this.weights_ih),ho:mut(this.weights_ho),bh:mut(this.bias_h),bo:mut(this.bias_o)}; return new NeuralNetwork(this.inputNodes,this.hiddenNodes,this.outputNodes,nw);}
+            crossover(partner) { const cross=(m1,m2)=>{const r=m1.length,c=m1[0].length; let cm=new Array(r).fill(0).map(()=>new Array(c).fill(0)); const cr=Math.floor(Math.random()*r); const cc=Math.floor(Math.random()*c); for(let i=0;i<r;i++){for(let j=0;j<c;j++){if(i<cr||(i===cr&&j<=cc)){cm[i][j]=m1[i][j];}else{cm[i][j]=m2[i][j];}}} return cm;}; let cw={ih:cross(this.weights_ih,partner.weights_ih),ho:cross(this.weights_ho,partner.weights_ho),bh:cross(this.bias_h,partner.bias_h),bo:cross(this.bias_o,partner.bias_o)}; return new NeuralNetwork(this.inputNodes,this.hiddenNodes,this.outputNodes,cw);}
+        }
+
+        // --- Funções de Desenho (Jogo - Mantidas Iguais) ---
+        function drawTile(ctx, gridX, gridY, color, shadowColor) { const px=gridX*GRID_SIZE,py=gridY*GRID_SIZE; if(shadowColor){ctx.fillStyle=shadowColor;ctx.fillRect(px+COLOR_SHADOW_OFFSET,py+COLOR_SHADOW_OFFSET,GRID_SIZE,GRID_SIZE);} ctx.fillStyle=color;ctx.fillRect(px,py,GRID_SIZE,GRID_SIZE); }
+        function drawEyes(ctx, hX, hY, curDir) { const es=Math.max(2,Math.floor(GRID_SIZE*0.2)), ps=Math.max(1,Math.floor(es*0.5)), ox=Math.floor(GRID_SIZE*0.25), oy=Math.floor(GRID_SIZE*0.25), px=hX*GRID_SIZE, py=hY*GRID_SIZE; let sx=0,sy=0; switch(curDir){case 'up':sy=-Math.floor(es*0.2);break; case 'down':sy=Math.floor(es*0.2);break; case 'left':sx=-Math.floor(es*0.2);break; case 'right':sx=Math.floor(es*0.2);break;} ctx.fillStyle=COLOR_EYE; ctx.fillRect(px+ox-es/2,py+oy-es/2,es,es); ctx.fillStyle=COLOR_PUPIL; ctx.fillRect(px+ox-ps/2+sx,py+oy-ps/2+sy,ps,ps); const o2x=GRID_SIZE-ox; ctx.fillStyle=COLOR_EYE; ctx.fillRect(px+o2x-es/2,py+oy-es/2,es,es); ctx.fillStyle=COLOR_PUPIL; ctx.fillRect(px+o2x-ps/2+sx,py+oy-ps/2+sy,ps,ps); }
+        function drawSnake(ctx, snakeToDraw, currentDirection) { for(let i=1;i<snakeToDraw.length;i++){drawTile(ctx,snakeToDraw[i].x,snakeToDraw[i].y,COLOR_SNAKE_BODY,COLOR_SNAKE_SHADOW);} if(snakeToDraw.length>0){drawTile(ctx,snakeToDraw[0].x,snakeToDraw[0].y,COLOR_SNAKE_HEAD,COLOR_SNAKE_SHADOW);drawEyes(ctx,snakeToDraw[0].x,snakeToDraw[0].y,currentDirection);}}
+        function drawFood(ctx, foodToDraw) { if (!foodToDraw) return; const pa=Math.sin(foodPulseState)*(GRID_SIZE*0.1), cs=GRID_SIZE-pa*2, os=pa, pX=foodToDraw.x*GRID_SIZE, pY=foodToDraw.y*GRID_SIZE; ctx.fillStyle=COLOR_FOOD_SHADOW; ctx.fillRect(pX+COLOR_SHADOW_OFFSET,pY+COLOR_SHADOW_OFFSET,GRID_SIZE,GRID_SIZE); ctx.fillStyle=COLOR_FOOD; ctx.fillRect(pX+os,pY+os,cs,cs); const is=cs*0.5, io=(cs-is)/2; ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.fillRect(pX+os+io,pY+os+io,is,is); foodPulseState+=0.15; if(foodPulseState>Math.PI*2) foodPulseState=0; }
+        function drawBackground(ctx) { for(let y=0;y<GRID_HEIGHT;y++){for(let x=0;x<GRID_WIDTH;x++){const c=(x+y)%2===0?COLOR_BACKGROUND_DARK:COLOR_BACKGROUND_LIGHT; ctx.fillStyle=c; ctx.fillRect(x*GRID_SIZE,y*GRID_SIZE,GRID_SIZE,GRID_SIZE);}}}
+        function drawGameOver(ctx, finalScore) { ctx.fillStyle=COLOR_GAME_OVER_BG; ctx.fillRect(0,0,CANVAS_WIDTH,CANVAS_HEIGHT); ctx.font=`bold ${Math.floor(CANVAS_WIDTH/12)}px 'Courier New',Courier,monospace`; ctx.fillStyle=COLOR_GAME_OVER_TEXT; ctx.textAlign="center"; ctx.fillText("GAME OVER",CANVAS_WIDTH/2,CANVAS_HEIGHT/2-30); ctx.font=`${Math.floor(CANVAS_WIDTH/20)}px 'Courier New',Courier,monospace`; ctx.fillStyle="#e0f2e9"; ctx.fillText(`Pontos: ${finalScore}`,CANVAS_WIDTH/2,CANVAS_HEIGHT/2+10); if(gameMode==='player'){ctx.font=`${Math.floor(CANVAS_WIDTH/25)}px 'Courier New',Courier,monospace`; ctx.fillText("Pressione ESPAÇO para reiniciar",CANVAS_WIDTH/2,CANVAS_HEIGHT/2+50);}}
+
+        // --- Funções de Desenho (Visualizador NN - Mantida Igual) ---
+         function drawNN(nnToDraw) { nnCtx.clearRect(0,0,NN_VIS_WIDTH,NN_VIS_HEIGHT); nnCtx.fillStyle="#353555"; nnCtx.fillRect(0,0,NN_VIS_WIDTH,NN_VIS_HEIGHT); if (!nnToDraw) return; const lH={input: NN_VIS_HEIGHT/(nnToDraw.inputNodes+1),hidden:NN_VIS_HEIGHT/(nnToDraw.hiddenNodes+1),output:NN_VIS_HEIGHT/(nnToDraw.outputNodes+1)}; const lPX={input:NN_LAYER_SPACING/2,hidden:NN_LAYER_SPACING/2+NN_LAYER_SPACING,output:NN_LAYER_SPACING/2+2*NN_LAYER_SPACING}; const getC=(v)=>{const i=Math.round(50+205*v); return `rgb(${i},${i},${i})`;}; nnCtx.strokeStyle="rgba(180,180,200,0.3)"; nnCtx.lineWidth=1; for(let i=0;i<nnToDraw.inputNodes;i++){for(let j=0;j<nnToDraw.hiddenNodes;j++){nnCtx.beginPath();nnCtx.moveTo(lPX.input,lH.input*(i+1));nnCtx.lineTo(lPX.hidden,lH.hidden*(j+1));nnCtx.stroke();}} for(let i=0;i<nnToDraw.hiddenNodes;i++){for(let j=0;j<nnToDraw.outputNodes;j++){nnCtx.beginPath();nnCtx.moveTo(lPX.hidden,lH.hidden*(i+1));nnCtx.lineTo(lPX.output,lH.output*(j+1));nnCtx.stroke();}} nnCtx.lineWidth=2; for(let i=0;i<nnToDraw.inputNodes;i++){nnCtx.beginPath();nnCtx.arc(lPX.input,lH.input*(i+1),NN_NEURON_RADIUS,0,Math.PI*2);nnCtx.fillStyle=getC(nnToDraw.input_activations[i]||0);nnCtx.strokeStyle="#a2d5f2";nnCtx.fill();nnCtx.stroke();} for(let i=0;i<nnToDraw.hiddenNodes;i++){nnCtx.beginPath();nnCtx.arc(lPX.hidden,lH.hidden*(i+1),NN_NEURON_RADIUS,0,Math.PI*2);nnCtx.fillStyle=getC(nnToDraw.hidden_activations[i]||0);nnCtx.strokeStyle="#a2d5f2";nnCtx.fill();nnCtx.stroke();} for(let i=0;i<nnToDraw.outputNodes;i++){nnCtx.beginPath();nnCtx.arc(lPX.output,lH.output*(i+1),NN_NEURON_RADIUS,0,Math.PI*2);nnCtx.fillStyle=getC(nnToDraw.output_activations[i]||0);nnCtx.strokeStyle="#ffdd59";nnCtx.fill();nnCtx.stroke();}}
+
+        // --- Lógica do Jogo (Adaptada) ---
+        function resetGameState() {
+            snake = [ { x: Math.floor(GRID_WIDTH / 3), y: Math.floor(GRID_HEIGHT / 2) }, { x: Math.floor(GRID_WIDTH / 3) - 1, y: Math.floor(GRID_HEIGHT / 2) }, ];
+            direction = 'right'; nextDirection = null; score = 0; level = 1; foodPulseState = 0;
+            gameTimer = 0; stepsSinceLastFood = 0; currentFitness = 0;
+            positionHistory = []; // *NOVO* Limpa histórico
+            generateFood();
+            isGameOver = false;
+        }
+
+        function moveSnake() {
+            if (isGameOver) return;
+
+            let moveDirection = direction;
+            if (gameMode === 'player' && nextDirection) { /* ... Lógica do jogador mantida ... */
+                 if ((nextDirection === 'up' && direction !== 'down') || (nextDirection === 'down' && direction !== 'up') || (nextDirection === 'left' && direction !== 'right') || (nextDirection === 'right' && direction !== 'left')) { moveDirection = nextDirection; } nextDirection = null;
+            } else if (gameMode === 'ai' || gameMode === 'training') {
+                 if (!nn) { console.warn("AI sem NN."); return; }
+                moveDirection = getAIDirection(nn);
+            }
+            direction = moveDirection;
+
+            let head = { ...snake[0] };
+            switch (direction) {
+                case 'up': head.y -= 1; break; case 'down': head.y += 1; break;
+                case 'left': head.x -= 1; break; case 'right': head.x += 1; break;
+            }
+
+            gameTimer++;
+            stepsSinceLastFood++;
+            snake.unshift(head);
+
+            let ateFood = false;
+            if (head.x === food.x && head.y === food.y) {
+                score += 10;
+                currentFitness += 100;
+                stepsSinceLastFood = 0;
+                positionHistory = []; // *NOVO* Limpa histórico ao comer, recomeça detecção
+                ateFood = true;
+                if (gameMode === 'player' && score % 50 === 0) { level++; }
+                updateGameInfo();
+                generateFood();
+            } else {
+                snake.pop();
+                currentFitness += 1; // Pequena recompensa por sobreviver mais um passo
+            }
+
+             // --- *NOVO* Detecção de Loop (Apenas para IA/Treino e se não comeu) ---
+            if (!ateFood && (gameMode === 'ai' || gameMode === 'training')) {
+                const currentPosStr = `${head.x},${head.y}`; // String para comparação fácil
+                positionHistory.push(currentPosStr);
+                if (positionHistory.length > LOOP_DETECTION_WINDOW) {
+                    positionHistory.shift(); // Remove o mais antigo
+                }
+
+                // Verifica loop apenas se o histórico estiver cheio
+                if (positionHistory.length === LOOP_DETECTION_WINDOW) {
+                    let visitCount = 0;
+                    for (const pos of positionHistory) {
+                        if (pos === currentPosStr) {
+                            visitCount++;
+                        }
+                    }
+
+                    if (visitCount >= LOOP_DETECTION_THRESHOLD) {
+                        console.log(`Loop detectado! G:${currentGeneration} I:${currentGenomeIndex} Pos:${currentPosStr} Count:${visitCount}`);
+                        currentFitness += LOOP_PUNISHMENT; // Aplica penalidade
+                        gameOver(); // Encerra a simulação
+                        return; // Sai da função moveSnake
+                    }
+                }
+            }
+            // --- Fim da Detecção de Loop ---
+
+
+            // Penalidade por inanição (já existente)
+            if (stepsSinceLastFood > maxIdleSteps) {
+                 console.log(`Inanição! G:${currentGeneration} I:${currentGenomeIndex} Steps:${stepsSinceLastFood}`);
+                currentFitness -= 50;
+                gameOver();
+            }
+        }
+
+        function checkCollision() { /* ... Lógica Mantida ... */
+             if (!snake || snake.length === 0) return false; const head = snake[0];
+            if (head.x < 0 || head.x >= GRID_WIDTH || head.y < 0 || head.y >= GRID_HEIGHT) { return true; }
+            for (let i = 1; i < snake.length; i++) { if (head.x === snake[i].x && head.y === snake[i].y) { return true; } } return false;
+        }
+
+        function generateFood() { /* ... Lógica Mantida ... */
+             let newFoodPosition; let attempts = 0; const maxAttempts = GRID_WIDTH * GRID_HEIGHT;
+            do { newFoodPosition = { x: Math.floor(Math.random() * GRID_WIDTH), y: Math.floor(Math.random() * GRID_HEIGHT) }; attempts++; } while (isFoodOnSnake(newFoodPosition) && attempts < maxAttempts);
+             if (attempts >= maxAttempts) { console.warn("Não foi possível gerar comida."); gameOver(); } else { food = newFoodPosition; }
+        }
+        function isFoodOnSnake(position) { /* ... Lógica Mantida ... */
+            if (!snake) return false; return snake.some(segment => segment.x === position.x && segment.y === position.y);
+        }
+
+        function updateGameInfo() { /* ... Lógica Mantida ... */
+            modeElement.textContent = gameMode.charAt(0).toUpperCase() + gameMode.slice(1); scoreElement.textContent = score; levelElement.textContent = level; highScoreElement.textContent = highScore; currentFitnessElement.textContent = Math.round(currentFitness); generationElement.textContent = currentGeneration; bestFitnessElement.textContent = Math.round(bestFitness); checkSavedStatus();
+        }
+
+        function gameLoop() { /* ... Lógica Mantida (com chamada a handleEndOfSimulation) ... */
+             if (isGameOver && (gameMode === 'ai' || gameMode === 'training')) { handleEndOfSimulation(); return; }
+             if (isGameOver && gameMode === 'player') { return; }
+             drawBackground(ctx);
+             moveSnake(); // moveSnake agora pode chamar gameOver() por loop/inanição
+             if (isGameOver) { // Verifica de novo caso moveSnake tenha encerrado
+                 if (gameMode === 'ai' || gameMode === 'training') handleEndOfSimulation();
+                 return;
+             }
+             if (checkCollision()) {
+                 currentFitness -= 150; // Penalidade por colisão (pode ser ajustada)
+                 gameOver();
+                 if (gameMode === 'ai' || gameMode === 'training') handleEndOfSimulation(); // Chama handler aqui também
+                 return;
+             }
+             if (food) drawFood(ctx, food);
+             if (snake) drawSnake(ctx, snake, direction);
+             if ((gameMode === 'ai' || gameMode === 'training') && nn) { drawNN(nn); }
+             else { nnCtx.clearRect(0,0,NN_VIS_WIDTH,NN_VIS_HEIGHT); nnCtx.fillStyle="#353555"; nnCtx.fillRect(0,0,NN_VIS_WIDTH,NN_VIS_HEIGHT); nnCtx.fillStyle="#888"; nnCtx.textAlign="center"; nnCtx.font="14px 'Courier New'"; nnCtx.fillText("Visualizador Inativo",NN_VIS_WIDTH/2,NN_VIS_HEIGHT/2); }
+        }
+
+        function gameOver() { /* ... Lógica Mantida (sem chamada a stopGameLoop aqui) ... */
+            isGameOver = true;
+             if (gameMode === 'player') {
+                if (score > highScore) { highScore = score; localStorage.setItem('snakeHighScorePixelPlayer', highScore); }
+                updateGameInfo();
+                drawGameOver(ctx, score);
+                stopGameLoop(); // Para o loop só para jogador aqui
+            }
+             // Para AI/Treino, o fim é tratado em handleEndOfSimulation ou no início do gameLoop
+        }
+
+        function startGameLoop() { /* ... Lógica Mantida ... */
+            stopGameLoop(); let loopSpeed = (gameMode === 'player') ? baseSpeed : simulationSpeed; gameInterval = setInterval(gameLoop, loopSpeed);
+        }
+        function stopGameLoop() { /* ... Lógica Mantida ... */
+             clearInterval(gameInterval); gameInterval = null;
+        }
+
+        function handleEndOfSimulation() { /* ... Lógica Mantida ... */
+             stopGameLoop();
+             if (gameMode === 'training') {
+                 population[currentGenomeIndex].fitness = currentFitness; // Armazena fitness
+                 currentGenomeIndex++;
+                 if (currentGenomeIndex < GA_POPULATION_SIZE) {
+                     startSimulation(population[currentGenomeIndex]); // Próximo
+                 } else {
+                     evolvePopulation(); // Evolui
+                     if (isTraining) { currentGenomeIndex = 0; startSimulation(population[currentGenomeIndex]); } // Nova geração
+                     else { console.log("Treinamento parado pós-geração."); updateUIState(); }
+                 }
+             } else if (gameMode === 'ai') {
+                 drawGameOver(ctx, score); // Mostra tela final da IA
+                 console.log("Simulação AI terminou. Fitness:", currentFitness);
+                 updateUIState();
+             }
+        }
+
+
+        // --- Lógica da IA (getAIInputs, getAIDirection - Mantidas Iguais) ---
+        function getAIInputs() { if(!snake||snake.length===0||!food){return new Array(NN_INPUT_NODES).fill(0);} const head=snake[0]; const inputs=new Array(NN_INPUT_NODES).fill(0); let cA={...head}; let cL={...head}; let cR={...head}; let dx=0,dy=0; switch(direction){case'up':dy=-1;cA.y-=1;cL.x-=1;cR.x+=1;break; case'down':dy=1;cA.y+=1;cL.x+=1;cR.x-=1;break; case'left':dx=-1;cA.x-=1;cL.y+=1;cR.y-=1;break; case'right':dx=1;cA.x+=1;cL.y-=1;cR.y+=1;break;} const isDang=(c)=>{if(c.x<0||c.x>=GRID_WIDTH||c.y<0||c.y>=GRID_HEIGHT){return 1;} for(let i=1;i<snake.length;i++){if(snake[i].x===c.x&&snake[i].y===c.y){return 1;}} return 0;}; inputs[0]=isDang(cA); inputs[1]=isDang(cL); inputs[2]=isDang(cR); const fV={x:food.x-head.x,y:food.y-head.y}; const dot=dx*fV.x+dy*fV.y; const cross=dx*fV.y-dy*fV.x; if(dot>0)inputs[3]=1; if(cross>0)inputs[4]=1; if(cross<0)inputs[5]=1; inputs[6]=dx; inputs[7]=dy; return inputs; }
+        function getAIDirection(currentNN) { const inputs=getAIInputs(); const outputs=currentNN.feedForward(inputs); let maxAct=-Infinity; let bestActIdx=1; for(let i=0;i<outputs.length;i++){if(outputs[i]>maxAct){maxAct=outputs[i];bestActIdx=i;}} let newDir=direction; const dirs=['up','right','down','left']; const curDirIdx=dirs.indexOf(direction); if(bestActIdx===0){newDir=dirs[(curDirIdx+3)%4];}else if(bestActIdx===2){newDir=dirs[(curDirIdx+1)%4];} return newDir;}
+
+        // --- Lógica do Algoritmo Genético (GA - Mantida Igual) ---
+        function initializePopulation() { population=[]; let loadedW=loadNNFromStorage(); let baseNN=null; if(loadedW){console.log("População a partir do NN salvo."); baseNN=new NeuralNetwork(NN_INPUT_NODES,NN_HIDDEN_NODES,NN_OUTPUT_NODES,loadedW); population.push(baseNN); for(let i=1;i<GA_POPULATION_SIZE;i++){population.push(baseNN.mutate(GA_MUTATION_RATE*1.5,GA_MUTATION_AMOUNT*1.5));}}else{console.log("População aleatória."); for(let i=0;i<GA_POPULATION_SIZE;i++){population.push(new NeuralNetwork(NN_INPUT_NODES,NN_HIDDEN_NODES,NN_OUTPUT_NODES));}} currentGeneration=0; bestFitness=-Infinity; bestNNWeights=baseNN?baseNN.getWeights():null; currentGenomeIndex=0; }
+        function startSimulation(individualNN) { stopGameLoop(); nn=individualNN; resetGameState(); startGameLoop(); }
+        function evolvePopulation() { population.sort((a,b)=>(b.fitness??-Infinity)-(a.fitness??-Infinity)); if(population[0].fitness>bestFitness){bestFitness=population[0].fitness; bestNNWeights=population[0].getWeights(); console.log(`Nova melhor fitness G:${currentGeneration}: ${bestFitness}`); updateUIState();} let newPop=[]; for(let i=0;i<GA_ELITISM_COUNT;i++){newPop.push(new NeuralNetwork(NN_INPUT_NODES,NN_HIDDEN_NODES,NN_OUTPUT_NODES,population[i].getWeights()));} let pool=population.slice(0,Math.floor(GA_POPULATION_SIZE*0.4)); while(newPop.length<GA_POPULATION_SIZE){let pA=pool[Math.floor(Math.random()*pool.length)]; let pB=pool[Math.floor(Math.random()*pool.length)]; let child=pA.crossover(pB); child=child.mutate(GA_MUTATION_RATE,GA_MUTATION_AMOUNT); newPop.push(child);} population=newPop; currentGeneration++; updateGameInfo();}
+
+        // --- Funções de Controle e UI (Mantidas Iguais) ---
+        function setMode(newMode) { gameMode=newMode; isGameOver=false; stopGameLoop(); stopTraining(); if(gameMode==='player'){nn=null; resetGameState(); updateGameInfo(); drawBackground(ctx); drawSnake(ctx,snake,direction); drawFood(ctx,food); startGameLoop(); nnCtx.clearRect(0,0,NN_VIS_WIDTH,NN_VIS_HEIGHT);}else if(gameMode==='ai'){if(!bestNNWeights){alert("Nenhuma IA treinada/carregada."); setMode('player'); return;} nn=new NeuralNetwork(NN_INPUT_NODES,NN_HIDDEN_NODES,NN_OUTPUT_NODES,bestNNWeights); startSimulation(nn);}else if(gameMode==='training'){startTraining();} updateUIState();}
+        function startTraining() { if(isTraining)return; isTraining=true; gameMode='training'; console.log("Iniciando treinamento..."); initializePopulation(); if(population.length>0){currentGenomeIndex=0; startSimulation(population[currentGenomeIndex]);}else{console.error("Falha ao init população."); isTraining=false;} updateUIState();}
+        function stopTraining() { if(!isTraining)return; isTraining=false; console.log("Parando treinamento..."); stopGameLoop(); updateUIState();}
+        function updateUIState() { playerModeBtn.disabled=gameMode==='player'; aiModeBtn.disabled=gameMode==='ai'||isTraining||!bestNNWeights; trainBtn.disabled=isTraining; stopTrainBtn.disabled=!isTraining; saveNNBtn.disabled=!bestNNWeights||isTraining; loadNNBtn.disabled=isTraining; exportNNBtn.disabled=!bestNNWeights||isTraining; clearNNBtn.disabled=isTraining; importNNBtn.disabled=isTraining; speedRange.disabled=isTraining||gameMode==='player'; speedValue.textContent=simulationSpeed+'ms'; checkSavedStatus();}
+
+        // --- Funções de Persistência (Mantidas Iguais) ---
+        const STORAGE_KEY='snakeAI_bestNNWeights_v2';
+        function saveNNToStorage() { if(!bestNNWeights){alert("Nenhum NN para salvar.");return;} try{const ws=JSON.stringify(bestNNWeights); localStorage.setItem(STORAGE_KEY,ws); localStorage.setItem(STORAGE_KEY+'_fitness',bestFitness); console.log("Melhor NN salvo. Fitness:",bestFitness); alert("Melhor Rede Neural salva!"); checkSavedStatus();}catch(e){console.error("Erro ao salvar NN:",e); alert("Erro ao salvar.");}}
+        function loadNNFromStorage() { try{const ws=localStorage.getItem(STORAGE_KEY); if(ws){const lw=JSON.parse(ws); if(lw&&lw.ih&&lw.ho&&lw.bh&&lw.bo){bestNNWeights=lw; bestFitness=parseFloat(localStorage.getItem(STORAGE_KEY+'_fitness'))||0; console.log("NN carregado. Fitness:",bestFitness); checkSavedStatus(); updateGameInfo(); updateUIState(); return lw;}else{console.warn("Dados salvos inválidos."); localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(STORAGE_KEY+'_fitness'); return null;}}}catch(e){console.error("Erro ao carregar NN:",e); alert("Erro ao carregar NN.");} checkSavedStatus(); return null;}
+        function checkSavedStatus() { const sd=localStorage.getItem(STORAGE_KEY); savedStatusElement.textContent=sd?`Sim (Fitness: ${Math.round(parseFloat(localStorage.getItem(STORAGE_KEY+'_fitness'))||0)})`:"Não"; }
+        function clearNNSavedData() { if(confirm("Apagar NN salvo?")){localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(STORAGE_KEY+'_fitness'); bestNNWeights=null; bestFitness=-Infinity; console.log("NN salvo limpo."); alert("NN salvo removido."); checkSavedStatus(); updateGameInfo(); updateUIState();}}
+        function exportNNToFile() { if(!bestNNWeights){alert("Nenhum NN para exportar.");return;} try{const data={fitness:bestFitness,weights:bestNNWeights}; const ws=JSON.stringify(data,null,2); const blob=new Blob([ws],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`snake_ai_nn_gen${currentGeneration}_fit${Math.round(bestFitness)}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); console.log("Melhor NN exportado.");}catch(e){console.error("Erro ao exportar:",e); alert("Erro ao exportar.");}}
+        function importNNFromFile(event) { const file=event.target.files[0]; if(!file)return; const reader=new FileReader(); reader.onload=(e)=>{try{const ct=e.target.result; const id=JSON.parse(ct); if(id&&id.weights&&id.weights.ih&&id.weights.ho&&id.weights.bh&&id.weights.bo){bestNNWeights=id.weights; bestFitness=id.fitness||0; console.log("NN importado. Fitness:",bestFitness); alert(`NN importado! Fitness: ${bestFitness}`); checkSavedStatus(); updateGameInfo(); updateUIState(); if(gameMode==='player'&&confirm("Ativar modo IA com NN importado?")){setMode('ai');}}else{throw new Error("Estrutura JSON inválida.");}}catch(err){console.error("Erro importar NN:",err); alert(`Erro importar: ${err.message}`); bestNNWeights=null; bestFitness=-Infinity; checkSavedStatus(); updateUIState();}finally{importNNInput.value='';}}; reader.onerror=(e)=>{console.error("Erro ler arquivo:",e); alert("Erro ler arquivo.");importNNInput.value='';}; reader.readAsText(file); }
+
+
+        // --- Event Listeners (Mantidos Iguais) ---
+        function handleKeyDown(event) { if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(event.key)){event.preventDefault();} if(gameMode==='player'){if(isGameOver&&event.key===' '){resetGameState();startGameLoop();return;} if(isGameOver)return; switch(event.key){case'ArrowUp':if(direction!=='down')nextDirection='up';break; case'ArrowDown':if(direction!=='up')nextDirection='down';break; case'ArrowLeft':if(direction!=='right')nextDirection='left';break; case'ArrowRight':if(direction!=='left')nextDirection='right';break;}}}
+        document.addEventListener('keydown', handleKeyDown);
+        playerModeBtn.addEventListener('click', () => setMode('player'));
+        aiModeBtn.addEventListener('click', () => setMode('ai'));
+        trainBtn.addEventListener('click', startTraining);
+        stopTrainBtn.addEventListener('click', stopTraining);
+        saveNNBtn.addEventListener('click', saveNNToStorage);
+        loadNNBtn.addEventListener('click', () => { if(loadNNFromStorage()){ alert("NN carregado!"); if(gameMode==='player'&&confirm("Ativar modo IA?")){setMode('ai');} } else { alert("Nenhum NN salvo encontrado."); } });
+        exportNNBtn.addEventListener('click', exportNNToFile);
+        clearNNBtn.addEventListener('click', clearNNSavedData);
+        importNNBtn.addEventListener('click', () => importNNInput.click());
+        importNNInput.addEventListener('change', importNNFromFile);
+        speedRange.addEventListener('input', (e) => { simulationSpeed=parseInt(e.target.value); speedValue.textContent=simulationSpeed+'ms'; if((gameMode==='ai'||gameMode==='training')&&!isTraining&&gameInterval){startGameLoop();} });
+
+
+        // --- Inicialização ---
+        updateGameInfo();
+        loadNNFromStorage();
+        setMode('player');
+        console.log("Jogo (vComAntiLoop) inicializado.");
+
+    </script>
+</body>
+</html>

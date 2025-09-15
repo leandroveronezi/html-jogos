@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bomberman Clone V8 - Portal e Inimigos Variados</title>
+    <style>
+        body { display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background-color: #282c34; flex-direction: column; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { border: 3px solid #61dafb; box-shadow: 0 0 15px rgba(97, 218, 251, 0.5); image-rendering: pixelated; image-rendering: crisp-edges; background-color: #3c3f41; }
+        #info { display: flex; justify-content: space-between; /* largura via JS */ padding: 5px 0; color: white; font-size: 16px; font-weight: bold; }
+        #mensagem { color: #ffcc00; font-size: 20px; font-weight: bold; margin-top: 10px; min-height: 25px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <span id="info-level">Nível: 1</span>
+        <span id="info-bombas">B: 1/1</span>
+        <span id="info-alcance">A: 2</span>
+        <span id="info-velocidade" title="Velocidade">V: 1.0x</span>
+        <span id="info-inimigos">I: 0</span>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="mensagem">Carregando...</div>
+
+    <script>
+        // --- Elementos DOM e Contexto ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const mensagemDiv = document.getElementById('mensagem');
+        const infoLevelSpan = document.getElementById('info-level');
+        const infoBombasSpan = document.getElementById('info-bombas');
+        const infoAlcanceSpan = document.getElementById('info-alcance');
+        const infoVelocidadeSpan = document.getElementById('info-velocidade');
+        const infoInimigosSpan = document.getElementById('info-inimigos');
+
+        // --- Constantes ---
+        const GRID_SIZE = 15;
+        const TILE_SIZE = 40;
+        const BASE_NUM_ENEMIES = 2;
+        const POWERUP_CHANCE = 0.45;
+        const PLAYER_START_COL = 1;
+        const PLAYER_START_LIN = 1;
+        const PLAYER_BASE_SPEED = 120;
+        const BASE_ENEMY_SPEED = 70;
+        const BOMB_TIMER = 2500;
+        const EXPLOSION_DURATION = 600;
+        const ENEMY_CHANGE_DIR_INTERVAL = { min: 800, max: 2000 };
+        const FRAME_TIME_LIMIT = 100;
+        const BASE_BOMB_RANGE = 2;
+        const BASE_MAX_BOMBAS = 1;
+        const MAX_BOMBAS = 5;
+        const MAX_RANGE = 7;
+        const MAX_SPEED_FACTOR = 2.0;
+        const MAX_LEVELS = 5;
+        const SKULL_ENEMY_LEVEL_START = 2; // Nível em que inimigo Skull aparece
+        const SKULL_ENEMY_CHANCE = 0.4;   // Chance de um inimigo ser Skull (nos níveis aplicáveis)
+        const SKULL_SPEED_MULTIPLIER = 1.25; // Quão mais rápido o Skull é
+
+        // Tipos de Tile
+        const TILE = Object.freeze({
+            FLOOR: 0, WALL_SOLID: 1, WALL_BREAKABLE: 2, EXIT_HIDDEN: 3, EXIT_REVEALED: 4,
+            POWERUP_BOMB: -1, POWERUP_RANGE: -2, POWERUP_SPEED: -3,
+        });
+
+        // Tipos de Inimigo
+        const ENEMY_TYPE = Object.freeze({
+            BLOB: 0,  // O original vermelho
+            SKULL: 1, // O novo tipo caveira
+            // Poderia adicionar mais: GHOST, etc.
+        });
+
+        // Cores
+        const COLOR = Object.freeze({
+            FLOOR_DARK: '#5a9a5e', FLOOR_LIGHT: '#66bb6a',
+            WALL_SOLID_BASE: '#6a7c89', WALL_SOLID_LIGHT: '#90a4ae', WALL_SOLID_DARK: '#546e7a',
+            WALL_BREAKABLE_BASE: '#a1887f', WALL_BREAKABLE_LIGHT: '#bcaaa4', WALL_BREAKABLE_DARK: '#8d6e63',
+            PLAYER_BODY: '#42a5f5', PLAYER_HELMET: '#ffffff', PLAYER_VISOR: '#212121',
+            PLAYER_ANTENNA: '#f44336', PLAYER_FEET: '#1e88e5',
+            ENEMY_BLOB: '#ef5350', // Cor do Blob
+            ENEMY_SKULL_BODY: '#a0a0d0', ENEMY_SKULL_EYE: '#ff4f4f', ENEMY_SKULL_DARK: '#606090', // Cores do Skull
+            BOMB: '#212121', EXPLOSION_CENTER: '#ffeb3b', EXPLOSION_BEAM: '#ffa726',
+            EXIT_PORTAL_OUTER: '#6a1b9a', EXIT_PORTAL_INNER: '#ab47bc', EXIT_PORTAL_CENTER: '#f3e5f5', // Cores do Portal
+            POWERUP_BOMB_BG: '#e57373', POWERUP_RANGE_BG: '#ffb74d', POWERUP_SPEED_BG: '#81c784',
+            ICON_DARK: '#212121',
+        });
+
+        // --- Estado Global ---
+        let gameState = {};
+
+        // --- Módulo Grid (sem alterações) ---
+        const Grid = {
+            toPixelCenter: (col, lin) => ({ x: col * TILE_SIZE + TILE_SIZE / 2, y: lin * TILE_SIZE + TILE_SIZE / 2 }),
+            toPixelTopLeft: (col, lin) => ({ x: col * TILE_SIZE, y: lin * TILE_SIZE }),
+            fromPixel: (x, y) => ({ col: Math.floor(x / TILE_SIZE), lin: Math.floor(y / TILE_SIZE) }),
+            getTile: (col, lin) => {
+                if (!gameState.mapa || col < 0 || col >= GRID_SIZE || lin < 0 || lin >= GRID_SIZE || !gameState.mapa[lin]) return TILE.WALL_SOLID;
+                return gameState.mapa[lin][col];
+            },
+            setTile: (col, lin, tipo) => {
+                if (gameState.mapa && col >= 0 && col < GRID_SIZE && lin >= 0 && lin < GRID_SIZE && gameState.mapa[lin]) {
+                    gameState.mapa[lin][col] = tipo;
+                    // Redesenhar estático ao mudar tile é simples, mas menos performático
+                    // O ideal seria marcar como "sujo" e redesenhar só se necessário.
+                    desenharMapaEstatico(); // Mantendo simples por enquanto
+                }
+            },
+            isValidForEnemyStart: (col, lin) => {
+                 if (col < 0 || col >= GRID_SIZE || lin < 0 || lin >= GRID_SIZE) return false;
+                 const tile = Grid.getTile(col, lin);
+                 const distToPlayer = Math.abs(col - PLAYER_START_COL) + Math.abs(lin - PLAYER_START_LIN);
+                 return tile === TILE.FLOOR && distToPlayer > 4;
+            }
+        };
+
+        // --- Funções de Colisão (sem alterações da V7) ---
+        function canMoveTo(entity, targetX, targetY) {
+            const { width, height, id: entityId, x: currentX, y: currentY } = entity;
+            const margem = 1;
+            const targetBounds = { left: targetX - width / 2 + margem, right: targetX + width / 2 - margem, top: targetY - height / 2 + margem, bottom: targetY + height / 2 - margem };
+            const corners = [ { x: targetBounds.left, y: targetBounds.top }, { x: targetBounds.right, y: targetBounds.top }, { x: targetBounds.left, y: targetBounds.bottom }, { x: targetBounds.right, y: targetBounds.bottom } ];
+            for (const corner of corners) {
+                const gridPos = Grid.fromPixel(corner.x, corner.y);
+                if (gridPos.col < 0 || gridPos.col >= GRID_SIZE || gridPos.lin < 0 || gridPos.lin >= GRID_SIZE) return false;
+                const tile = Grid.getTile(gridPos.col, gridPos.lin);
+                if (tile === TILE.WALL_SOLID || tile === TILE.WALL_BREAKABLE || tile === TILE.EXIT_HIDDEN) return false;
+                for (const bomba of gameState.bombas) {
+                    if (bomba.col === gridPos.col && bomba.lin === gridPos.lin) {
+                        if (bomba.ownerId === entityId) {
+                            if (bomba.isPassableForOwner) continue; else { const currentCenterGrid = Grid.fromPixel(currentX, currentY); const dx = Math.abs(currentCenterGrid.col - bomba.col); const dy = Math.abs(currentCenterGrid.lin - bomba.lin); if (dx <= 1 && dy <= 1) continue; else return false; } } else { return false; } } } }
+            return true;
+        }
+        function checkEntityCollision(entity1, entity2) {
+            if (!entity1?.vivo || !entity2?.vivo) return false; const dx = entity1.x - entity2.x; const dy = entity1.y - entity2.y; const distSq = dx * dx + dy * dy; const radiusSum = (entity1.width / 2 + entity2.width / 2) * 0.8; return distSq < radiusSum * radiusSum;
+        }
+
+        // --- Inicialização e Níveis ---
+        function iniciarJogo() {
+            console.log("Iniciando Bomberman Clone V8...");
+            pararJogo();
+            canvas.width = GRID_SIZE * TILE_SIZE; canvas.height = GRID_SIZE * TILE_SIZE;
+            document.getElementById('info').style.width = `${canvas.width}px`;
+            gameState = { mapa: [], jogador: null, bombas: [], explosoes: [], inimigos: [], teclasPressionadas: {}, gameOver: false, gameWon: false, levelComplete: false, inimigosVivos: 0, saidaPos: null, saidaRevelada: false, animationFrameId: null, ultimoTempo: performance.now(), currentLevel: 0, mapCanvasStatic: gameState.mapCanvasStatic || document.createElement('canvas'), mapCtxStatic: null, patterns: { floor: null, solid: null, breakable: null } };
+            gameState.mapCanvasStatic.width = canvas.width; gameState.mapCanvasStatic.height = canvas.height;
+            gameState.mapCtxStatic = gameState.mapCanvasStatic.getContext('2d');
+            criarPatternsVisuais();
+            // Cria jogador persistente
+            gameState.jogador = { id: 'player_1', x: 0, y: 0, width: TILE_SIZE * 0.7, height: TILE_SIZE * 0.7, baseSpeed: PLAYER_BASE_SPEED, currentSpeed: PLAYER_BASE_SPEED, bombasColocadas: 0, maxBombas: BASE_MAX_BOMBAS, bombRange: BASE_BOMB_RANGE, vivo: true };
+            carregarNivel(1); // Carrega nível 1
+            document.addEventListener('keydown', keyDownHandler); document.addEventListener('keyup', keyUpHandler);
+            gameState.animationFrameId = requestAnimationFrame(gameLoop);
+            console.log("Jogo iniciado.");
+        }
+
+        function carregarNivel(level) {
+             console.log(`Carregando Nível ${level}...`);
+             gameState.currentLevel = level; gameState.gameOver = false; gameState.levelComplete = false; gameState.saidaRevelada = false; gameState.saidaPos = null; gameState.bombas = []; gameState.explosoes = []; gameState.inimigos = []; gameState.inimigosVivos = 0; gameState.teclasPressionadas = {};
+             if (gameState.jogador) { const startPos = Grid.toPixelCenter(PLAYER_START_COL, PLAYER_START_LIN); gameState.jogador.x = startPos.x; gameState.jogador.y = startPos.y; gameState.jogador.vivo = true; gameState.jogador.bombasColocadas = 0; }
+             gerarMapaLogica(level);
+             desenharMapaEstatico();
+             iniciarEntidades(level); // <-- Aqui os inimigos são criados para o nível
+             atualizarUI();
+             mensagemDiv.textContent = `Nível ${level}!`;
+             setTimeout(() => { if (!gameState.gameOver && !gameState.gameWon && !gameState.levelComplete) mensagemDiv.textContent = ""; }, 2000);
+         }
+
+         // Criação de Patterns (sem alterações da V7)
+         function criarPatternsVisuais() {
+             const staticCtx = gameState.mapCtxStatic; if (!staticCtx) return;
+             try { const c=document.createElement('canvas'); c.width=TILE_SIZE; c.height=TILE_SIZE; const cx=c.getContext('2d'); cx.fillStyle=COLOR.FLOOR_LIGHT; cx.fillRect(0,0,c.width,c.height); cx.fillStyle=COLOR.FLOOR_DARK; cx.fillRect(0,0,TILE_SIZE/2,TILE_SIZE/2); cx.fillRect(TILE_SIZE/2,TILE_SIZE/2,TILE_SIZE/2,TILE_SIZE/2); gameState.patterns.floor = staticCtx.createPattern(c, 'repeat'); } catch(e){ console.error("Pattern Piso Falhou:", e); gameState.patterns.floor = COLOR.FLOOR_LIGHT; }
+             try { const c=document.createElement('canvas'); c.width=TILE_SIZE; c.height=TILE_SIZE; const cx=c.getContext('2d'); const grad=cx.createLinearGradient(0,0,TILE_SIZE,TILE_SIZE); grad.addColorStop(0,COLOR.WALL_SOLID_LIGHT); grad.addColorStop(0.5,COLOR.WALL_SOLID_BASE); grad.addColorStop(1,COLOR.WALL_SOLID_DARK); cx.fillStyle=grad; cx.fillRect(0,0,c.width,c.height); cx.strokeStyle='rgba(0,0,0,0.2)'; cx.lineWidth=2; cx.strokeRect(1,1,c.width-2,c.height-2); cx.strokeStyle='rgba(255,255,255,0.1)'; cx.lineWidth=1; cx.strokeRect(0,0,c.width,c.height); gameState.patterns.solid = staticCtx.createPattern(c, 'repeat'); } catch(e){ console.error("Pattern Sólido Falhou:", e); gameState.patterns.solid = COLOR.WALL_SOLID_BASE; }
+             try { const c=document.createElement('canvas'); c.width=TILE_SIZE; c.height=TILE_SIZE; const cx=c.getContext('2d'); const bw=TILE_SIZE; const bh=TILE_SIZE/2; const grad=cx.createLinearGradient(0,0,0,bh); grad.addColorStop(0,COLOR.WALL_BREAKABLE_LIGHT); grad.addColorStop(0.7,COLOR.WALL_BREAKABLE_BASE); grad.addColorStop(1,COLOR.WALL_BREAKABLE_DARK); cx.fillStyle=grad; cx.strokeStyle=COLOR.WALL_BREAKABLE_DARK; cx.lineWidth=1.5; for(let r=0; r<2; r++){ cx.fillRect(0,r*bh,bw,bh); cx.strokeRect(0.5,r*bh+0.5,bw-1,bh-1); } gameState.patterns.breakable = staticCtx.createPattern(c, 'repeat'); } catch(e){ console.error("Pattern Quebrável Falhou:", e); gameState.patterns.breakable = COLOR.WALL_BREAKABLE_BASE; }
+         }
+
+        // Geração do Mapa (sem alterações lógicas da V7, apenas posicionamento)
+        function gerarMapaLogica(level) {
+            const mapa = []; const breakableLocations = []; const wallDensity = 0.80 + Math.random() * 0.10;
+            for (let l=0; l<GRID_SIZE; l++) { mapa[l] = []; for (let c=0; c<GRID_SIZE; c++) { if (l===0||l===GRID_SIZE-1||c===0||c===GRID_SIZE-1||(l%2===0&&c%2===0)) { mapa[l][c]=TILE.WALL_SOLID; } else { const isPlayerStartArea=(l>=PLAYER_START_LIN-1&&l<=PLAYER_START_LIN+1&&c>=PLAYER_START_COL-1&&c<=PLAYER_START_COL+1); if(isPlayerStartArea){mapa[l][c]=TILE.FLOOR;} else if (Math.random()<wallDensity){mapa[l][c]=TILE.WALL_BREAKABLE; breakableLocations.push({col:c, lin:l});} else {mapa[l][c]=TILE.FLOOR;} } } }
+            mapa[PLAYER_START_LIN][PLAYER_START_COL] = TILE.FLOOR; mapa[PLAYER_START_LIN+1][PLAYER_START_COL] = TILE.FLOOR; mapa[PLAYER_START_LIN][PLAYER_START_COL+1] = TILE.FLOOR;
+            gameState.mapa = mapa; gameState.saidaPos = null; gameState.saidaRevelada = false; let attempts = 0;
+            while(breakableLocations.length > 0 && attempts < breakableLocations.length * 2) { attempts++; const idx=Math.floor(Math.random()*breakableLocations.length); const potentialExit=breakableLocations[idx]; const distToPlayer=Math.abs(potentialExit.col-PLAYER_START_COL)+Math.abs(potentialExit.lin-PLAYER_START_LIN); if(distToPlayer>(GRID_SIZE/2.5)){gameState.saidaPos=breakableLocations.splice(idx, 1)[0]; Grid.setTile(gameState.saidaPos.col, gameState.saidaPos.lin, TILE.EXIT_HIDDEN); break;} else {if(breakableLocations.length <= 1) breakableLocations.splice(idx, 1);} }
+            if (!gameState.saidaPos && breakableLocations.length>0){ const idx=Math.floor(Math.random()*breakableLocations.length); gameState.saidaPos=breakableLocations.splice(idx, 1)[0]; Grid.setTile(gameState.saidaPos.col, gameState.saidaPos.lin, TILE.EXIT_HIDDEN); console.warn("Saída fallback perto."); }
+            else if(!gameState.saidaPos){ console.error("ERRO: Sem local para saída!"); gameState.saidaPos={col:GRID_SIZE-2, lin:GRID_SIZE-2}; Grid.setTile(gameState.saidaPos.col, gameState.saidaPos.lin, TILE.EXIT_REVEALED); gameState.saidaRevelada=true; }
+        }
+
+        // Desenho estático (sem alterações da V7)
+        function desenharMapaEstatico() {
+            const staticCtx = gameState.mapCtxStatic; if (!staticCtx) return; staticCtx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let l=0; l<GRID_SIZE; l++) { for (let c=0; c<GRID_SIZE; c++) { const tile=Grid.getTile(c, l); const {x, y}=Grid.toPixelTopLeft(c, l); if (tile===TILE.FLOOR){staticCtx.fillStyle=gameState.patterns.floor||COLOR.FLOOR_LIGHT; staticCtx.fillRect(x,y,TILE_SIZE,TILE_SIZE);} else if (tile===TILE.WALL_SOLID){staticCtx.fillStyle=gameState.patterns.solid||COLOR.WALL_SOLID_BASE; staticCtx.fillRect(x,y,TILE_SIZE,TILE_SIZE);} } }
+            // console.log("Mapa estático base redesenhado.");
+        }
+
+        // *** NOVO: Inicia Entidades com Tipos Variados ***
+        function iniciarEntidades(level) {
+            const numEnemies = BASE_NUM_ENEMIES + Math.floor((level -1) * 1.5);
+            const baseSpeedMultiplier = 1 + (level - 1) * 0.1; // Multiplicador geral de velocidade por nível
+            gameState.inimigos = []; gameState.inimigosVivos = 0;
+            let tentativas = 0; const maxTentativas = GRID_SIZE * GRID_SIZE * 2; // Aumenta tentativas
+
+             while (gameState.inimigosVivos < numEnemies && tentativas < maxTentativas) {
+                 tentativas++;
+                 const c = Math.floor(Math.random() * (GRID_SIZE - 2)) + 1;
+                 const l = Math.floor(Math.random() * (GRID_SIZE - 2)) + 1;
+
+                 if (Grid.isValidForEnemyStart(c, l)) {
+                     const pos = Grid.toPixelCenter(c, l);
+                     let muitoPerto = gameState.inimigos.some(e => Math.hypot(e.x - pos.x, e.y - pos.y) < TILE_SIZE * 1.5);
+
+                     if (!muitoPerto) {
+                         // --- Decide o Tipo de Inimigo ---
+                         let enemyType = ENEMY_TYPE.BLOB; // Padrão
+                         if (level >= SKULL_ENEMY_LEVEL_START && Math.random() < SKULL_ENEMY_CHANCE) {
+                             enemyType = ENEMY_TYPE.SKULL;
+                         }
+
+                         // --- Define a Velocidade Baseado no Tipo e Nível ---
+                         let enemySpeed = BASE_ENEMY_SPEED * baseSpeedMultiplier;
+                         if (enemyType === ENEMY_TYPE.SKULL) {
+                             enemySpeed *= SKULL_SPEED_MULTIPLIER;
+                         }
+                         // Adiciona pequena variação aleatória à velocidade final
+                         enemySpeed *= (0.9 + Math.random() * 0.2);
+
+                         gameState.inimigos.push({
+                             id: `enemy_${gameState.inimigosVivos}`, type: enemyType, // <-- Guarda o tipo
+                             x: pos.x, y: pos.y,
+                             width: TILE_SIZE * (enemyType === ENEMY_TYPE.SKULL ? 0.65 : 0.7), // Skull um pouco menor
+                             height: TILE_SIZE * (enemyType === ENEMY_TYPE.SKULL ? 0.65 : 0.7),
+                             speed: enemySpeed, // <-- Velocidade definida
+                             vivo: true, direcao: Math.floor(Math.random() * 4),
+                             dx: 0, dy: 0, tempoMudarDir: Math.random() * 1000 + 500
+                         });
+                         gameState.inimigosVivos++;
+                     }
+                 }
+             }
+             if(gameState.inimigosVivos < numEnemies) console.warn(`Nível ${level}: Posicionados ${gameState.inimigosVivos}/${numEnemies} inimigos.`);
+             atualizarUI(); // Garante que contagem inicial esteja correta
+         }
+
+        function pararJogo() { if(gameState.animationFrameId){cancelAnimationFrame(gameState.animationFrameId); gameState.animationFrameId=null;} document.removeEventListener('keydown', keyDownHandler); document.removeEventListener('keyup', keyUpHandler); }
+
+        // --- Lógica de Atualização (sem alterações significativas, exceto passagem de nível e coleta) ---
+        function atualizarJogador(dt) {
+            const { jogador, teclasPressionadas } = gameState; if (!jogador || !jogador.vivo || gameState.levelComplete) return; const deltaSeconds = dt / 1000.0;
+            const jogadorGrid = Grid.fromPixel(jogador.x, jogador.y); gameState.bombas.forEach(b => { if (b.ownerId === jogador.id && b.isPassableForOwner && (b.col !== jogadorGrid.col || b.lin !== jogadorGrid.lin)) { b.isPassableForOwner = false; } });
+            let dx = 0; let dy = 0; if (teclasPressionadas['ArrowUp']) dy = -1; if (teclasPressionadas['ArrowDown']) dy = 1; if (teclasPressionadas['ArrowLeft']) dx = -1; if (teclasPressionadas['ArrowRight']) dx = 1; if (dx === 0 && dy === 0) return;
+            let moveSpeed = jogador.currentSpeed; if (dx !== 0 && dy !== 0) moveSpeed *= 0.7071; let moveX = dx * moveSpeed * deltaSeconds; let moveY = dy * moveSpeed * deltaSeconds; let targetX = jogador.x + moveX; let targetY = jogador.y + moveY;
+            if (canMoveTo(jogador, targetX, jogador.y)) { jogador.x = targetX; } if (canMoveTo(jogador, jogador.x, targetY)) { jogador.y = targetY; }
+            jogador.x = Math.max(jogador.width / 2, Math.min(canvas.width - jogador.width / 2, jogador.x)); jogador.y = Math.max(jogador.height / 2, Math.min(canvas.height - jogador.height / 2, jogador.y));
+            const finalGridPos = Grid.fromPixel(jogador.x, jogador.y); const tileAtual = Grid.getTile(finalGridPos.col, finalGridPos.lin);
+            if (tileAtual < 0) { let collected = true; switch (tileAtual) { case TILE.POWERUP_BOMB: jogador.maxBombas = Math.min(MAX_BOMBAS, jogador.maxBombas + 1); break; case TILE.POWERUP_RANGE: jogador.bombRange = Math.min(MAX_RANGE, jogador.bombRange + 1); break; case TILE.POWERUP_SPEED: const newSpeed = Math.min(jogador.baseSpeed * MAX_SPEED_FACTOR, jogador.currentSpeed + jogador.baseSpeed * 0.2); jogador.currentSpeed = newSpeed; break; default: collected = false; break; } if (collected) { Grid.setTile(finalGridPos.col, finalGridPos.lin, TILE.FLOOR); atualizarUI(); } }
+            else if (tileAtual === TILE.EXIT_REVEALED) { if (gameState.inimigosVivos <= 0) { gameState.levelComplete = true; if (gameState.currentLevel >= MAX_LEVELS) { gameState.gameWon = true; mensagemDiv.textContent = "VOCÊ VENCEU O JOGO! R para reiniciar."; } else { mensagemDiv.textContent = `Nível ${gameState.currentLevel} Completo! Carregando...`; setTimeout(() => carregarNivel(gameState.currentLevel + 1), 1500); } } else { if(Math.floor(Date.now()/500)%2) mensagemDiv.textContent = "Elimine todos os inimigos primeiro!"; else mensagemDiv.textContent = ""; } }
+            gameState.inimigos.forEach(inimigo => { if (checkEntityCollision(jogador, inimigo)) { jogador.vivo = false; gameState.gameOver = true; } });
+        }
+
+        function atualizarInimigos(dt) {
+             const deltaSeconds = dt / 1000.0;
+             gameState.inimigos.forEach(inimigo => {
+                 if (!inimigo.vivo) return;
+                 inimigo.tempoMudarDir -= dt;
+                 // Verifica se deve mudar direção (tempo ou bloqueio)
+                 let shouldChangeDir = inimigo.tempoMudarDir <= 0;
+                 if (!shouldChangeDir) {
+                     // Checa um pouco à frente na direção atual para ver se vai bater
+                     const checkX = inimigo.x + inimigo.dx * TILE_SIZE * 0.6;
+                     const checkY = inimigo.y + inimigo.dy * TILE_SIZE * 0.6;
+                     if (!canMoveTo(inimigo, checkX, checkY)) {
+                         shouldChangeDir = true;
+                     }
+                 }
+                 if (shouldChangeDir) {
+                     inimigo.direcao = Math.floor(Math.random() * 4);
+                     inimigo.tempoMudarDir = ENEMY_CHANGE_DIR_INTERVAL.min + Math.random() * (ENEMY_CHANGE_DIR_INTERVAL.max - ENEMY_CHANGE_DIR_INTERVAL.min);
+                     switch (inimigo.direcao) { case 0: inimigo.dx=0; inimigo.dy=-1; break; case 1: inimigo.dx=0; inimigo.dy=1; break; case 2: inimigo.dx=-1; inimigo.dy=0; break; case 3: inimigo.dx=1; inimigo.dy=0; break; }
+                 }
+                 let moveAmount = inimigo.speed * deltaSeconds;
+                 let targetX = inimigo.x + inimigo.dx * moveAmount;
+                 let targetY = inimigo.y + inimigo.dy * moveAmount;
+                 if (canMoveTo(inimigo, targetX, targetY)) { inimigo.x = targetX; inimigo.y = targetY; }
+                 else { inimigo.tempoMudarDir = Math.random() * 150; } // Bateu, força mudança rápida
+                 inimigo.x = Math.max(inimigo.width / 2, Math.min(canvas.width - inimigo.width / 2, inimigo.x));
+                 inimigo.y = Math.max(inimigo.height / 2, Math.min(canvas.height - inimigo.height / 2, inimigo.y));
+             });
+         }
+
+        function colocarBomba() { const { jogador } = gameState; if (!jogador || !jogador.vivo || jogador.bombasColocadas >= jogador.maxBombas || gameState.levelComplete) return; const { col, lin } = Grid.fromPixel(jogador.x, jogador.y); if (gameState.bombas.some(b => b.col === col && b.lin === lin)) return; const tile = Grid.getTile(col, lin); if (tile === TILE.WALL_SOLID || tile === TILE.WALL_BREAKABLE || tile === TILE.EXIT_HIDDEN || tile === TILE.EXIT_REVEALED) return; const agora = Date.now(); gameState.bombas.push({ col, lin, tempoCriacao: agora, tempoExplosao: agora + BOMB_TIMER, range: jogador.bombRange, ownerId: jogador.id, isPassableForOwner: true }); jogador.bombasColocadas++; atualizarUI(); }
+        function atualizarBombas(dt) { const agora = Date.now(); for (let i = gameState.bombas.length - 1; i >= 0; i--) { const bomba = gameState.bombas[i]; if (agora >= bomba.tempoExplosao) { gameState.bombas.splice(i, 1); explodirBombaLogica(bomba); } } }
+        function explodirBombaLogica(bomba) { const owner = gameState.jogador; if(owner && bomba.ownerId === owner.id) { owner.bombasColocadas = Math.max(0, owner.bombasColocadas - 1); } atualizarUI(); const agora = Date.now(); const { col, lin, range } = bomba; let partesExplosao = [{ col, lin }]; let tilesDestruidos = []; const checarDirecao = (dCol, dLin) => { for (let i = 1; i <= range; i++) { const c = col + dCol * i; const l = lin + dLin * i; if(c<0 || c>=GRID_SIZE || l<0 || l>= GRID_SIZE) break; const tile = Grid.getTile(c, l); if (tile === TILE.WALL_SOLID) break; partesExplosao.push({ col: c, lin: l }); if (tile === TILE.WALL_BREAKABLE || tile === TILE.EXIT_HIDDEN) { tilesDestruidos.push({ col:c, lin:l, tipo: tile }); break; } if (tile < 0) { tilesDestruidos.push({col: c, lin:l, tipo: tile}); } const bombaAtingidaIdx = gameState.bombas.findIndex(b => b.col === c && b.lin === l); if (bombaAtingidaIdx > -1) { const bombaAtingida = gameState.bombas.splice(bombaAtingidaIdx, 1)[0]; explodirBombaLogica(bombaAtingida); } } }; checarDirecao(0,-1); checarDirecao(0,1); checarDirecao(-1,0); checarDirecao(1,0); gameState.explosoes.push({ partes: partesExplosao, tempoCriacao: agora }); tilesDestruidos.forEach(({ col: c, lin: l, tipo }) => { if (tipo === TILE.EXIT_HIDDEN && c === gameState.saidaPos?.col && l === gameState.saidaPos?.lin) { Grid.setTile(c, l, TILE.EXIT_REVEALED); gameState.saidaRevelada = true; } else if (tipo === TILE.WALL_BREAKABLE) { if (Math.random() < POWERUP_CHANCE) { const r = Math.random(); if (r < 0.33) Grid.setTile(c, l, TILE.POWERUP_BOMB); else if (r < 0.66) Grid.setTile(c, l, TILE.POWERUP_RANGE); else Grid.setTile(c, l, TILE.POWERUP_SPEED); } else { Grid.setTile(c, l, TILE.FLOOR); } } else if (tipo < 0) { Grid.setTile(c, l, TILE.FLOOR); } }); verificarColisoesExplosao(partesExplosao); }
+        function atualizarExplosoes(dt) { const agora = Date.now(); for (let i = gameState.explosoes.length - 1; i >= 0; i--) { const explosao = gameState.explosoes[i]; if (agora >= explosao.tempoCriacao + EXPLOSION_DURATION) { gameState.explosoes.splice(i, 1); } else { verificarColisoesExplosao(explosao.partes); } } }
+        function verificarColisoesExplosao(partesExplosao) { const { jogador } = gameState; if (jogador?.vivo) { const pGrid = Grid.fromPixel(jogador.x, jogador.y); if (partesExplosao.some(p => p.col === pGrid.col && p.lin === pGrid.lin)) { jogador.vivo = false; gameState.gameOver = true; } } let inimigosMortosNestaFrame = 0; gameState.inimigos.forEach(inimigo => { if (inimigo.vivo) { const iGrid = Grid.fromPixel(inimigo.x, inimigo.y); if (partesExplosao.some(p => p.col === iGrid.col && p.lin === iGrid.lin)) { inimigo.vivo = false; inimigosMortosNestaFrame++; } } }); if (inimigosMortosNestaFrame > 0) { gameState.inimigosVivos = gameState.inimigos.filter(e => e.vivo).length; if(!gameState.gameOver) atualizarUI(); } }
+
+        // --- Funções de Desenho ---
+
+        function desenharMapa() {
+            // 1. Base estática (Piso e Sólidos)
+            if (gameState.mapCanvasStatic) { ctx.drawImage(gameState.mapCanvasStatic, 0, 0); }
+            else { ctx.fillStyle = COLOR.FLOOR_LIGHT; ctx.fillRect(0,0,canvas.width, canvas.height); }
+
+            // 2. Tiles dinâmicos
+            for (let l=0; l<GRID_SIZE; l++) { for (let c=0; c<GRID_SIZE; c++) {
+                const tile = Grid.getTile(c, l);
+                if (tile === TILE.FLOOR || tile === TILE.WALL_SOLID) continue;
+
+                const {x,y} = Grid.toPixelTopLeft(c,l);
+                const pX = x + TILE_SIZE / 2; // Centro X do tile
+                const pY = y + TILE_SIZE / 2; // Centro Y do tile
+
+                switch(tile) {
+                    case TILE.WALL_BREAKABLE: case TILE.EXIT_HIDDEN:
+                        ctx.fillStyle = gameState.patterns.breakable || COLOR.WALL_BREAKABLE_BASE; ctx.fillRect(x,y,TILE_SIZE,TILE_SIZE);
+                        ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.fillRect(x+2,y+2,TILE_SIZE-4,TILE_SIZE-4);
+                        if(tile===TILE.EXIT_HIDDEN && Math.floor(Date.now()/400)%2){ ctx.fillStyle="rgba(255,255,255,0.15)"; ctx.fillRect(x+4,y+4,TILE_SIZE-8,TILE_SIZE-8); }
+                        break;
+
+                    // *** NOVO: Desenho do Portal ***
+                    case TILE.EXIT_REVEALED:
+                        // Desenha chão por baixo
+                        ctx.fillStyle = gameState.patterns.floor || COLOR.FLOOR_LIGHT; ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+
+                        const now = Date.now();
+                        const angle = (now / 1000) % (Math.PI * 2); // Ângulo para rotação/pulsação
+                        const pulse = (Math.sin(now / 200) + 1) / 2; // Valor pulsante 0-1
+
+                        // Gradiente Radial para o Vórtice
+                        const outerRadius = TILE_SIZE * 0.45;
+                        const innerRadius = TILE_SIZE * 0.1 + pulse * TILE_SIZE * 0.15; // Centro pulsa
+                        const gradient = ctx.createRadialGradient(pX, pY, innerRadius, pX, pY, outerRadius);
+
+                        // Cores HSL para fácil animação de matiz
+                        const baseHue = 280; // Roxo/Púrpura
+                        const centerHue = (baseHue + pulse * 30) % 360;
+                        gradient.addColorStop(0, `hsla(${centerHue}, 80%, 85%, 0.9)`); // Centro claro e pulsante
+                        gradient.addColorStop(0.6, `hsla(${baseHue}, 60%, 50%, 0.8)`); // Meio
+                        gradient.addColorStop(1, `hsla(${(baseHue + 20) % 360}, 70%, 30%, 0.7)`); // Borda mais escura
+
+                        ctx.fillStyle = gradient;
+                        ctx.beginPath();
+                        ctx.arc(pX, pY, outerRadius, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Linhas giratórias (opcional, adiciona mais movimento)
+                        ctx.save();
+                        ctx.translate(pX, pY);
+                        ctx.rotate(angle);
+                        ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 + pulse * 0.3})`;
+                        ctx.lineWidth = 1.5;
+                        const lineLength = outerRadius * 0.8;
+                        for (let i = 0; i < 3; i++) { // 3 linhas
+                             ctx.rotate(Math.PI * 2 / 3);
+                             ctx.beginPath();
+                             ctx.moveTo(0, innerRadius * 0.5);
+                             ctx.lineTo(0, lineLength);
+                             ctx.stroke();
+                        }
+                        ctx.restore();
+                        break;
+                    // Power-ups
+                    case TILE.POWERUP_BOMB: desenharIcone(x,y,'💣',COLOR.POWERUP_BOMB_BG); break;
+                    case TILE.POWERUP_RANGE: desenharIcone(x,y,'🔥',COLOR.POWERUP_RANGE_BG); break;
+                    case TILE.POWERUP_SPEED: desenharIcone(x,y,'⚡',COLOR.POWERUP_SPEED_BG); break;
+                } } }
+        }
+
+        function desenharIcone(px, py, icone, corFundo) {
+             ctx.fillStyle = gameState.patterns.floor || COLOR.FLOOR_LIGHT; ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+             ctx.fillStyle = corFundo; ctx.beginPath(); ctx.roundRect(px+TILE_SIZE*0.1,py+TILE_SIZE*0.1,TILE_SIZE*0.8,TILE_SIZE*0.8, 5); ctx.fill();
+             ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.roundRect(px+TILE_SIZE*0.15,py+TILE_SIZE*0.15,TILE_SIZE*0.7,TILE_SIZE*0.7, 4); ctx.fill();
+             ctx.fillStyle = COLOR.ICON_DARK; ctx.font = `bold ${TILE_SIZE*0.55}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(icone, px+TILE_SIZE/2, py+TILE_SIZE/2+2);
+        }
+
+        // Desenhar Jogador (sem alterações)
+        function desenharJogador() { const p = gameState.jogador; if (!p || !p.vivo) return; const r=p.width/2*0.8; const hR=r*0.9; const fW=r*0.5; const fH=r*0.4; ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(p.x, p.y+r+fH*0.5, r, r*0.4, 0, 0, Math.PI*2); ctx.fill(); ctx.fillStyle=COLOR.PLAYER_FEET; ctx.beginPath(); ctx.roundRect(p.x-r*0.7,p.y+r*0.7,fW,fH,3); ctx.fill(); ctx.beginPath(); ctx.roundRect(p.x+r*0.7-fW,p.y+r*0.7,fW,fH,3); ctx.fill(); ctx.fillStyle=COLOR.PLAYER_BODY; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.beginPath(); ctx.arc(p.x-r*0.3,p.y-r*0.3,r*0.8,Math.PI*1.2,Math.PI*1.9); ctx.lineTo(p.x-r*0.3,p.y-r*0.3); ctx.fill(); const hY=p.y-r*0.4; ctx.fillStyle=COLOR.PLAYER_HELMET; ctx.beginPath(); ctx.arc(p.x,hY,hR,0,Math.PI*2); ctx.fill(); ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.arc(p.x,hY,hR,Math.PI*0.4,Math.PI*0.9); ctx.lineTo(p.x,hY); ctx.fill(); ctx.fillStyle=COLOR.PLAYER_VISOR; ctx.beginPath(); ctx.fillRect(p.x-hR*0.6,hY-hR*0.2,hR*1.2,hR*0.4); const aX=p.x; const aBY=hY-hR; const aTY=aBY-hR*0.5; ctx.strokeStyle=COLOR.PLAYER_VISOR; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(aX,aBY); ctx.lineTo(aX,aTY); ctx.stroke(); ctx.fillStyle=COLOR.PLAYER_ANTENNA; ctx.beginPath(); ctx.arc(aX,aTY,hR*0.25,0,Math.PI*2); ctx.fill(); ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(aX-hR*0.08,aTY-hR*0.08,hR*0.1,0,Math.PI*2); ctx.fill(); }
+
+        // *** NOVO: Desenha Inimigos Baseado no Tipo ***
+        function desenharInimigos() {
+             gameState.inimigos.forEach(e => {
+                 if(!e.vivo) return;
+                 // Sombra genérica
+                 const r = e.width / 2;
+                 ctx.fillStyle='rgba(0,0,0,0.2)';
+                 ctx.beginPath();
+                 ctx.ellipse(e.x, e.y + r * 0.8, r * 1.1, r * 0.4, 0, 0, Math.PI * 2);
+                 ctx.fill();
+
+                 // Desenho específico por tipo
+                 switch(e.type) {
+                     case ENEMY_TYPE.BLOB:
+                         desenharInimigoBlob(e);
+                         break;
+                     case ENEMY_TYPE.SKULL:
+                         desenharInimigoSkull(e);
+                         break;
+                     // Adicionar mais casos para outros tipos
+                     default: // Fallback para o Blob
+                          desenharInimigoBlob(e);
+                          break;
+                 }
+             });
+        }
+
+        function desenharInimigoBlob(e) {
+            const r = e.width / 2; // Raio baseado na largura atual
+            // Corpo do Blob (código original)
+             ctx.fillStyle=COLOR.ENEMY_BLOB; ctx.beginPath(); ctx.arc(e.x,e.y,r,Math.PI,0); const oA=r*0.4; const cY=e.y+oA*1.5; const fY=e.y+oA*0.5; ctx.quadraticCurveTo(e.x+r*0.5,cY,e.x,fY); ctx.quadraticCurveTo(e.x-r*0.5,cY,e.x-r,e.y); ctx.closePath(); ctx.fill();
+             // Olhos/Pupilas (código original)
+             const oR=r*0.3; const oX=r*0.4; const oY=e.y-r*0.1; ctx.fillStyle='white'; ctx.beginPath(); ctx.arc(e.x-oX,oY,oR,0,Math.PI*2); ctx.arc(e.x+oX,oY,oR,0,Math.PI*2); ctx.fill(); const pR=oR*0.5; let pX=0; let pY=0; const mag=Math.hypot(e.dx,e.dy); if(mag>0.1){const f=oR*0.4; pX=(e.dx/mag)*f; pY=(e.dy/mag)*f;}else{pY=oR*0.1;} ctx.fillStyle='#333'; ctx.beginPath(); ctx.arc(e.x-oX+pX,oY+pY,pR,0,Math.PI*2); ctx.arc(e.x+oX+pX,oY+pY,pR,0,Math.PI*2); ctx.fill();
+        }
+
+        function desenharInimigoSkull(e) {
+             const r = e.width / 2; // Raio baseado na largura atual
+             const eyeSize = r * 0.4;
+             const eyeY = e.y - r * 0.1;
+             const eyeXOff = r * 0.35;
+
+             // Forma básica da caveira (círculo achatado + mandíbula)
+             ctx.fillStyle = COLOR.ENEMY_SKULL_BODY;
+             ctx.beginPath();
+             // Parte superior (crânio)
+             ctx.arc(e.x, e.y - r * 0.1, r, Math.PI * 1.1, Math.PI * 1.9);
+             // Mandíbula (simplificada)
+             ctx.lineTo(e.x + r * 0.7, e.y + r * 0.5);
+             ctx.quadraticCurveTo(e.x, e.y + r * 0.8, e.x - r * 0.7, e.y + r * 0.5);
+             ctx.closePath();
+             ctx.fill();
+
+             // Sombreamento simples
+             ctx.fillStyle = COLOR.ENEMY_SKULL_DARK;
+             ctx.beginPath();
+             ctx.arc(e.x, e.y + r, r * 0.8, Math.PI*0.1, Math.PI*0.9); // Sombra inferior
+             ctx.fill();
+
+             // Olhos (órbitas escuras)
+             ctx.fillStyle = COLOR.ENEMY_SKULL_DARK;
+             ctx.beginPath();
+             ctx.arc(e.x - eyeXOff, eyeY, eyeSize, 0, Math.PI * 2);
+             ctx.arc(e.x + eyeXOff, eyeY, eyeSize, 0, Math.PI * 2);
+             ctx.fill();
+
+              // Brilho vermelho nos olhos
+             ctx.fillStyle = COLOR.ENEMY_SKULL_EYE;
+             const pupilSize = eyeSize * 0.5;
+             ctx.beginPath();
+             // Brilho acompanha ligeiramente a direção (como no Blob)
+             let pX=0; let pY=0; const mag=Math.hypot(e.dx,e.dy); if(mag>0.1){const f=pupilSize*0.3; pX=(e.dx/mag)*f; pY=(e.dy/mag)*f;}else{pY=pupilSize*0.1;}
+             ctx.arc(e.x - eyeXOff + pX, eyeY + pY, pupilSize, 0, Math.PI * 2);
+             ctx.arc(e.x + eyeXOff + pX, eyeY + pY, pupilSize, 0, Math.PI * 2);
+             ctx.fill();
+
+             // Dentes (simplificados - linhas)
+             ctx.strokeStyle = COLOR.ENEMY_SKULL_DARK;
+             ctx.lineWidth = Math.max(1, r * 0.08);
+             const teethY = e.y + r * 0.55;
+             const teethW = r * 0.2;
+             for (let i = 0; i < 3; i++) {
+                 const teethX = e.x - r*0.4 + i * teethW*1.5;
+                 ctx.beginPath();
+                 ctx.moveTo(teethX, teethY);
+                 ctx.lineTo(teethX + teethW, teethY);
+                 ctx.stroke();
+             }
+        }
+
+
+        // Desenhar Bombas e Explosoes (sem alterações visuais da V7)
+        function desenharBombas() { const r = TILE_SIZE*0.4; const now = Date.now(); gameState.bombas.forEach(b => { const c = Grid.toPixelCenter(b.col, b.lin); ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(c.x,c.y+r*0.8,r*0.9,r*0.3,0,0,Math.PI*2); ctx.fill(); ctx.fillStyle=COLOR.BOMB; ctx.beginPath(); ctx.arc(c.x,c.y,r,0,Math.PI*2); ctx.fill(); ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.beginPath(); ctx.arc(c.x-r*0.3,c.y-r*0.4,r*0.5,0,Math.PI*2); ctx.fill(); ctx.fillStyle='#424242'; ctx.beginPath(); ctx.arc(c.x-r*0.35,c.y-r*0.45,r*0.4,0,Math.PI*2); ctx.fill(); const tLeft = b.tempoExplosao-now; const pct = Math.max(0,tLeft/BOMB_TIMER); const pY = c.y-r; const pH = TILE_SIZE*0.2*(0.5+pct*0.5); const pW = Math.max(2,4*pct); ctx.strokeStyle='#bdbdbd'; ctx.lineWidth=pW; ctx.beginPath(); ctx.moveTo(c.x,c.y-r*0.8); ctx.quadraticCurveTo(c.x+pW*2,c.y-r-pH*0.5,c.x,pY); ctx.stroke(); if(tLeft>0 && Math.floor(now/(150*pct+50))%2===0){ctx.fillStyle=pct<0.3?'#ff1744':(pct<0.6?'#ffa000':'#ffeb3b');const sZ=4+(1-pct)*3;ctx.lineWidth=2;ctx.strokeStyle=ctx.fillStyle;ctx.beginPath();ctx.moveTo(c.x-sZ,pY);ctx.lineTo(c.x+sZ,pY);ctx.moveTo(c.x,pY-sZ);ctx.lineTo(c.x,pY+sZ);ctx.stroke();} }); }
+        function desenharExplosoes() { const now = Date.now(); gameState.explosoes.forEach(exp => { const elapsed = now - exp.tempoCriacao; const pct = Math.min(1, elapsed / EXPLOSION_DURATION); const alpha = 1.0 - Math.pow(pct, 3); ctx.globalAlpha = alpha * 0.9; const pulseBeam = Math.sin(elapsed / 80) * 0.1 + 0.9; const sizeR = TILE_SIZE * (0.4 + pct * 0.6) * pulseBeam; ctx.fillStyle = COLOR.EXPLOSION_BEAM; exp.partes.slice(1).forEach(p => { const c = Grid.toPixelCenter(p.col, p.lin); const center = Grid.toPixelCenter(exp.partes[0].col, exp.partes[0].lin); const dx = c.x - center.x; const dy = c.y - center.y; const angle = Math.atan2(dy, dx); ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(angle); ctx.fillRect(-sizeR/2, -sizeR*0.3, sizeR, sizeR*0.6); ctx.restore(); }); const pulseCenter = Math.cos(elapsed / 60) * 0.15 + 0.85; const sizeC = TILE_SIZE * (0.5 + pct * 0.4) * pulseCenter; ctx.fillStyle = COLOR.EXPLOSION_CENTER; if(exp.partes.length > 0){ const p = exp.partes[0]; const c = Grid.toPixelCenter(p.col, p.lin); ctx.beginPath(); ctx.arc(c.x, c.y, sizeC / 2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = `rgba(255, 255, 255, ${0.5 * alpha * pulseCenter})`; ctx.beginPath(); ctx.arc(c.x, c.y, sizeC / 3, 0, Math.PI*2); ctx.fill(); } }); ctx.globalAlpha = 1.0; }
+
+        // UI e Input (sem alterações da V7)
+        function atualizarUI() { const { jogador, inimigosVivos, gameOver, gameWon, levelComplete, currentLevel } = gameState; if (!jogador) return; infoLevelSpan.textContent = `Nível: ${currentLevel}/${MAX_LEVELS}`; infoBombasSpan.textContent = `B: ${jogador.maxBombas - jogador.bombasColocadas}/${jogador.maxBombas}`; infoAlcanceSpan.textContent = `A: ${jogador.bombRange}`; const speedFactor = (jogador.currentSpeed / jogador.baseSpeed).toFixed(1); infoVelocidadeSpan.textContent = `V: ${speedFactor}x`; infoInimigosSpan.textContent = `I: ${inimigosVivos}`; let msg = ""; let piscar = false; if (gameOver) msg = "GAME OVER! R para reiniciar."; else if (gameWon) msg = "VOCÊ VENCEU O JOGO! R para reiniciar."; else if (levelComplete) {} /* msg já definida */ else if (gameState.saidaRevelada && inimigosVivos > 0) { msg = "Elimine os inimigos!"; piscar = true; } else if (gameState.saidaRevelada && inimigosVivos === 0) { msg = "Vá para a saída!"; piscar = true; } if (mensagemDiv.textContent === "" || piscar || !gameState.saidaRevelada) { mensagemDiv.textContent = msg; mensagemDiv.style.opacity = (piscar && Math.floor(Date.now() / 400) % 2 === 0) ? '0.5' : '1'; } else if (!msg) { const currentMsg = mensagemDiv.textContent; if (!currentMsg.includes("Carregando") && !currentMsg.includes("VENCEU") && !currentMsg.includes("GAME OVER") && !currentMsg.includes("Completo")) { mensagemDiv.textContent = ""; } } }
+        function keyDownHandler(e) { if (e.repeat) return; if (!gameState.gameOver && !gameState.gameWon && !gameState.levelComplete) { if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) { gameState.teclasPressionadas[e.key] = true; } if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); colocarBomba(); } } if ((e.key === 'r' || e.key === 'R')) { console.log("Reiniciando jogo via tecla R..."); iniciarJogo(); } }
+        function keyUpHandler(e) { if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) { gameState.teclasPressionadas[e.key] = false; } }
+
+        // --- Game Loop Principal (sem alterações) ---
+        function gameLoop(timestamp) {
+            gameState.animationFrameId = requestAnimationFrame(gameLoop);
+            const deltaTime = timestamp - gameState.ultimoTempo; gameState.ultimoTempo = timestamp; const dt = Math.min(deltaTime, FRAME_TIME_LIMIT);
+            if (!gameState.gameOver && !gameState.gameWon && !gameState.levelComplete) { atualizarJogador(dt); atualizarInimigos(dt); atualizarBombas(dt); atualizarExplosoes(dt); }
+            atualizarUI();
+            ctx.clearRect(0, 0, canvas.width, canvas.height); desenharMapa(); desenharBombas(); desenharExplosoes(); desenharInimigos(); desenharJogador();
+        }
+
+        // --- Iniciar ao Carregar ---
+        window.onload = iniciarJogo;
+
+    </script>
+</body>
+</html>

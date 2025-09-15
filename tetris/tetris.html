@@ -1,0 +1,1778 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tetris AI (Human-like Control) Emoji</title>
+    <style>
+      body {
+        display: flex;
+        justify-content: space-around;
+        align-items: flex-start;
+        font-family: sans-serif;
+        background-color: #f0f0f0;
+        margin-top: 15px;
+        gap: 15px;
+        flex-wrap: wrap;
+      }
+
+      #game-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+
+      #game-board {
+        font-family: monospace;
+        font-size: 18px;
+        line-height: 1.0;
+        white-space: pre;
+        border: 3px solid #333;
+        background-color: #ddd;
+        display: inline-block;
+        padding: 5px;
+        min-height: 370px;
+        /* Ajuste a largura mínima se necessário para acomodar 10 colunas + borda/padding */
+        min-width: calc(10ch + 10px + 6px); /* 10 caracteres + padding + borda */
+        box-sizing: content-box; /* Garante que padding e borda não aumentem a largura calculada */
+      }
+
+      #game-info,
+      #ai-info {
+        border: 1px solid #ccc;
+        padding: 10px;
+        background-color: white;
+        min-width: 180px;
+        max-width: 200px;
+      }
+
+      #ai-info h3 {
+        margin-top: 0;
+      }
+
+      #ai-status {
+        font-style: italic;
+        color: #555;
+        min-height: 3em; /* Espaço para 2 linhas de texto */
+        word-wrap: break-word; /* Quebra palavras longas */
+      }
+
+      #game-over {
+        position: absolute;
+        top: 40%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background-color: rgba(0, 0, 0, 0.75);
+        color: white;
+        padding: 20px 40px;
+        font-size: 1.5em;
+        border-radius: 10px;
+        display: none;
+        text-align: center;
+        z-index: 10;
+      }
+
+      button {
+        display: inline-block;
+        margin-top: 10px;
+        margin-right: 5px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      progress {
+        width: 100%;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      #nn-visualizer-container {
+        border: 1px solid #ccc;
+        padding: 10px;
+        background-color: white;
+        min-width: 300px;
+        max-width: 350px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      #nn-visualizer-container h3 {
+        margin-top: 0;
+        margin-bottom: 10px;
+      }
+
+      #nn-visualizer-svg {
+        width: 100%;
+        min-height: 300px;
+        border: 1px solid #eee;
+        background-color: #fdfdfd;
+      }
+
+      #nn-visualizer-svg .neuron {
+        stroke: #333;
+        stroke-width: 1;
+        fill: #fff;
+        transition: fill 0.1s ease-in-out;
+      }
+
+      #nn-visualizer-svg .connection {
+        stroke: #aaa;
+        stroke-opacity: 0.6;
+        transition: stroke 0.1s ease-in-out, stroke-width 0.1s ease-in-out;
+      }
+
+      #nn-visualizer-svg text {
+        font-family: sans-serif;
+        font-size: 9px;
+        fill: #333;
+        pointer-events: none;
+      }
+
+      #nn-visualizer-svg .input-label {
+        text-anchor: end;
+        dominant-baseline: middle;
+      }
+
+      #nn-visualizer-controls label {
+        font-size: 0.9em;
+        margin-left: 5px;
+      }
+
+      #nn-labels {
+        font-size: 0.8em;
+        margin-top: 5px;
+        text-align: center;
+        line-height: 1.4;
+        width: 95%;
+      }
+
+      #nn-explanation {
+        font-size: 0.9em;
+        color: #444;
+        margin-top: 10px;
+        padding: 8px;
+        border-top: 1px dashed #ccc;
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Coluna do Jogo -->
+    <div id="game-container">
+      <div id="game-board">Carregando...</div>
+      <div id="ai-info">
+        <h3>Controle da IA</h3>
+        <button id="startTrainingButton">Iniciar Treinamento</button>
+        <button id="watchBestButton" disabled>Ver Melhor IA Jogar</button>
+        <button id="stopAIButton" class="hidden">Parar IA</button>
+        <div id="training-progress" class="hidden">
+          <p>Geração: <span id="generation">0</span></p>
+          <p>Melhor Fitness: <span id="bestFitness">0</span></p>
+          <p>Progresso Geração:</p>
+          <progress id="genProgressBar" value="0" max="100"></progress>
+        </div>
+        <p>Status: <span id="ai-status">Pronto para treinar.</span></p>
+        <div id="nn-visualizer-controls">
+          <input type="checkbox" id="update-nn-viz-checkbox" checked>
+          <label for="update-nn-viz-checkbox">Atualizar NN ao vivo</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Coluna do Visualizador -->
+    <div id="nn-visualizer-container">
+      <h3>Visualizador da Rede Neural</h3>
+      <svg id="nn-visualizer-svg" viewBox="0 0 350 300" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="nn-labels">
+        <span>Entrada (Features)</span> | <span>Oculta</span> | <span>Saída (Score)</span>
+        <br> Peso Conexão: <span style="display: inline-block; width: 10px; height: 10px; background-color: steelblue; opacity: 0.7;"></span> Positivo <span style="display: inline-block; width: 10px; height: 10px; background-color: tomato; opacity: 0.7; margin-left: 5px;"></span> Negativo | Ativação Neurônio: <span style="display: inline-block; width: 10px; height: 10px; background-color: hsl(90, 100%, 60%); border: 1px solid #ccc; margin-left: 5px;"></span> Alta <span style="display: inline-block; width: 10px; height: 10px; background-color: hsl(90, 0%, 100%); border: 1px solid #ccc; margin-left: 5px;"></span> Baixa <div id="nn-explanation">
+          <strong>Como a IA funciona:</strong>
+          <ol style="margin: 5px 0 0 15px; padding-left: 10px; text-align: left;">
+            <li>A IA <strong>simula</strong> todas as posições/rotações possíveis para a peça atual. </li>
+            <li>Para cada simulação, calcula as <strong>Features de Entrada</strong> (altura, buracos, etc.) do tabuleiro resultante. </li>
+            <li>A Rede Neural (NN) processa essas features e gera um <strong>Score de Saída</strong> (quão "bom" é o resultado). </li>
+            <li>A IA escolhe a simulação (posição/rotação) que gerou o <strong>maior Score</strong>. </li>
+            <li>Executa os comandos (rotar, mover, descer) para alcançar essa posição escolhida.</li>
+          </ol> A visualização mostra as features e o score da <strong>posição final escolhida</strong> pela IA.
+        </div>
+      </div>
+    </div>
+
+    <!-- Coluna de Informações/Controles Humanos -->
+    <div id="game-info">
+      <h2>Tetris IA</h2>
+      <p>(Humano)</p>
+      <p>Pontos: <span id="score">0</span></p>
+      <p>Nível: <span id="level">1</span></p>
+      <p>Linhas: <span id="lines">0</span></p>
+      <hr>
+      <p><strong>Controles (Humano):</strong></p>
+      <p>← → ↓ ↑ Espaço</p>
+      <button id="startHumanButton">Jogar (Humano)</button>
+    </div>
+
+    <div id="game-over">
+      Fim de Jogo!
+      <button id="restartHumanButton">Jogar Novamente (Humano)</button>
+    </div>
+
+    <script>
+      // --- Configurações, Elementos DOM ---
+      const COLS = 10;
+      const ROWS = 20;
+      const EMPTY_CHAR = '⬛'; // Caractere para espaço vazio
+      const BLOCK_CHARS = { // Mapeamento de tipo de peça para caractere
+        'I': '🟦', // Ciano (ou Azul claro)
+        'O': '🟨', // Amarelo
+        'T': '🟪', // Roxo
+        'S': '🟩', // Verde
+        'Z': '🟥', // Vermelho
+        'L': '🟧', // Laranja
+        'J': '🟫'  // Azul escuro (ou Marrom se preferir)
+      };
+      const SHAPES = { // Formatos das peças (matrizes 0 ou 1)
+        'I': [
+          [1, 1, 1, 1]
+        ],
+        'O': [
+          [1, 1],
+          [1, 1]
+        ],
+        'T': [
+          [0, 1, 0],
+          [1, 1, 1]
+        ],
+        'S': [
+          [0, 1, 1],
+          [1, 1, 0]
+        ],
+        'Z': [
+          [1, 1, 0],
+          [0, 1, 1]
+        ],
+        'L': [
+          [1, 0, 0],
+          [1, 1, 1]
+        ],
+        'J': [
+          [0, 0, 1],
+          [1, 1, 1]
+        ]
+      };
+      const PIECE_TYPES = Object.keys(SHAPES); // Lista dos tipos de peças ['I', 'O', ...]
+
+      // Elementos da interface
+      const gameBoardElement = document.getElementById('game-board');
+      const scoreElement = document.getElementById('score');
+      const levelElement = document.getElementById('level');
+      const linesElement = document.getElementById('lines');
+      const gameOverElement = document.getElementById('game-over');
+      const startHumanButton = document.getElementById('startHumanButton');
+      const restartHumanButton = document.getElementById('restartHumanButton');
+      const startTrainingButton = document.getElementById('startTrainingButton');
+      const watchBestButton = document.getElementById('watchBestButton');
+      const stopAIButton = document.getElementById('stopAIButton');
+      const trainingProgressDiv = document.getElementById('training-progress');
+      const generationSpan = document.getElementById('generation');
+      const bestFitnessSpan = document.getElementById('bestFitness');
+      const genProgressBar = document.getElementById('genProgressBar');
+      const aiStatusSpan = document.getElementById('ai-status');
+      const nnVisualizerContainer = document.getElementById('nn-visualizer-container');
+      const nnVisualizerSVG = document.getElementById('nn-visualizer-svg');
+      const updateNnVixCheckbox = document.getElementById('update-nn-viz-checkbox');
+
+      // Nomes das features para o visualizador
+      const INPUT_FEATURE_LABELS = ["Alt. Agreg.", "Buracos", "Irregul.", "Alt. Max.", "Poços"];
+
+      // --- Estado do Jogo ---
+      let board = []; // Matriz ROWS x COLS representando o tabuleiro
+      let currentPiece = null; // Objeto da peça atual { type, shape, color, row, col }
+      let currentRow = 0; // Linha atual da peça (canto superior esquerdo)
+      let currentCol = 0; // Coluna atual da peça (canto superior esquerdo)
+      let score = 0;
+      let level = 1;
+      let totalLinesCleared = 0;
+      let gameInterval = null; // ID do intervalo principal do jogo (setInterval)
+      let dropInterval = 1000; // Intervalo de queda da peça em ms
+      let isGameOver = false;
+      let isPaused = true; // Começa pausado
+      let isHumanPlaying = false; // Indica se o humano está jogando
+      let aiController = null; // Instância da IA ativa (se houver)
+      let aiCurrentPlan = null; // Plano de movimento atual da IA { rotations, targetCol, ... }
+      let aiActionInProgress = false; // Flag para evitar que a IA calcule novo plano enquanto executa um
+
+      // --- Funções Básicas do Tetris ---
+
+      // Cria um tabuleiro vazio
+      function createBoard() {
+        return Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY_CHAR));
+      }
+
+      // Retorna um tipo de peça aleatório
+      function getRandomPieceType() {
+        return PIECE_TYPES[Math.floor(Math.random() * PIECE_TYPES.length)];
+      }
+
+      // Cria um novo objeto de peça
+      function createPiece(type) {
+        if (!type) type = getRandomPieceType();
+        const shape = SHAPES[type];
+        const color = BLOCK_CHARS[type];
+        const shapeCopy = shape.map(row => [...row]); // Copia profunda da forma
+        return {
+          type,
+          shape: shapeCopy,
+          color,
+          row: 0, // Posição inicial no topo
+          col: Math.floor((COLS - shapeCopy[0].length) / 2) // Centraliza horizontalmente
+        };
+      }
+
+      // Verifica se uma posição (r, c) com uma dada forma é válida no tabuleiro
+      function isValidMove(r, c, shape, targetBoard) {
+        if (!shape) return false; // Segurança
+        for (let y = 0; y < shape.length; y++) {
+          if (!shape[y]) continue; // Linha vazia na forma (raro)
+          for (let x = 0; x < shape[y].length; x++) {
+            if (shape[y][x]) { // Se for um bloco da peça
+              const boardRow = r + y;
+              const boardCol = c + x;
+
+              // Verifica limites do tabuleiro
+              if (boardCol < 0 || boardCol >= COLS || boardRow >= ROWS) {
+                return false;
+              }
+              // Verifica colisão com peças já existentes (ignora área acima do tabuleiro)
+              if (boardRow >= 0 && targetBoard[boardRow] && targetBoard[boardRow][boardCol] !== EMPTY_CHAR) {
+                return false;
+              }
+            }
+          }
+        }
+        return true; // Movimento válido
+      }
+
+      // Rotaciona a matriz da forma da peça 90 graus no sentido horário
+      function rotateShape(shape) {
+        const originalShape = shape.map(row => [...row]); // Cópia profunda
+        const numRows = originalShape.length;
+        const numCols = originalShape[0].length;
+        const newShape = Array.from({ length: numCols }, () => Array(numRows).fill(0)); // Nova matriz transposta
+
+        for (let r = 0; r < numRows; r++) {
+          for (let c = 0; c < numCols; c++) {
+            if (originalShape[r][c]) {
+              newShape[c][numRows - 1 - r] = 1;
+            }
+          }
+        }
+        return newShape;
+      }
+
+      // Simula a queda e travamento de uma peça para avaliação da IA
+      function simulateLockPiece(r, c, piece, targetBoard) {
+        const shape = piece.shape;
+        const color = piece.color;
+        let landedRow = r;
+        const simPiece = { ...piece, shape: shape.map(row => [...row]) }; // Cópia
+
+        // Encontra a posição final da queda
+        while (isValidMove(landedRow + 1, c, simPiece.shape, targetBoard)) {
+          landedRow++;
+        }
+
+        // Cria uma cópia do tabuleiro para simular o travamento
+        const nextBoard = targetBoard.map(row => [...row]);
+        let isTopOut = false; // Flag para game over
+
+        // Transfere a peça para o tabuleiro simulado
+        for (let y = 0; y < simPiece.shape.length; y++) {
+          if (!simPiece.shape[y]) continue;
+          for (let x = 0; x < simPiece.shape[y].length; x++) {
+            if (simPiece.shape[y][x]) {
+              const boardRow = landedRow + y;
+              const boardCol = c + x;
+              // Verifica se travou acima do topo visível (game over)
+              if (boardRow < 0 && boardCol >= 0 && boardCol < COLS) {
+                isTopOut = true;
+              }
+              // Coloca a cor no tabuleiro simulado
+              if (boardRow >= 0 && boardRow < ROWS && boardCol >= 0 && boardCol < COLS) {
+                nextBoard[boardRow][boardCol] = color;
+              }
+            }
+          }
+        }
+
+        let linesClearedCount = 0;
+        // Se não for game over, simula a limpeza de linhas
+        if (!isTopOut) {
+          for (let row = ROWS - 1; row >= 0;) {
+            // Se a linha está completa (não contém EMPTY_CHAR)
+            if (nextBoard[row] && !nextBoard[row].includes(EMPTY_CHAR)) {
+              linesClearedCount++;
+              nextBoard.splice(row, 1); // Remove a linha
+              nextBoard.unshift(Array(COLS).fill(EMPTY_CHAR)); // Adiciona uma linha vazia no topo
+            } else {
+              row--; // Só decrementa se a linha não foi removida
+            }
+          }
+        }
+
+        return {
+          board: nextBoard, // O estado do tabuleiro após o travamento
+          linesCleared: linesClearedCount, // Quantas linhas foram limpas
+          gameOver: isTopOut // Se a jogada resultou em game over
+        };
+      }
+
+      // --- Funções de Desenho e Loop ---
+
+      // Desenha o estado atual do tabuleiro e da peça
+      function drawBoard() {
+        if (isGameOver || !gameBoardElement) return; // Não desenha se acabou
+
+        // Cria uma cópia do tabuleiro para não modificar o original
+        const displayBoard = board.map(row => [...row]);
+
+        // Desenha a peça atual sobre a cópia do tabuleiro
+        if (currentPiece) {
+          const shape = currentPiece.shape;
+          const color = currentPiece.color;
+          if (shape) { // Segurança
+            for (let r = 0; r < shape.length; r++) {
+              if (!shape[r]) continue;
+              for (let c = 0; c < shape[r].length; c++) {
+                if (shape[r][c]) { // Se for um bloco da peça
+                  const displayRow = currentRow + r;
+                  const displayCol = currentCol + c;
+                  // Desenha apenas dentro dos limites visíveis do tabuleiro
+                  if (displayRow >= 0 && displayRow < ROWS && displayCol >= 0 && displayCol < COLS) {
+                    displayBoard[displayRow][displayCol] = color;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Converte a matriz em string e atualiza o elemento HTML
+        const boardString = displayBoard.map(row => row.join('').padEnd(COLS, EMPTY_CHAR)).join('\n');
+        gameBoardElement.textContent = boardString;
+      }
+
+      // Atualiza as informações de pontuação, nível e linhas
+      function updateGameInfo() {
+        scoreElement.textContent = score;
+        levelElement.textContent = level;
+        linesElement.textContent = totalLinesCleared;
+      }
+
+      // --- Funções de Ação da Peça ---
+
+      // Move a peça atual (dx: horizontal, dy: vertical)
+      function movePiece(dx, dy) {
+        if (!currentPiece || isPaused || isGameOver) return false; // Não move se pausado, fim de jogo ou sem peça
+
+        const newRow = currentRow + dy;
+        const newCol = currentCol + dx;
+
+        if (isValidMove(newRow, newCol, currentPiece.shape, board)) {
+          currentRow = newRow;
+          currentCol = newCol;
+          if (!isGameOver) drawBoard(); // Redesenha apenas se o jogo não acabou
+          return true; // Movimento bem-sucedido
+        }
+        return false; // Movimento inválido
+      }
+
+      // Rotaciona a peça atual
+      function rotatePiece() {
+        if (!currentPiece || isPaused || isGameOver) return false;
+
+        const originalShape = currentPiece.shape;
+        const newShape = rotateShape(originalShape);
+        let testCol = currentCol;
+        let testRow = currentRow; // Embora não usemos wall kick complexo, guardamos a linha
+
+        // Tenta rotacionar na posição atual
+        if (!isValidMove(testRow, testCol, newShape, board)) {
+          // Tenta "wall kick" simples (mover 1 para direita/esquerda)
+          if (isValidMove(testRow, testCol + 1, newShape, board)) {
+            testCol++;
+          } else if (isValidMove(testRow, testCol - 1, newShape, board)) {
+            testCol--;
+          }
+          // Tenta "wall kick" para peça 'I' (mover 2 para direita/esquerda)
+          else if (['I'].includes(currentPiece.type) && isValidMove(testRow, testCol + 2, newShape, board)) {
+            testCol += 2;
+          } else if (['I'].includes(currentPiece.type) && isValidMove(testRow, testCol - 2, newShape, board)) {
+            testCol -= 2;
+          } else {
+            return false; // Rotação impossível mesmo com wall kick simples
+          }
+        }
+
+        // Aplica a rotação e a possível correção de posição
+        currentPiece.shape = newShape;
+        currentCol = testCol;
+        currentRow = testRow; // Mantém a linha (poderia ser ajustado com wall kick vertical)
+        if (!isGameOver) drawBoard();
+        return true; // Rotação bem-sucedida
+      }
+
+      // Derruba a peça instantaneamente (Hard Drop)
+      function hardDrop() {
+        if (!currentPiece || isPaused || isGameOver) return false;
+
+        let dropRow = currentRow;
+        // Encontra a linha mais baixa possível
+        while (isValidMove(dropRow + 1, currentCol, currentPiece.shape, board)) {
+          dropRow++;
+        }
+
+        // Se a peça realmente desceu
+        if (dropRow > currentRow) {
+          currentRow = dropRow;
+        }
+
+        // Trava a peça e continua o jogo (gera nova peça, etc.)
+        lockPieceAndContinue();
+        return true;
+      }
+
+      // --- Spawn e Lock ---
+
+      // Gera uma nova peça no topo
+      function spawnNewPiece() {
+        if (isGameOver) return; // Não gera se já acabou
+
+        currentPiece = createPiece(); // Cria a peça
+        currentRow = currentPiece.row; // Pega a linha inicial (geralmente 0 ou < 0)
+        currentCol = currentPiece.col; // Pega a coluna inicial (centralizada)
+
+        aiCurrentPlan = null; // Reseta o plano da IA
+        aiActionInProgress = false; // Reseta flag de ação da IA
+
+        // Verifica se a nova peça já colide ao spawnar (Game Over)
+        if (!isValidMove(currentRow, currentCol, currentPiece.shape, board)) {
+          console.log("Spawn failed: Game Over condition met.");
+          isGameOver = true;
+          // Não precisa desenhar, gameOver() cuidará da UI
+          gameOver(); // Chama a função de fim de jogo
+        } else if (!isPaused) {
+          drawBoard(); // Desenha a nova peça se o jogo não estiver pausado
+        }
+      }
+
+      // Trava a peça atual no tabuleiro, verifica linhas, atualiza estado e pode gerar nova peça
+      function lockPieceAndContinue() {
+        if (!currentPiece || isGameOver) return 0; // Não faz nada se não há peça ou jogo acabou
+
+        const shape = currentPiece.shape;
+        const color = currentPiece.color;
+        let isTopOut = false; // Flag para verificar se travou acima do topo
+
+        // Transfere a peça para o tabuleiro permanente (board)
+        for (let r = 0; r < shape.length; r++) {
+          if (!shape[r]) continue;
+          for (let c = 0; c < shape[r].length; c++) {
+            if (shape[r][c]) {
+              const boardRow = currentRow + r;
+              const boardCol = currentCol + c;
+
+              // Verifica condição de "top out" (game over)
+              if (boardRow < 0 && boardCol >= 0 && boardCol < COLS) {
+                isTopOut = true;
+                console.log("Top Out detected: Game Over condition met.");
+                break; // Sai do loop interno
+              }
+              // Coloca o bloco no tabuleiro se estiver dentro dos limites
+              if (boardRow >= 0 && boardRow < ROWS && boardCol >= 0 && boardCol < COLS) {
+                // Aviso se estiver tentando sobrescrever uma célula já ocupada (debug)
+                 if (board[boardRow][boardCol] !== EMPTY_CHAR) {
+                     console.warn(`Tentando travar peça em célula ocupada: [${boardRow}, ${boardCol}]`);
+                 }
+                board[boardRow][boardCol] = color;
+              }
+            }
+          }
+          if (isTopOut) break; // Sai do loop externo se top out detectado
+        }
+
+        const pieceThatLocked = currentPiece; // Guarda referência caso precise no futuro
+        currentPiece = null; // Remove a peça atual da queda
+
+        // Se deu "top out", encerra o jogo
+        if (isTopOut) {
+          isGameOver = true;
+          gameOver();
+          return 0; // Nenhuma linha limpa
+        }
+
+        // Verifica e limpa linhas completas
+        let linesClearedCount = 0;
+        for (let r = ROWS - 1; r >= 0;) {
+          if (board[r] && !board[r].includes(EMPTY_CHAR)) { // Linha completa
+            linesClearedCount++;
+            board.splice(r, 1); // Remove a linha
+            board.unshift(Array(COLS).fill(EMPTY_CHAR)); // Adiciona linha vazia no topo
+            // Não decrementa 'r' porque a próxima linha a verificar é a que "desceu"
+          } else {
+            r--; // Decrementa apenas se a linha não foi removida
+          }
+        }
+
+        // Atualiza pontuação e nível se linhas foram limpas
+        if (linesClearedCount > 0) {
+          totalLinesCleared += linesClearedCount;
+          // Pontuações por linhas limpas (1, 2, 3, 4)
+          const points = [0, 100, 300, 500, 800]; // Pontos base * nível
+          score += points[linesClearedCount] * level;
+
+          // Aumenta o nível a cada 10 linhas
+          const newLevel = Math.floor(totalLinesCleared / 10) + 1;
+          if (newLevel > level) {
+            level = newLevel;
+            // Aumenta a velocidade de queda (diminui o intervalo)
+            dropInterval = Math.max(50, 1000 - (level - 1) * 50); // Mínimo de 50ms
+            // Reseta o intervalo do jogo se for humano (para aplicar nova velocidade)
+            if (isHumanPlaying) resetGameInterval();
+          }
+          updateGameInfo(); // Atualiza a UI
+        }
+
+        // !IMPORTANTE! A geração da nova peça acontecerá no próximo gameStep,
+        // porque currentPiece agora é null.
+
+        return linesClearedCount; // Retorna quantas linhas foram limpas
+      }
+
+      // --- Loop Principal do Jogo (gameStep) ---
+      function gameStep() {
+        if (isPaused || isGameOver) return; // Pula o passo se pausado ou fim de jogo
+
+        // 1. Se não há peça caindo e o jogo não acabou, gera uma nova
+        if (currentPiece === null && !isGameOver) {
+          spawnNewPiece();
+          // Se spawnNewPiece detectou game over, isGameOver será true, e sairemos no início do próximo step
+          if (isGameOver) return; // Sai imediatamente se spawnar causou game over
+        }
+
+        // 2. Se há uma peça caindo
+        if (currentPiece) {
+          // 2a. Se é o jogador humano
+          if (isHumanPlaying) {
+            // Tenta mover a peça para baixo
+            if (!movePiece(0, 1)) {
+              // Se não conseguiu mover para baixo (colidiu ou chegou ao fundo)
+              // CORREÇÃO: Chama lockPieceAndContinue para travar a peça
+              lockPieceAndContinue();
+              // A próxima peça será gerada no início do próximo gameStep
+            }
+          }
+          // 2b. Se é a IA jogando
+          else if (aiController) {
+            // Se a IA não tem um plano e não está executando uma ação
+            if (!aiCurrentPlan && !aiActionInProgress) {
+              aiActionInProgress = true; // Marca que a IA está pensando/agindo
+              // Pede à IA para encontrar o melhor movimento
+              const moveData = aiController.findBestMove(board, currentPiece);
+
+              if (moveData && moveData.move) {
+                aiCurrentPlan = moveData.move; // Guarda o plano da IA
+                // console.log("AI Plan:", aiCurrentPlan); // Debug
+
+                // Atualiza o visualizador da NN se a opção estiver marcada
+                if (updateNnVixCheckbox.checked && bestAgent && moveData.activations) {
+                  drawNeuralNetwork(nnVisualizerSVG, bestAgent.nn, INPUT_FEATURE_LABELS, moveData.activations.inputs, moveData.activations.hidden, moveData.activations.outputs);
+                }
+              } else {
+                // Se a IA não encontrou movimento (raro, pode indicar problema ou tabuleiro cheio)
+                console.warn("IA não encontrou plano válido. Possível Fim de jogo.");
+                isGameOver = true;
+                gameOver(); // Encerra o jogo
+                aiActionInProgress = false;
+                return; // Sai do gameStep
+              }
+            }
+
+            // Se a IA tem um plano para executar
+            if (aiCurrentPlan) {
+              let actionTakenThisStep = false; // Flag para ver se alguma ação foi feita neste step
+
+              // Executa as rotações necessárias (uma por step)
+              if (aiCurrentPlan.rotations > 0) {
+                if (rotatePiece()) {
+                  aiCurrentPlan.rotations--;
+                  actionTakenThisStep = true;
+                } else {
+                  // Se a rotação falhar (deveria ser raro com a lógica da IA)
+                  console.warn("AI: Rotação falhou, limpando plano.");
+                  aiCurrentPlan = null;
+                  aiActionInProgress = false; // Permite recalcular
+                }
+              }
+              // Se não há mais rotações e a peça não está na coluna alvo
+              else if (currentCol !== aiCurrentPlan.targetCol && !actionTakenThisStep) {
+                const direction = currentCol < aiCurrentPlan.targetCol ? 1 : -1; // Direita ou Esquerda
+                if (movePiece(direction, 0)) {
+                  actionTakenThisStep = true;
+                } else {
+                  // Se o movimento horizontal falhar
+                  console.warn("AI: Movimento horizontal falhou, limpando plano.");
+                  aiCurrentPlan = null;
+                  aiActionInProgress = false;
+                }
+              }
+              // Se já rotacionou e está na coluna certa
+              else if (currentCol === aiCurrentPlan.targetCol && !actionTakenThisStep) {
+                hardDrop(); // Executa o hard drop para finalizar o movimento
+                actionTakenThisStep = true;
+                // O plano está concluído. aiCurrentPlan e aiActionInProgress serão resetados
+                // quando a próxima peça for gerada em spawnNewPiece.
+              }
+
+              // Se nenhuma ação foi tomada neste step (ex: esperando movimento horizontal terminar)
+              // e o jogo não acabou, desce a peça um passo (evita ficar parada no ar)
+              // Isso pode ser opcional dependendo da velocidade desejada da IA
+              if (!actionTakenThisStep && !isGameOver) {
+                 // movePiece(0, 1); // Descomente se quiser que a peça desça enquanto a IA move lateralmente
+              }
+            } else {
+                // Se não tem plano e não está calculando, apenas desce (fallback, raro)
+                 if (!aiActionInProgress && !isGameOver) {
+                    movePiece(0, 1);
+                 }
+            }
+          } // Fim do bloco da IA
+        } // Fim do bloco if(currentPiece)
+      }
+
+      // --- Funções de Controle do Jogo ---
+
+      // Reinicia o intervalo principal do jogo com a velocidade correta
+      function resetGameInterval() {
+        clearInterval(gameInterval); // Limpa o intervalo antigo
+        if (!isPaused && !isGameOver) {
+          // IA joga mais rápido (intervalo menor) que humano
+          const interval = isHumanPlaying ? dropInterval : 50; // 50ms para IA, dropInterval para humano
+          gameInterval = setInterval(gameStep, interval);
+        }
+      }
+
+      // Inicia um novo jogo
+      function startGame(human = true) {
+        stopTraining("Novo jogo iniciado."); // Para treinamento se estiver ativo
+        if (gameInterval) clearInterval(gameInterval); // Limpa intervalo existente
+
+        isHumanPlaying = human; // Define se é humano ou IA
+        isGameOver = false;
+        isPaused = false;
+        score = 0;
+        level = 1;
+        totalLinesCleared = 0;
+        dropInterval = 1000; // Reseta velocidade inicial
+        board = createBoard(); // Cria tabuleiro vazio
+        currentPiece = null; // Reseta peça atual
+        aiCurrentPlan = null; // Reseta plano da IA
+        aiActionInProgress = false; // Reseta flag da IA
+        gameOverElement.style.display = 'none'; // Esconde mensagem de fim de jogo
+        updateGameInfo(); // Atualiza UI (score, level, lines)
+
+        // Desabilita/Habilita botões
+        startHumanButton.disabled = true;
+        startTrainingButton.disabled = true;
+        watchBestButton.disabled = true;
+        stopAIButton.classList.add('hidden'); // Esconde botão de parar IA por padrão
+
+        if (!human) { // Se for a IA jogando
+          if (!bestAgent) { // Verifica se existe uma IA treinada para assistir
+            console.error("Nenhuma IA carregada para assistir!");
+            aiStatusSpan.textContent = "Erro: Nenhuma IA treinada.";
+            isGameOver = true; // Força game over se não tem IA
+            gameOver(); // Mostra tela de game over
+            return;
+          }
+          aiController = bestAgent; // Define o controlador da IA como o melhor agente
+          aiStatusSpan.textContent = `Visualizando Melhor IA (Gen ${aiController.generation || 'N/A'})...`;
+          stopAIButton.classList.remove('hidden'); // Mostra o botão de parar IA
+          // Desenha a rede neural do melhor agente
+          drawNeuralNetwork(nnVisualizerSVG, bestAgent.nn, INPUT_FEATURE_LABELS);
+        } else { // Se for humano jogando
+          aiController = null; // Garante que não há controlador de IA
+          aiStatusSpan.textContent = "Jogo humano iniciado.";
+        }
+
+        spawnNewPiece(); // Gera a primeira peça
+        // Inicia o loop do jogo APENAS se não for game over imediatamente
+        if (!isGameOver) {
+            resetGameInterval();
+        }
+      }
+
+      // Função chamada quando o jogo termina
+      function gameOver() {
+        // Evita chamadas múltiplas ou enquanto pausado
+        if (!isGameOver) return; // Garante que só execute se isGameOver for true
+        if (gameInterval === null && isPaused) return; // Evita executar se já parado
+
+        console.log("GAME OVER triggered!"); // Debug
+        isPaused = true; // Pausa o jogo
+        clearInterval(gameInterval); // Para o loop principal
+        gameInterval = null; // Limpa a referência do intervalo
+
+        gameOverElement.style.display = 'block'; // Mostra a mensagem de fim de jogo
+        console.log("Game Over! Final Score:", score, "Lines:", totalLinesCleared); // Log final
+
+        // Reabilita botões apropriados
+        startHumanButton.disabled = false;
+        startTrainingButton.disabled = false;
+        watchBestButton.disabled = bestAgent === null; // Habilita se houver IA salva
+        stopAIButton.classList.add('hidden'); // Esconde botão de parar IA
+
+        aiStatusSpan.textContent = "Fim de jogo.";
+        currentPiece = null; // Garante que não há peça ativa
+        aiCurrentPlan = null;
+        aiActionInProgress = false;
+      }
+
+      // Lida com as teclas pressionadas pelo jogador humano
+      function handleKeyPress(event) {
+        if (!isHumanPlaying || isPaused || isGameOver) return; // Ignora se não for humano, pausado ou fim de jogo
+
+        let actionTaken = false; // Flag para prevenir default apenas se ação foi útil
+        switch (event.key) {
+          case 'ArrowLeft':
+            actionTaken = movePiece(-1, 0);
+            break;
+          case 'ArrowRight':
+            actionTaken = movePiece(1, 0);
+            break;
+          case 'ArrowDown':
+            // Mover para baixo também reseta o timer de queda automática (em jogos mais avançados)
+            actionTaken = movePiece(0, 1);
+            break;
+          case 'ArrowUp':
+            actionTaken = rotatePiece();
+            break;
+          case ' ': // Espaço para Hard Drop
+            actionTaken = hardDrop();
+            break;
+        }
+
+        // Previne o comportamento padrão do navegador (ex: rolar a página com as setas)
+        // apenas se uma ação válida do jogo foi executada.
+        if (actionTaken && ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', ' '].includes(event.key)) {
+             event.preventDefault();
+        }
+      }
+
+      // --- Rede Neural (Classe NN) ---
+      class NeuralNetwork {
+        constructor(inputNodes, hiddenNodes, outputNodes, weights = null, bias = null) {
+          this.inputNodes = inputNodes;
+          this.hiddenNodes = hiddenNodes;
+          this.outputNodes = outputNodes;
+
+          if (weights && bias) { // Se pesos e bias foram fornecidos (ex: cópia ou carregamento)
+            this.weights_ih = weights.ih; // Pesos Input -> Hidden
+            this.weights_ho = weights.ho; // Pesos Hidden -> Output
+            this.bias_h = bias.h;         // Bias da camada oculta
+            this.bias_o = bias.o;         // Bias da camada de saída
+          } else { // Inicialização aleatória
+            // Matrizes de pesos com valores aleatórios entre -1 e 1
+            this.weights_ih = Array.from({ length: this.hiddenNodes }, () =>
+              Array.from({ length: this.inputNodes }, () => Math.random() * 2 - 1)
+            );
+            this.weights_ho = Array.from({ length: this.outputNodes }, () =>
+              Array.from({ length: this.hiddenNodes }, () => Math.random() * 2 - 1)
+            );
+            // Vetores de bias com valores aleatórios entre -1 e 1
+            this.bias_h = Array.from({ length: this.hiddenNodes }, () => Math.random() * 2 - 1);
+            this.bias_o = Array.from({ length: this.outputNodes }, () => Math.random() * 2 - 1);
+          }
+        }
+
+        // Função de ativação ReLU (Rectified Linear Unit)
+        relu(x) {
+          return Math.max(0, x);
+        }
+
+        // Função de ativação Linear (sem alteração) para a saída
+        linear(x) {
+          return x;
+        }
+
+        // Calcula a saída da rede neural para um dado array de entrada
+        predict(inputArray) {
+          // Validação básica da entrada
+          if (inputArray.length !== this.inputNodes) {
+            console.error(`NN Predict Error: Expected ${this.inputNodes} inputs, received ${inputArray.length}. Padding/truncating.`);
+            // Tenta corrigir preenchendo com 0 ou truncando
+             inputArray = inputArray.slice(0, this.inputNodes).concat(Array(Math.max(0, this.inputNodes - inputArray.length)).fill(0));
+          }
+
+          // --- Camada Oculta ---
+          let hiddenActivations = Array(this.hiddenNodes).fill(0);
+          for (let i = 0; i < this.hiddenNodes; i++) { // Para cada neurônio oculto
+            let sum = 0;
+            for (let j = 0; j < this.inputNodes; j++) { // Para cada entrada
+              // Garante que os valores são números válidos
+              const inputVal = (typeof inputArray[j] === 'number' && !isNaN(inputArray[j])) ? inputArray[j] : 0;
+              const weightVal = (typeof this.weights_ih[i][j] === 'number' && !isNaN(this.weights_ih[i][j])) ? this.weights_ih[i][j] : 0;
+              sum += inputVal * weightVal;
+            }
+            const biasVal = (typeof this.bias_h[i] === 'number' && !isNaN(this.bias_h[i])) ? this.bias_h[i] : 0;
+            sum += biasVal; // Adiciona o bias
+            hiddenActivations[i] = this.relu(sum); // Aplica a função de ativação (ReLU)
+             if (typeof hiddenActivations[i] !== 'number' || isNaN(hiddenActivations[i])) hiddenActivations[i] = 0; // Segurança pós-ativação
+          }
+
+          // --- Camada de Saída ---
+          let outputValues = Array(this.outputNodes).fill(0);
+          for (let i = 0; i < this.outputNodes; i++) { // Para cada neurônio de saída
+            let sum = 0;
+            for (let j = 0; j < this.hiddenNodes; j++) { // Para cada ativação da camada oculta
+                const hiddenVal = (typeof hiddenActivations[j] === 'number' && !isNaN(hiddenActivations[j])) ? hiddenActivations[j] : 0;
+                const weightVal = (typeof this.weights_ho[i][j] === 'number' && !isNaN(this.weights_ho[i][j])) ? this.weights_ho[i][j] : 0;
+                sum += hiddenVal * weightVal;
+            }
+            const biasVal = (typeof this.bias_o[i] === 'number' && !isNaN(this.bias_o[i])) ? this.bias_o[i] : 0;
+            sum += biasVal; // Adiciona o bias
+            outputValues[i] = this.linear(sum); // Aplica a função de ativação (Linear)
+             if (typeof outputValues[i] !== 'number' || isNaN(outputValues[i])) outputValues[i] = 0; // Segurança pós-ativação
+          }
+
+          // Retorna as saídas e as ativações intermediárias (útil para visualização/debug)
+          return {
+            outputs: outputValues,
+            hidden: hiddenActivations,
+            inputs: inputArray // Retorna a entrada usada (após possível correção)
+          };
+        }
+
+        // Cria uma cópia exata da rede neural
+        copy() {
+          // Cópia profunda dos pesos e bias
+          const weights = {
+            ih: this.weights_ih.map(row => [...row]),
+            ho: this.weights_ho.map(row => [...row]),
+          };
+          const bias = {
+            h: [...this.bias_h],
+            o: [...this.bias_o],
+          };
+          // Cria nova instância com os valores copiados
+          return new NeuralNetwork(this.inputNodes, this.hiddenNodes, this.outputNodes, weights, bias);
+        }
+
+        // Realiza o crossover (recombinação) com outra rede neural (parceiro)
+        crossover(partner) {
+          const child = this.copy(); // Começa com uma cópia do pai 'this'
+          const rate = 0.5; // Ponto de corte simples (50% de chance de pegar do outro pai)
+
+          // Crossover para pesos Input -> Hidden e bias Hidden
+          for (let i = 0; i < this.hiddenNodes; i++) {
+            for (let j = 0; j < this.inputNodes; j++) {
+              if (Math.random() < rate) {
+                child.weights_ih[i][j] = partner.weights_ih[i][j];
+              }
+            }
+            if (Math.random() < rate) {
+              child.bias_h[i] = partner.bias_h[i];
+            }
+          }
+
+          // Crossover para pesos Hidden -> Output e bias Output
+          for (let i = 0; i < this.outputNodes; i++) {
+            for (let j = 0; j < this.hiddenNodes; j++) {
+              if (Math.random() < rate) {
+                child.weights_ho[i][j] = partner.weights_ho[i][j];
+              }
+            }
+             if (Math.random() < rate) {
+                child.bias_o[i] = partner.bias_o[i];
+             }
+          }
+          return child; // Retorna a nova rede (filho)
+        }
+
+        // Aplica mutações aleatórias nos pesos e bias
+        mutate(mutationRate, mutationAmount) {
+          // Função auxiliar para mutar um valor
+          const mutateValue = (val) => {
+            if (Math.random() < mutationRate) {
+              // Adiciona um valor aleatório pequeno (distribuição normal seria melhor, mas isso funciona)
+              return val + (Math.random() * 2 - 1) * mutationAmount;
+            }
+            return val;
+          };
+
+          // Aplica a mutação a todos os pesos e bias
+          this.weights_ih = this.weights_ih.map(row => row.map(mutateValue));
+          this.bias_h = this.bias_h.map(mutateValue);
+          this.weights_ho = this.weights_ho.map(row => row.map(mutateValue));
+          this.bias_o = this.bias_o.map(mutateValue);
+        }
+
+        // Serializa a rede neural para JSON (salvar/transferir)
+        serialize() {
+          return JSON.stringify({
+            weights: { ih: this.weights_ih, ho: this.weights_ho },
+            bias: { h: this.bias_h, o: this.bias_o },
+            inputNodes: this.inputNodes,
+            hiddenNodes: this.hiddenNodes,
+            outputNodes: this.outputNodes
+          });
+        }
+
+        // Desserializa (carrega) uma rede neural a partir de JSON
+        static deserialize(jsonString) {
+          try {
+            const data = JSON.parse(jsonString);
+            // Validação básica dos dados carregados
+            if (data && data.weights && data.bias && data.inputNodes && data.hiddenNodes && data.outputNodes) {
+                 return new NeuralNetwork(data.inputNodes, data.hiddenNodes, data.outputNodes, data.weights, data.bias);
+            } else {
+                console.error("Erro ao desserializar NN: Dados inválidos ou faltando.");
+                return null;
+            }
+          } catch (e) {
+            console.error("Erro ao desserializar NN:", e);
+            return null;
+          }
+        }
+      }
+
+      // --- Lógica da IA (Classe AI) ---
+      class TetrisAI {
+        constructor(neuralNetwork) {
+          this.nn = neuralNetwork; // A rede neural que controla este agente
+          this.fitness = 0; // Pontuação de aptidão (quão bem se saiu na simulação)
+          this.generation = 0; // Geração a que pertence (informativo)
+        }
+
+        // Cria uma cópia do agente AI (incluindo cópia da NN)
+        copy() {
+          const nnCopy = this.nn.copy();
+          const aiCopy = new TetrisAI(nnCopy);
+          aiCopy.fitness = this.fitness; // Copia fitness também
+          aiCopy.generation = this.generation; // Copia geração
+          return aiCopy;
+        }
+
+        // Calcula as features (características) de um estado do tabuleiro
+        calculateBoardFeatures(boardState) {
+          let aggregateHeight = 0; // Soma das alturas de todas as colunas
+          let holes = 0;           // Espaços vazios abaixo de um bloco
+          let bumpiness = 0;       // Soma das diferenças de altura entre colunas adjacentes
+          let maxHeight = 0;       // Altura da coluna mais alta
+          let wells = 0;           // Número de "poços" (espaços vazios cercados) - heurística simples
+
+          const columnHeights = Array(COLS).fill(0); // Altura de cada coluna
+
+          // Calcula alturas das colunas e buracos
+          for (let c = 0; c < COLS; c++) {
+            let colHeight = 0;
+            let foundBlock = false; // Flag para saber se já achamos um bloco nesta coluna
+            for (let r = 0; r < ROWS; r++) {
+              if (boardState[r][c] !== EMPTY_CHAR) { // Encontrou um bloco
+                if (!foundBlock) {
+                  colHeight = ROWS - r; // Altura é a distância do fundo
+                  foundBlock = true;
+                }
+              } else if (foundBlock) { // Encontrou um espaço vazio *abaixo* de um bloco
+                holes++;
+              }
+            }
+            columnHeights[c] = colHeight;
+            aggregateHeight += colHeight;
+            if (colHeight > maxHeight) maxHeight = colHeight; // Atualiza altura máxima
+          }
+
+          // Calcula bumpiness (irregularidade) e poços (simplificado)
+          for (let c = 0; c < COLS; c++) {
+            // Bumpiness: diferença para a coluna da direita
+            if (c < COLS - 1) {
+              bumpiness += Math.abs(columnHeights[c] - columnHeights[c + 1]);
+            }
+            // Poços: Verifica células vazias que têm vizinhos mais altos ou borda
+            for (let r = ROWS - columnHeights[c]; r < ROWS; r++) { // Só verifica dentro da altura da coluna
+                if (boardState[r][c] === EMPTY_CHAR) {
+                    const leftHeight = (c > 0) ? columnHeights[c-1] : ROWS; // Altura à esquerda (ou borda=max)
+                    const rightHeight = (c < COLS - 1) ? columnHeights[c+1] : ROWS; // Altura à direita (ou borda=max)
+                    // Se a célula está vazia e as colunas vizinhas (ou bordas) são pelo menos tão altas quanto a profundidade atual
+                    if ((ROWS-r) <= leftHeight && (ROWS-r) <= rightHeight) {
+                         // Uma definição mais estrita poderia exigir leftHeight > columnHeights[c] etc.
+                         // Esta versão simplificada conta espaços vazios "encurralados" verticalmente.
+                         // wells++; // Implementação de poços pode variar, esta é uma simples
+                    }
+                }
+            }
+             // Definição alternativa/comum de poços (contar colunas "fundas")
+             const leftH = c > 0 ? columnHeights[c - 1] : ROWS;
+             const rightH = c < COLS - 1 ? columnHeights[c + 1] : ROWS;
+             if (leftH > columnHeights[c] && rightH > columnHeights[c]) {
+                 wells += Math.min(leftH - columnHeights[c], rightH - columnHeights[c]);
+             }
+
+          }
+
+
+          // Normalizar as features pode ser útil, mas aqui usamos os valores brutos
+          // Ex: return [aggregateHeight / (ROWS * COLS), holes / (ROWS * COLS), ...];
+
+          return [aggregateHeight, holes, bumpiness, maxHeight, wells];
+        }
+
+        // Encontra o melhor movimento (rotação e posição final) para a peça atual
+        findBestMove(currentBoard, currentPieceInfo) {
+          let bestScore = -Infinity; // Pior score possível inicialmente
+          let bestMovePlan = null; // O plano de movimento correspondente ao melhor score
+          let bestActivations = null; // As ativações da NN para o melhor movimento (visualização)
+
+          const pieceType = currentPieceInfo.type;
+          let currentShape = currentPieceInfo.shape.map(row => [...row]); // Cópia da forma inicial
+
+          // Define quantas rotações testar para cada tipo de peça (otimização)
+          let maxRotations = 4;
+          if (pieceType === 'O') maxRotations = 1; // Quadrado não rotaciona
+          else if (['I', 'S', 'Z'].includes(pieceType)) maxRotations = 2; // Essas peças têm simetria
+
+          // Itera por todas as rotações possíveis
+          for (let rotationCount = 0; rotationCount < maxRotations; rotationCount++) {
+            const pieceWidth = currentShape[0].length; // Largura da peça na rotação atual
+
+            // Itera por todas as colunas possíveis onde a peça pode ser solta
+            // Começa de -pieceWidth + 1 para permitir que partes da peça fiquem fora da borda esquerda inicialmente
+            for (let col = -pieceWidth + 1; col < COLS; col++) {
+
+              // Simula a queda da peça (encontra onde ela aterrissaria)
+              let landedRow = 0; // Começa tentando da linha 0
+              // Encontra a linha mais baixa onde a peça pode estar SEM colidir
+              while (isValidMove(landedRow + 1, col, currentShape, currentBoard)) {
+                landedRow++;
+              }
+
+              // Verifica se a posição final (landedRow, col) é válida
+              // Pode ser inválida se a peça começar já colidindo (ex: topo muito cheio)
+              if (!isValidMove(landedRow, col, currentShape, currentBoard)) {
+                  continue; // Pula para a próxima coluna se esta posição inicial for inválida
+              }
+
+
+              // Simula o travamento da peça e obtém o resultado
+              const { board: nextBoard, linesCleared, gameOver } = simulateLockPiece(
+                  landedRow, // Usa a linha onde aterrissou
+                  col,
+                  { ...currentPieceInfo, shape: currentShape, row: landedRow }, // Passa a peça com a rotação e posição final
+                  currentBoard
+              );
+
+              let currentScore;
+              let currentActivations = null;
+
+              if (gameOver) {
+                // Penalidade máxima se o movimento levar a game over
+                currentScore = -Infinity;
+              } else {
+                // Calcula as features do tabuleiro resultante
+                const features = this.calculateBoardFeatures(nextBoard);
+                // Obtém a previsão (score) da rede neural para essas features
+                const predictionResult = this.nn.predict(features);
+                const nnScore = predictionResult.outputs[0]; // A NN tem 1 saída: o score
+                currentActivations = predictionResult; // Guarda as ativações para visualização
+
+                // Calcula o score final combinando a saída da NN com heurísticas
+                // Estes pesos são CRUCIAIS e geralmente são o alvo da otimização
+                 // Pesos de exemplo (ajustar experimentalmente ou via GA):
+                 const W_LINES_CLEARED = 5; // Recompensa forte por limpar linhas
+                 const W_HOLES = -2;        // Penalidade por buracos
+                 const W_BUMPINESS = -0.5;   // Penalidade por irregularidade
+                 const W_MAX_HEIGHT = -1;   // Penalidade por altura máxima
+                 const W_AGG_HEIGHT = -0.1; // Penalidade leve por altura agregada
+                 const W_WELLS = -1;        // Penalidade por poços
+
+                 currentScore = nnScore
+                                + (linesCleared * linesCleared * W_LINES_CLEARED) // Recompensa quadrática por linhas
+                                + features[0] * W_AGG_HEIGHT  // Altura Agregada
+                                + features[1] * W_HOLES       // Buracos
+                                + features[2] * W_BUMPINESS   // Irregularidade
+                                + features[3] * W_MAX_HEIGHT  // Altura Máxima
+                                + features[4] * W_WELLS;      // Poços
+
+
+                // Garante que o score é um número válido
+                if (typeof currentScore !== 'number' || isNaN(currentScore)) {
+                    console.warn("Invalid score calculated:", currentScore, "Features:", features, "NN Score:", nnScore);
+                    currentScore = -Infinity;
+                }
+              }
+
+              // Se este movimento é o melhor encontrado até agora
+              if (currentScore > bestScore) {
+                bestScore = currentScore;
+                bestMovePlan = {
+                  rotations: rotationCount, // Quantas vezes rotacionar da original
+                  targetCol: col,          // Coluna final onde travar
+                  score: currentScore,     // O score calculado
+                  lines: linesCleared      // Linhas limpas por este movimento
+                };
+                bestActivations = currentActivations; // Guarda as ativações deste melhor movimento
+              }
+            } // Fim do loop de colunas
+
+            // Prepara a próxima rotação (se houver)
+            if (rotationCount < maxRotations - 1) {
+              currentShape = rotateShape(currentShape);
+            }
+          } // Fim do loop de rotações
+
+          // Aviso se nenhum movimento válido foi encontrado (deve ser raro)
+          if (!bestMovePlan) {
+            console.warn("Nenhum plano válido encontrado pela IA para peça:", currentPieceInfo.type);
+            // Pode retornar um movimento padrão ou null
+            return { move: null, activations: null };
+          }
+
+          // Retorna o melhor plano encontrado e as ativações correspondentes
+          return { move: bestMovePlan, activations: bestActivations };
+        }
+      }
+
+
+      // --- Algoritmo Genético ---
+      const GA_SETTINGS = {
+        populationSize: 40, // Quantos agentes por geração
+        mutationRate: 0.08, // Chance de um gene (peso/bias) sofrer mutação
+        mutationAmount: 0.15,// Magnitude máxima da mutação (+/- este valor)
+        elitism: 0.1,       // % dos melhores agentes que passam direto para a próxima geração
+        maxGenerations: 100,// Número máximo de gerações para treinar
+        gamesPerAgent: 1    // Quantas simulações cada agente joga para calcular fitness (mais = mais preciso, mais lento)
+      };
+
+      const NN_CONFIG = { // Configuração da arquitetura da rede neural
+        inputNodes: INPUT_FEATURE_LABELS.length, // Número de features de entrada
+        hiddenNodes: 8,   // Número de neurônios na camada oculta (ajustável)
+        outputNodes: 1    // Saída única: o score da jogada
+      };
+
+      let population = []; // Array contendo os agentes (TetrisAI) da geração atual
+      let currentGeneration = 0; // Contador da geração atual
+      let bestAgent = null; // O melhor agente encontrado até agora em todo o treinamento
+      let trainingIntervalId = null; // ID do intervalo/timeout usado para o loop de treinamento
+      let currentAgentIndex = 0; // Índice do agente sendo avaliado na geração atual
+
+      // Inicializa a população com agentes aleatórios
+      function initializePopulation() {
+        population = [];
+        for (let i = 0; i < GA_SETTINGS.populationSize; i++) {
+          // Cria uma nova NN com pesos/bias aleatórios
+          const nn = new NeuralNetwork(NN_CONFIG.inputNodes, NN_CONFIG.hiddenNodes, NN_CONFIG.outputNodes);
+          population.push(new TetrisAI(nn)); // Cria um agente AI com essa NN
+        }
+        currentGeneration = 0; // Reseta contador de geração
+        bestAgent = null; // Reseta melhor agente global
+        console.log(`População inicializada com ${GA_SETTINGS.populationSize} agentes.`);
+      }
+
+      // Roda uma simulação completa de Tetris para um agente e retorna seu fitness
+      function runSimulation(agent) {
+        let simBoard = createBoard(); // Tabuleiro da simulação
+        let simPiece = createPiece(); // Peça atual da simulação
+        let simTotalLinesCleared = 0; // Linhas limpas na simulação
+        let simGameOver = false;
+        let movesMade = 0; // Contador de peças jogadas
+        const MAX_MOVES = 500; // Limite de peças para evitar simulações infinitas
+
+        while (!simGameOver && movesMade < MAX_MOVES) {
+          // Pede ao agente para encontrar o melhor movimento para a peça atual
+           const moveData = agent.findBestMove(
+               simBoard.map(r => [...r]), // Passa cópia do tabuleiro
+               { ...simPiece, shape: simPiece.shape.map(r => [...r]) } // Passa cópia da peça
+            );
+
+          if (moveData && moveData.move) {
+            const bestMovePlan = moveData.move;
+
+            // Rotaciona a forma da peça conforme o plano
+            const simShape = rotateShapeNTimes(simPiece.shape, bestMovePlan.rotations);
+
+            // Simula o travamento da peça na posição planejada
+             const { board: nextBoard, linesCleared, gameOver } = simulateLockPiece(
+                 0, // A linha inicial não importa tanto, simulateLockPiece acha a final
+                 bestMovePlan.targetCol,
+                 { ...simPiece, shape: simShape }, // Usa a forma rotacionada
+                 simBoard
+             );
+
+            // Atualiza o estado da simulação
+            simBoard = nextBoard;
+            simTotalLinesCleared += linesCleared;
+            simGameOver = gameOver;
+
+            // Gera a próxima peça se não for game over
+            if (!simGameOver) {
+              simPiece = createPiece();
+              // Verifica se a nova peça já causa game over
+              if (!isValidMove(simPiece.row, simPiece.col, simPiece.shape, simBoard)) {
+                simGameOver = true;
+              }
+            }
+          } else {
+            // Se a IA não encontrou movimento, considera game over
+            simGameOver = true;
+          }
+          movesMade++; // Incrementa contador de peças jogadas
+        } // Fim do loop while (!simGameOver)
+
+        if (movesMade >= MAX_MOVES) {
+            console.log(`Simulação do agente atingiu ${MAX_MOVES} movimentos.`);
+        }
+
+        // Calcula o fitness: recompensa por linhas limpas e um pouco por sobreviver mais tempo
+        // Os pesos aqui são importantes para guiar a evolução.
+        const fitness = (simTotalLinesCleared * simTotalLinesCleared * 10) + movesMade; // Recompensa quadrática por linhas + sobrevivência
+        // Outras métricas poderiam ser incluídas (ex: penalidade por altura final)
+        return fitness;
+      }
+
+      // Rotaciona uma forma N vezes
+      function rotateShapeNTimes(shape, n) {
+        let currentShape = shape.map(r => [...r]);
+        for (let i = 0; i < n; i++) {
+          currentShape = rotateShape(currentShape);
+        }
+        return currentShape;
+      }
+
+      // Avalia um único agente rodando N simulações
+      function evaluateAgent(agent) {
+        let totalFitness = 0;
+        for (let i = 0; i < GA_SETTINGS.gamesPerAgent; i++) {
+          totalFitness += runSimulation(agent);
+        }
+        agent.fitness = totalFitness / GA_SETTINGS.gamesPerAgent; // Média do fitness
+        // Garante que fitness é um número válido
+        if(isNaN(agent.fitness)) {
+            console.error("Fitness inválido calculado para o agente:", agent);
+            agent.fitness = -Infinity; // Penalidade máxima
+        }
+        return agent.fitness;
+      }
+
+      // Executa um passo do treinamento (avalia um agente ou evolui a população)
+      function trainingStep() {
+        // Se todos os agentes da geração foram avaliados
+        if (currentAgentIndex >= population.length) {
+          evolvePopulation(); // Cria a próxima geração
+          currentAgentIndex = 0; // Reseta o índice para a nova geração
+
+          // Verifica se atingiu o limite de gerações
+          if (currentGeneration > GA_SETTINGS.maxGenerations) {
+            stopTraining("Treinamento concluído (máx. gerações).");
+            return;
+          }
+          // Atualiza a UI da geração
+          generationSpan.textContent = currentGeneration;
+        }
+
+        // Avalia o agente atual
+        try {
+             evaluateAgent(population[currentAgentIndex]);
+        } catch (error) {
+            console.error(`Erro ao avaliar agente ${currentAgentIndex} da Geração ${currentGeneration}:`, error);
+            population[currentAgentIndex].fitness = -Infinity; // Penaliza agente que causou erro
+        }
+
+
+        // Atualiza a barra de progresso e o status
+        const progress = ((currentAgentIndex + 1) / population.length) * 100;
+        genProgressBar.value = progress;
+        aiStatusSpan.textContent = `Treinando Geração ${currentGeneration}, Agente ${currentAgentIndex + 1}/${population.length}...`;
+
+        // Passa para o próximo agente
+        currentAgentIndex++;
+
+        // Agenda o próximo passo do treinamento (usando setTimeout para não bloquear a UI)
+        trainingIntervalId = setTimeout(trainingStep, 0); // 0ms para executar o mais rápido possível
+      }
+
+      // Cria a próxima geração da população usando seleção, crossover e mutação
+      function evolvePopulation() {
+        // 1. Ordena a população atual pelo fitness (do melhor para o pior)
+        population.sort((a, b) => b.fitness - a.fitness);
+
+        // 2. Atualiza o melhor agente global, se necessário
+        if (!bestAgent || (population[0] && population[0].fitness > bestAgent.fitness)) {
+            if(population[0]) { // Garante que a população não está vazia
+                bestAgent = population[0].copy(); // Salva uma CÓPIA do melhor
+                bestAgent.generation = currentGeneration; // Marca a geração
+                bestFitnessSpan.textContent = bestAgent.fitness.toFixed(2);
+                watchBestButton.disabled = false; // Habilita o botão para assistir
+                console.log(`Novo melhor agente! Geração ${currentGeneration}, Fitness: ${bestAgent.fitness.toFixed(2)}`);
+                // Atualiza o visualizador com a rede do melhor agente
+                drawNeuralNetwork(nnVisualizerSVG, bestAgent.nn, INPUT_FEATURE_LABELS);
+            }
+        } else if (bestAgent) {
+             // Mesmo que não seja um novo recorde, atualiza o valor na UI (pode ter mudado ligeiramente)
+             bestFitnessSpan.textContent = bestAgent.fitness.toFixed(2);
+        }
+
+        // 3. Cria a nova população
+        const newPopulation = [];
+
+        // 3a. Elitismo: Adiciona os N melhores da geração anterior diretamente
+        const eliteCount = Math.max(1, Math.floor(GA_SETTINGS.populationSize * GA_SETTINGS.elitism));
+        for (let i = 0; i < eliteCount; i++) {
+          if (population[i]) { // Segurança
+              newPopulation.push(population[i].copy()); // Adiciona CÓPIAS dos elites
+          }
+        }
+
+        // 3b. Preenche o resto da população com filhos gerados por crossover e mutação
+        while (newPopulation.length < GA_SETTINGS.populationSize) {
+          // Seleciona dois pais (usando seleção por torneio simples)
+          const pickParent = () => {
+              // Pega dois índices aleatórios
+              const index1 = Math.floor(Math.random() * population.length);
+              const index2 = Math.floor(Math.random() * population.length);
+              // Retorna o agente com maior fitness entre os dois
+              // Garante que os agentes existem e têm fitness válido
+              const agent1 = population[index1];
+              const agent2 = population[index2];
+              const fitness1 = (agent1 && typeof agent1.fitness === 'number' && !isNaN(agent1.fitness)) ? agent1.fitness : -Infinity;
+              const fitness2 = (agent2 && typeof agent2.fitness === 'number' && !isNaN(agent2.fitness)) ? agent2.fitness : -Infinity;
+
+              if (fitness1 >= fitness2) return agent1;
+              else return agent2;
+          };
+
+          const parentA = pickParent();
+          const parentB = pickParent();
+
+          // Garante que temos pais válidos antes de prosseguir
+          if (!parentA || !parentB) {
+              console.warn("Não foi possível selecionar pais válidos, pulando criação de filho.");
+              // Adiciona um agente aleatório ou uma cópia de um elite como fallback
+               newPopulation.push(population[0] ? population[0].copy() : new TetrisAI(new NeuralNetwork(NN_CONFIG.inputNodes, NN_CONFIG.hiddenNodes, NN_CONFIG.outputNodes)));
+              continue;
+          }
+
+
+          // Cria o filho fazendo crossover dos pais
+          const childNN = parentA.nn.crossover(parentB.nn);
+          // Aplica mutação no filho
+          childNN.mutate(GA_SETTINGS.mutationRate, GA_SETTINGS.mutationAmount);
+          // Adiciona o novo agente (com a NN filha) à nova população
+          newPopulation.push(new TetrisAI(childNN));
+        }
+
+        // Substitui a população antiga pela nova
+        population = newPopulation;
+        currentGeneration++; // Incrementa o contador de geração
+        console.log(`Geração ${currentGeneration} pronta com ${population.length} agentes.`);
+      }
+
+      // Inicia o processo de treinamento da IA
+      function startTraining() {
+        if (trainingIntervalId) return; // Já está treinando
+
+        console.log("Iniciando treinamento...");
+        aiStatusSpan.textContent = "Inicializando...";
+        clearTimeout(trainingIntervalId); // Limpa qualquer timeout pendente
+        clearInterval(gameInterval); // Para o jogo normal se estiver rodando
+        isPaused = true; // Garante que o jogo principal esteja pausado
+
+        // Atualiza estado da UI
+        startTrainingButton.disabled = true;
+        watchBestButton.disabled = true; // Desabilita assistir durante treino
+        startHumanButton.disabled = true;
+        stopAIButton.classList.remove('hidden'); // Mostra botão para parar o TREINAMENTO
+        trainingProgressDiv.classList.remove('hidden'); // Mostra info de progresso
+
+        initializePopulation(); // Cria a primeira população (Geração 0)
+        currentAgentIndex = 0; // Começa a avaliar do primeiro agente
+
+        // Atualiza UI de progresso inicial
+        generationSpan.textContent = currentGeneration;
+        bestFitnessSpan.textContent = bestAgent ? bestAgent.fitness.toFixed(2) : '0';
+        genProgressBar.value = 0;
+        aiStatusSpan.textContent = `Iniciando Geração ${currentGeneration}...`;
+
+        // Inicia o loop de treinamento (avaliação/evolução)
+        trainingIntervalId = setTimeout(trainingStep, 50); // Pequeno delay inicial
+      }
+
+      // Para o processo de treinamento
+      function stopTraining(reason = "Treinamento interrompido.") {
+        if (!trainingIntervalId) return; // Não estava treinando
+
+        clearTimeout(trainingIntervalId); // Para o loop de treinamento
+        trainingIntervalId = null;
+
+        aiStatusSpan.textContent = reason; // Exibe o motivo da parada
+
+        // Restaura estado da UI
+        startTrainingButton.disabled = false;
+        watchBestButton.disabled = bestAgent === null; // Habilita se houver um melhor agente
+        startHumanButton.disabled = false;
+        stopAIButton.classList.add('hidden'); // Esconde o botão de parar (pois parou)
+        trainingProgressDiv.classList.add('hidden'); // Esconde info de progresso
+
+        console.log(reason);
+      }
+
+      // Inicia o modo de visualização do melhor agente treinado
+      function watchBest() {
+        if (trainingIntervalId) {
+            stopTraining("Parado para ver a melhor IA."); // Para o treino se estiver ativo
+        }
+        if (gameInterval) { // Para o jogo se estiver rodando
+            clearInterval(gameInterval);
+            gameInterval = null;
+        }
+
+        if (bestAgent) {
+          startGame(false); // Inicia o jogo no modo IA
+        } else {
+          aiStatusSpan.textContent = "Nenhuma IA treinada para assistir.";
+        }
+      }
+
+      // Para a visualização da IA (quando não está treinando)
+      function stopAIPlayback() {
+         // Só para se for a IA jogando e o jogo estiver rodando
+        if (isHumanPlaying || isPaused || !aiController) return;
+
+        console.log("Parando visualização da IA.");
+        isPaused = true; // Pausa
+        // isGameOver = true; // Não necessariamente é game over, só parando a visualização
+        clearInterval(gameInterval); // Para o loop
+        gameInterval = null;
+
+        aiController = null; // Remove o controlador da IA
+        aiCurrentPlan = null;
+        aiActionInProgress = false;
+
+        // gameOverElement.style.display = 'none'; // Não mostra game over
+        aiStatusSpan.textContent = "Visualização da IA parada.";
+
+        // Restaura botões
+        startTrainingButton.disabled = false;
+        watchBestButton.disabled = bestAgent === null;
+        startHumanButton.disabled = false;
+        stopAIButton.classList.add('hidden'); // Esconde o botão de parar
+
+        // Limpa o tabuleiro (opcional, pode deixar o estado final)
+        // board = createBoard();
+        // currentPiece = null;
+        // drawBoard();
+      }
+
+      // --- Visualizador da Rede Neural ---
+      function drawNeuralNetwork(svgElement, network, inputLabels = [], inputValues = null, hiddenActivations = null, outputValues = null) {
+        if (!svgElement || !network) return;
+
+        // Limpa o SVG anterior
+        while (svgElement.firstChild) {
+            svgElement.removeChild(svgElement.firstChild);
+        }
+
+        const padding = 30;
+        const neuronRadius = 8;
+        const layerSpacing = 110; // Espaço horizontal entre camadas
+        const svgWidth = svgElement.clientWidth || 350; // Usa largura real ou fallback
+        const svgHeight = svgElement.clientHeight || 300; // Usa altura real ou fallback
+        svgElement.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`); // Ajusta viewBox
+
+        const layers = [network.inputNodes, network.hiddenNodes, network.outputNodes];
+        const maxNodes = Math.max(...layers); // Máximo de neurônios em uma camada (para espaçamento vertical)
+
+        const labelOffset = 60; // Espaço para os labels de entrada
+        const effectiveWidth = svgWidth - labelOffset; // Largura útil para desenhar
+        const totalLayerSpacing = layerSpacing * (layers.length - 1); // Espaço total usado pelas camadas
+        const startX = labelOffset + (effectiveWidth - totalLayerSpacing) / 2; // X inicial para centralizar
+
+        const neuronPositions = []; // Array para guardar coordenadas [camada][neuronio] = {x, y}
+        const nodeValues = [inputValues, hiddenActivations, outputValues]; // Valores para colorir neurônios
+
+        // Calcula posições dos neurônios
+        for (let i = 0; i < layers.length; i++) { // Para cada camada
+          neuronPositions[i] = [];
+          const numNodes = layers[i];
+          const layerX = (i === 0) ? startX : startX + i * layerSpacing; // Posição X da camada
+
+          // Calcula espaçamento vertical dinâmico para caber na altura
+          const vSpacingMultiplier = Math.min(3.5, Math.max(2.5, (svgHeight - 2 * padding) / (Math.max(1, numNodes - 1) * neuronRadius * 2)));
+          const totalHeightNeeded = (numNodes - 1) * (neuronRadius * vSpacingMultiplier * 1.5); // Altura total estimada
+          const startY = Math.max(padding, (svgHeight - totalHeightNeeded) / 2); // Y inicial para centralizar verticalmente
+
+          for (let j = 0; j < numNodes; j++) { // Para cada neurônio na camada
+            const neuronY = startY + j * (neuronRadius * vSpacingMultiplier * 1.5); // Calcula Y do neurônio
+            neuronPositions[i].push({ x: layerX, y: neuronY });
+          }
+        }
+
+        // Cria grupo para as conexões (desenha atrás dos neurônios)
+        const connectionsGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+        // Desenha conexões Input -> Hidden
+        if (neuronPositions[0] && neuronPositions[1]) {
+          for (let i = 0; i < network.hiddenNodes; i++) { // Neurônio destino (oculto)
+            for (let j = 0; j < network.inputNodes; j++) { // Neurônio origem (entrada)
+              if (!neuronPositions[0][j] || !neuronPositions[1][i]) continue; // Segurança
+
+              const weight = (network.weights_ih[i] && typeof network.weights_ih[i][j] === 'number') ? network.weights_ih[i][j] : 0;
+              const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+              line.setAttribute('x1', neuronPositions[0][j].x);
+              line.setAttribute('y1', neuronPositions[0][j].y);
+              line.setAttribute('x2', neuronPositions[1][i].x);
+              line.setAttribute('y2', neuronPositions[1][i].y);
+              line.classList.add('connection');
+
+              const absWeight = Math.abs(weight);
+              // Espessura e cor baseadas no peso
+              line.style.strokeWidth = Math.min(3, Math.max(0.5, absWeight * 1.5)).toFixed(1);
+              line.style.stroke = weight > 0 ? 'steelblue' : 'tomato'; // Azul para positivo, Vermelho para negativo
+              line.style.strokeOpacity = Math.min(0.7, Math.max(0.1, absWeight * 0.4)).toFixed(2); // Opacidade baseada na magnitude
+
+              connectionsGroup.appendChild(line);
+            }
+          }
+        }
+
+        // Desenha conexões Hidden -> Output
+         if (neuronPositions[1] && neuronPositions[2]) {
+          for (let i = 0; i < network.outputNodes; i++) { // Neurônio destino (saída)
+            for (let j = 0; j < network.hiddenNodes; j++) { // Neurônio origem (oculto)
+               if (!neuronPositions[1][j] || !neuronPositions[2][i]) continue; // Segurança
+
+              const weight = (network.weights_ho[i] && typeof network.weights_ho[i][j] === 'number') ? network.weights_ho[i][j] : 0;
+              const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+              line.setAttribute('x1', neuronPositions[1][j].x);
+              line.setAttribute('y1', neuronPositions[1][j].y);
+              line.setAttribute('x2', neuronPositions[2][i].x);
+              line.setAttribute('y2', neuronPositions[2][i].y);
+              line.classList.add('connection');
+
+              const absWeight = Math.abs(weight);
+              line.style.strokeWidth = Math.min(3, Math.max(0.5, absWeight * 1.5)).toFixed(1);
+              line.style.stroke = weight > 0 ? 'steelblue' : 'tomato';
+              line.style.strokeOpacity = Math.min(0.7, Math.max(0.1, absWeight * 0.4)).toFixed(2);
+
+              connectionsGroup.appendChild(line);
+            }
+          }
+        }
+
+        svgElement.appendChild(connectionsGroup); // Adiciona grupo de conexões ao SVG
+
+        // Cria grupo para os neurônios (desenha na frente das conexões)
+        const neuronsGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        for (let i = 0; i < layers.length; i++) { // Para cada camada
+          for (let j = 0; j < layers[i]; j++) { // Para cada neurônio
+             if (!neuronPositions[i] || !neuronPositions[i][j]) continue; // Segurança
+
+            const pos = neuronPositions[i][j];
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute('cx', pos.x);
+            circle.setAttribute('cy', pos.y);
+            circle.setAttribute('r', neuronRadius);
+            circle.classList.add('neuron');
+
+            // Colore o neurônio baseado no seu valor de ativação (se disponível)
+            let activationValue = NaN;
+            if (nodeValues[i] && typeof nodeValues[i][j] === 'number' && !isNaN(nodeValues[i][j])) {
+                 activationValue = nodeValues[i][j];
+            }
+
+            // Usa uma escala de cor (ex: Verde para ativação positiva alta, Branco para baixa/zero)
+            if (!isNaN(activationValue)) {
+                // Normaliza a ativação para 0-1 (usando tanh para lidar com valores grandes)
+                 const normalizedActivation = (Math.tanh(activationValue * 0.5) + 1) / 2;
+                 const finalLightness = 100 - (normalizedActivation * 40); // De 100% (branco) a 60% (verde mais escuro)
+                 const saturation = Math.round(normalizedActivation * 100); // Saturação aumenta com ativação
+                 circle.style.fill = `hsl(90, ${saturation}%, ${finalLightness}%)`; // Verde (Hue 90)
+                 // Adiciona tooltip com o valor exato
+                 const tooltip = document.createElementNS("http://www.w3.org/2000/svg", "title");
+                 tooltip.textContent = `L:${i} N:${j}\nVal: ${activationValue.toFixed(3)}`;
+                 circle.appendChild(tooltip);
+            } else {
+                // Tooltip padrão se não houver valor
+                const tooltip = document.createElementNS("http://www.w3.org/2000/svg", "title");
+                tooltip.textContent = `L:${i} N:${j}\n(Sem valor)`;
+                circle.appendChild(tooltip);
+            }
+
+            neuronsGroup.appendChild(circle);
+
+            // Adiciona labels para a camada de entrada
+            if (i === 0 && inputLabels && inputLabels[j]) {
+              const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+              text.setAttribute('x', pos.x - neuronRadius - 8); // Posição à esquerda do neurônio
+              text.setAttribute('y', pos.y);
+              text.classList.add('input-label'); // Estilo CSS para alinhamento
+              text.textContent = inputLabels[j];
+              neuronsGroup.appendChild(text);
+            }
+          }
+        }
+        svgElement.appendChild(neuronsGroup); // Adiciona grupo de neurônios ao SVG
+      }
+
+
+      // --- Inicialização ---
+      document.addEventListener('DOMContentLoaded', () => {
+          // Adiciona listeners aos botões
+          startHumanButton.addEventListener('click', () => startGame(true));
+          restartHumanButton.addEventListener('click', () => startGame(true));
+          startTrainingButton.addEventListener('click', startTraining);
+          watchBestButton.addEventListener('click', watchBest);
+          stopAIButton.addEventListener('click', () => {
+            if (trainingIntervalId) { // Se está treinando, para o treino
+              stopTraining();
+            } else if (!isHumanPlaying && aiController) { // Se está vendo a IA, para a visualização
+              stopAIPlayback();
+            } else { // Caso contrário, apenas esconde o botão (redundante?)
+               stopAIButton.classList.add('hidden');
+            }
+          });
+
+          // Adiciona listener para as teclas
+          document.addEventListener('keydown', handleKeyPress);
+
+          // Inicializa o tabuleiro visualmente
+          board = createBoard();
+          drawBoard();
+
+          // Tenta desenhar uma NN padrão ou a melhor salva (se houver)
+          if (bestAgent) {
+            drawNeuralNetwork(nnVisualizerSVG, bestAgent.nn, INPUT_FEATURE_LABELS);
+          } else {
+            // Desenha uma NN vazia/padrão como placeholder
+            const defaultNN = new NeuralNetwork(NN_CONFIG.inputNodes, NN_CONFIG.hiddenNodes, NN_CONFIG.outputNodes);
+            drawNeuralNetwork(nnVisualizerSVG, defaultNN, INPUT_FEATURE_LABELS);
+          }
+
+          // Estado inicial da UI
+          aiStatusSpan.textContent = "Pronto.";
+          levelElement.textContent = '1';
+          scoreElement.textContent = '0';
+          linesElement.textContent = '0';
+          watchBestButton.disabled = true; // Começa desabilitado
+          gameOverElement.style.display = 'none';
+          trainingProgressDiv.classList.add('hidden');
+          stopAIButton.classList.add('hidden');
+
+          console.log("Tetris AI inicializado.");
+      });
+
+    </script>
+  </body>
+</html>

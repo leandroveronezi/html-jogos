@@ -1,0 +1,1746 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dominó Minimalista v5.1</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #1a1a1a;
+            margin: 0;
+            padding: 10px;
+            box-sizing: border-box;
+            font-family: sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #999;
+            background-color: #005000;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            display: block;
+            cursor: default;
+            max-width: 100%;
+            max-height: calc(100vh - 20px); /* Considera padding do body */
+            aspect-ratio: 20 / 9; /* Proporção widescreen comum */
+        }
+        canvas.esperando {
+            cursor: wait;
+        }
+        canvas.clicavel {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // --- Constantes ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const JOGADOR = 'jogador';
+        const IA = 'ia';
+        const PECA_LARGURA_BASE = 60;
+        const PECA_ALTURA_BASE = 30;
+        const DOT_RAIO = 3;
+        const CANTO_RAIO = 3;
+        const DELAY_IA = 800;
+        const ESPACO_ENTRE_PECAS_MESA = 4;
+        const ESPACO_ENTRE_PECAS_MAO = 6;
+        const MARGEM_BORDA_LATERAL_BASE = 15;
+        const MARGEM_BORDA_VERTICAL_BASE = 25;
+
+        // Cores
+        const COR_FUNDO_MESA = '#005000';
+        const COR_AREA_JOGADOR = 'rgba(0, 0, 0, 0.2)';
+        const COR_BORDA_AREA = 'rgba(255, 255, 255, 0.2)';
+        const COR_PECA = '#f8f8f8';
+        const COR_PECA_VERSO = '#333333';
+        const COR_DOT = '#111111';
+        const COR_LINHA_PECA = '#aaaaaa';
+        const COR_TEXTO_UI = '#ffffff';
+        const COR_TEXTO_STATUS = '#ffffff';
+        const COR_DESTAQUE_SELECAO = '#ffcc00';
+        const COR_DESTAQUE_JOGAVEL_FILL = 'rgba(255, 255, 0, 0.2)';
+        const COR_DESTAQUE_JOGAVEL_STROKE = '#ffff99';
+        const COR_DESTAQUE_COMPRA_STROKE = '#ffaa00';
+        const COR_BOTAO_PASSAR_FILL = '#e0e0e0';
+        const COR_BOTAO_PASSAR_TEXT = '#333333';
+        const COR_BOTAO_PASSAR_HOVER_FILL = '#ffffff';
+        const COR_DESTAQUE_JOGAVEL_HAND = '#FFFF00'; // Amarelo
+        const COR_OVERLAY_FIM = 'rgba(0, 0, 0, 0.75)';
+        const COR_TEXTO_FIM = '#FFFFFF';
+
+        // --- Variáveis Globais ---
+        let CANVAS_LARGURA;
+        let CANVAS_ALTURA;
+        let CENTRO_X;
+        let CENTRO_Y;
+        let escalaDesenho = 1;
+        let tamanhoFonteBase;
+        let pecaLarguraH; // Peça Horizontal (na mesa)
+        let pecaAlturaH;
+        let pecaLarguraV; // Peça Vertical (na mão)
+        let pecaAlturaV;
+        let espacoMesaEscalado;
+        let espacoMaoEscalado;
+        let margemLateralEscalada;
+        let margemVerticalEscalada;
+        let areaJogadorRect = {};
+        let areaIARect = {};
+        let areaMonteRect = {};
+        let areaStatusRect = {};
+        let areaBotaoPassarRect = {};
+        let areaJogarEsquerda = { ativa: false };
+        let areaJogarDireita = { ativa: false };
+        let areaClicarMonte = {};
+        let todasAsPecas = [];
+        let maoJogador = [];
+        let maoIA = [];
+        let monte = [];
+        let mesa = []; // Array de { pecaVisual: Peca }
+        let pontas = { esquerda: null, direita: null };
+        let pecaSelecionada = null; // Índice da peça na mão do jogador
+        let mensagemStatus = "";
+        let mensagemFimJogo = "";
+        let jogoAcabou = false;
+        let turnoAtual = null;
+        let jogadorPodeInteragir = false;
+        let passesConsecutivos = 0;
+        let mostrarBotaoPassar = false;
+        let hoverBotaoPassar = false;
+        let direcaoLogicaEsquerda = 'esquerda'; // Direção de crescimento da corrente para a esquerda
+        let direcaoLogicaDireita = 'direita'; // Direção de crescimento da corrente para a direita
+        let jogadorQueIniciou = null;
+
+        // --- Classe Peca ---
+        class Peca {
+            constructor(lado1, lado2) {
+                this.l1 = lado1;
+                this.l2 = lado2;
+                // ID canônico para fácil comparação (menor-maior)
+                const vA = Math.min(lado1, lado2);
+                const vB = Math.max(lado1, lado2);
+                this.id = `${vA}-${vB}`;
+            }
+
+            desenharCorpo(x, y, w, h, bg, border, highlight = null) {
+                const r = CANTO_RAIO * escalaDesenho;
+                ctx.fillStyle = bg;
+                ctx.strokeStyle = highlight ?? border; // Usa highlight se existir, senão border
+                ctx.lineWidth = (highlight) ? 2 * escalaDesenho : 1 * escalaDesenho;
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            desenharFrente(x, y, ladoAVisivel, ladoBVisivel, orientacao = 'horizontal', selecionada = false, jogavel = false) {
+                const ehHorizontal = (orientacao === 'horizontal');
+                const w = ehHorizontal ? pecaLarguraH : pecaLarguraV;
+                const h = ehHorizontal ? pecaAlturaH : pecaAlturaV;
+
+                let corDestaque = null;
+                if (selecionada) {
+                    corDestaque = COR_DESTAQUE_SELECAO;
+                } else if (jogavel) {
+                    corDestaque = COR_DESTAQUE_JOGAVEL_HAND;
+                }
+
+                this.desenharCorpo(x, y, w, h, COR_PECA, COR_LINHA_PECA, corDestaque);
+
+                // Linha divisória
+                ctx.strokeStyle = COR_LINHA_PECA;
+                ctx.lineWidth = 1 * escalaDesenho;
+                ctx.beginPath();
+                if (ehHorizontal) {
+                    ctx.moveTo(x + w / 2, y + 2 * escalaDesenho);
+                    ctx.lineTo(x + w / 2, y + h - 2 * escalaDesenho);
+                } else { // Vertical
+                    ctx.moveTo(x + 2 * escalaDesenho, y + h / 2);
+                    ctx.lineTo(x + w - 2 * escalaDesenho, y + h / 2);
+                }
+                ctx.stroke();
+
+                // Dots - Passa a orientação da *metade*
+                this.desenharDots(ladoAVisivel, x, y, w, h, ehHorizontal ? 'esquerda' : 'cima');
+                this.desenharDots(ladoBVisivel, x, y, w, h, ehHorizontal ? 'direita' : 'baixo');
+            }
+
+            desenharVerso(x, y, orientacao = 'vertical') {
+                 const ehHorizontal = (orientacao === 'horizontal');
+                 const w = ehHorizontal ? pecaLarguraH : pecaLarguraV;
+                 const h = ehHorizontal ? pecaAlturaH : pecaAlturaV;
+                 this.desenharCorpo(x, y, w, h, COR_PECA_VERSO, COR_LINHA_PECA);
+                 // Desenha um "pino" central no verso
+                 ctx.fillStyle = COR_LINHA_PECA;
+                 ctx.beginPath();
+                 ctx.arc(x + w / 2, y + h / 2, DOT_RAIO * 1.2 * escalaDesenho, 0, Math.PI * 2);
+                 ctx.fill();
+            }
+
+            // Desenha os pontos (dots) em uma das metades da peça
+            desenharDots(numero, pecaX, pecaY, larguraPeca, alturaPeca, qualMetade) {
+                if (numero < 0 || numero > 6) return; // Ignora valores inválidos
+
+                let halfX, halfY, halfW, halfH;
+
+                // 1. Define a área (bounding box) da metade sendo desenhada
+                if (qualMetade === 'esquerda') {
+                    halfX = pecaX; halfY = pecaY; halfW = larguraPeca / 2; halfH = alturaPeca;
+                } else if (qualMetade === 'direita') {
+                    halfX = pecaX + larguraPeca / 2; halfY = pecaY; halfW = larguraPeca / 2; halfH = alturaPeca;
+                } else if (qualMetade === 'cima') {
+                    halfX = pecaX; halfY = pecaY; halfW = larguraPeca; halfH = alturaPeca / 2;
+                } else { // baixo
+                    halfX = pecaX; halfY = pecaY + alturaPeca / 2; halfW = larguraPeca; halfH = alturaPeca / 2;
+                }
+
+                // 2. Calcula o centro e os espaçamentos DENTRO dessa metade
+                const centroX = halfX + halfW / 2;
+                const centroY = halfY + halfH / 2;
+                const espacoX = halfW / 4; // Espaço horizontal relativo à largura da metade
+                const espacoY = halfH / 4; // Espaço vertical relativo à altura da metade
+                const raioDot = DOT_RAIO * escalaDesenho;
+
+                 // Garante um espaçamento mínimo para não colar os pontos
+                const minEspacoX = raioDot * 1.8;
+                const minEspacoY = raioDot * 1.8;
+
+                // 3. Define as posições relativas dos pontos [multiplicadorX, multiplicadorY] do espaçamento a partir do centro
+                 const dotLayouts = [
+                     [], // 0
+                     [[0, 0]], // 1: Centro
+                     [[-1, -1], [1, 1]], // 2: Diagonal sup-esq -> inf-dir
+                     [[-1, -1], [0, 0], [1, 1]], // 3: Diagonal + Centro
+                     [[-1, -1], [1, -1], [-1, 1], [1, 1]], // 4: Cantos
+                     [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], // 5: Cantos + Centro
+                     // 6: Layout especial definido abaixo
+                 ];
+
+                 // Layout para o 6 em metades ALTAS (2 colunas, 3 linhas) - Ex: Metade de peça vertical
+                 // Ajustado para não ficar tão perto das bordas horizontais
+                 const layout6Vertical = [
+                    [-0.7, -1], [0.7, -1], // Linha de cima
+                    [-0.7,  0], [0.7,  0], // Linha do meio
+                    [-0.7,  1], [0.7,  1]  // Linha de baixo
+                ];
+
+                 // Layout para o 6 em metades LARGAS (3 colunas, 2 linhas) - Ex: Metade de peça horizontal
+                 // Ajustado para não ficar tão perto das bordas verticais
+                 const layout6Horizontal = [
+                    [-1, -0.7], [0, -0.7], [1, -0.7], // Coluna da esquerda
+                    [-1,  0.7], [0,  0.7], [1,  0.7]  // Coluna da direita
+                ];
+
+                 let currentLayout = dotLayouts[numero] || []; // Pega layout padrão
+
+                 // Tratamento especial para o 6
+                 if (numero === 6) {
+                     // Se a METADE é mais alta que larga (ou quadrada tendendo a alta)
+                     // Usar uma pequena tolerância (0.9) para tratar casos quase quadrados
+                     if (halfH > halfW * 0.9) {
+                         //console.log(`Dot 6 (${qualMetade}): Using Vertical Layout (H=${halfH.toFixed(1)}, W=${halfW.toFixed(1)})`);
+                         currentLayout = layout6Vertical; // 2 colunas x 3 linhas
+                     } else { // Se a METADE é mais larga que alta
+                         //console.log(`Dot 6 (${qualMetade}): Using Horizontal Layout (H=${halfH.toFixed(1)}, W=${halfW.toFixed(1)})`);
+                         currentLayout = layout6Horizontal; // 3 colunas x 2 linhas
+                     }
+                 }
+
+                // 4. Desenha os pontos usando o layout e espaçamentos calculados
+                ctx.fillStyle = COR_DOT;
+                currentLayout.forEach(([multX, multY]) => {
+                    // Calcula posição final do ponto
+                    const posX = centroX + multX * Math.max(espacoX, minEspacoX);
+                    const posY = centroY + multY * Math.max(espacoY, minEspacoY);
+                    ctx.beginPath();
+                    ctx.arc(posX, posY, raioDot, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            // Verifica se um ponto (click) está dentro dos limites da peça na mão (orientação vertical)
+            contemPontoMao(clickX, clickY, pecaPosX, pecaPosY) {
+                // Peças na mão são sempre verticais
+                return clickX >= pecaPosX && clickX <= pecaPosX + pecaLarguraV &&
+                       clickY >= pecaPosY && clickY <= pecaPosY + pecaAlturaV;
+            }
+
+            get valorTotal() {
+                return this.l1 + this.l2;
+            }
+
+            get ehDoble() {
+                return this.l1 === this.l2;
+            }
+        }
+
+        // --- Funções UI ---
+
+        // Ajusta dimensões do canvas e elementos escaláveis
+        function ajustarTamanhoPosicoes() {
+            // Usa aspect-ratio do CSS, mas define tamanho interno
+            CANVAS_LARGURA = canvas.width;
+            CANVAS_ALTURA = canvas.height;
+
+            escalaDesenho = Math.min(CANVAS_LARGURA / 1280, CANVAS_ALTURA / 720); // Baseado em 1280x720
+            CENTRO_X = CANVAS_LARGURA / 2;
+            CENTRO_Y = CANVAS_ALTURA / 2;
+
+            // Tamanhos das peças
+            pecaLarguraH = PECA_LARGURA_BASE * escalaDesenho * 1.2; // Um pouco maior na mesa
+            pecaAlturaH = PECA_ALTURA_BASE * escalaDesenho * 1.2;
+            pecaLarguraV = pecaAlturaH; // Peça na mão é 'de pé'
+            pecaAlturaV = pecaLarguraH;
+
+            // Espaçamentos e Margens
+            espacoMesaEscalado = ESPACO_ENTRE_PECAS_MESA * escalaDesenho;
+            espacoMaoEscalado = ESPACO_ENTRE_PECAS_MAO * escalaDesenho;
+            margemLateralEscalada = (pecaLarguraH * 0.1 + MARGEM_BORDA_LATERAL_BASE) * escalaDesenho;
+            margemVerticalEscalada = (pecaAlturaH * 0.5 + MARGEM_BORDA_VERTICAL_BASE) * escalaDesenho;
+
+            // Tamanho da Fonte
+            tamanhoFonteBase = 16 * escalaDesenho;
+
+            // Áreas Retangulares
+            const margemGeral = 15 * escalaDesenho;
+            const alturaAreaIA = (pecaAlturaV * 0.8 + 15) * escalaDesenho; // Altura baseada na peça vertical + padding
+            const alturaAreaJogador = (pecaAlturaV * 1.0 + 35) * escalaDesenho; // Mais espaço para peças e botão
+            const alturaAreaStatus = 35 * escalaDesenho;
+            const larguraAreaMonte = (pecaLarguraV * 1.2 + 80) * escalaDesenho; // Espaço para peça verso + texto
+            const larguraBotaoPassar = 100 * escalaDesenho;
+            const alturaBotaoPassar = 35 * escalaDesenho;
+
+            areaIARect = {
+                x: margemGeral,
+                y: margemGeral,
+                largura: CANVAS_LARGURA - 2 * margemGeral,
+                altura: alturaAreaIA
+            };
+            areaStatusRect = {
+                x: 0,
+                y: CANVAS_ALTURA - alturaAreaStatus,
+                largura: CANVAS_LARGURA,
+                altura: alturaAreaStatus
+            };
+            areaJogadorRect = {
+                x: margemGeral,
+                y: areaStatusRect.y - alturaAreaJogador - margemGeral,
+                largura: CANVAS_LARGURA - 2 * margemGeral,
+                altura: alturaAreaJogador
+            };
+            areaMonteRect = {
+                x: margemGeral,
+                y: areaIARect.y + areaIARect.altura + margemGeral,
+                largura: larguraAreaMonte,
+                altura: (pecaAlturaV + 25) * escalaDesenho // Altura suficiente para peça V + texto
+            };
+
+            const paddingBotao = 8 * escalaDesenho;
+            areaBotaoPassarRect = {
+                x: areaJogadorRect.x + areaJogadorRect.largura - larguraBotaoPassar - paddingBotao,
+                y: areaJogadorRect.y + paddingBotao, // Alinhado ao topo da área do jogador
+                largura: larguraBotaoPassar,
+                altura: alturaBotaoPassar
+            };
+
+             // Ajustar limites da mesa dinamicamente
+             limiteSuperiorMesa = areaIARect.y + areaIARect.altura + margemVerticalEscalada;
+             limiteInferiorMesa = areaJogadorRect.y - pecaAlturaV - margemVerticalEscalada; // Deixa espaço acima da mão
+             limiteEsquerdoMesa = margemLateralEscalada;
+             limiteDireitoMesa = CANVAS_LARGURA - margemLateralEscalada;
+        }
+
+        function desenharFundo() {
+            ctx.fillStyle = COR_FUNDO_MESA;
+            ctx.fillRect(0, 0, CANVAS_LARGURA, CANVAS_ALTURA);
+        }
+
+        function desenharAreaJogadorIA() {
+             if (!areaIARect || !areaJogadorRect) return; // Garantir que áreas existem
+
+             // --- Área da IA ---
+             ctx.fillStyle = COR_AREA_JOGADOR;
+             ctx.fillRect(areaIARect.x, areaIARect.y, areaIARect.largura, areaIARect.altura);
+             ctx.strokeStyle = COR_BORDA_AREA;
+             ctx.strokeRect(areaIARect.x, areaIARect.y, areaIARect.largura, areaIARect.altura);
+
+             // Texto IA
+             ctx.fillStyle = COR_TEXTO_UI;
+             ctx.font = `bold ${tamanhoFonteBase * 0.9}px sans-serif`;
+             ctx.textAlign = 'left';
+             ctx.textBaseline = 'middle';
+             const textoIA = `IA (${maoIA.length} peças)`;
+             const textoIAX = areaIARect.x + 10 * escalaDesenho;
+             const textoIAY = areaIARect.y + areaIARect.altura / 2;
+             ctx.fillText(textoIA, textoIAX, textoIAY);
+
+             // Peças da IA (Verso ou Frente no Fim)
+             let startXIA = textoIAX + ctx.measureText(textoIA).width + 20 * escalaDesenho;
+             const pecaYIA = areaIARect.y + (areaIARect.altura - pecaAlturaV) / 2; // Centraliza verticalmente
+
+             for (let i = 0; i < maoIA.length; i++) {
+                 const pecaX = startXIA + i * (pecaLarguraV + espacoMaoEscalado);
+                 // Não desenha peças que ultrapassam a área
+                 if (pecaX + pecaLarguraV > areaIARect.x + areaIARect.largura - 10 * escalaDesenho) break;
+
+                 if (jogoAcabou) {
+                     // Mostra peças da IA no fim
+                     maoIA[i].desenharFrente(pecaX, pecaYIA, maoIA[i].l1, maoIA[i].l2, 'vertical');
+                 } else {
+                     // Mostra verso durante o jogo
+                     maoIA[i].desenharVerso(pecaX, pecaYIA, 'vertical');
+                 }
+             }
+
+             // --- Área do Jogador ---
+             ctx.fillStyle = COR_AREA_JOGADOR;
+             ctx.fillRect(areaJogadorRect.x, areaJogadorRect.y, areaJogadorRect.largura, areaJogadorRect.altura);
+             ctx.strokeStyle = COR_BORDA_AREA;
+             ctx.strokeRect(areaJogadorRect.x, areaJogadorRect.y, areaJogadorRect.largura, areaJogadorRect.altura);
+
+             // Texto Jogador ("Você") - Só desenha se não colidir com botão passar
+             ctx.fillStyle = COR_TEXTO_UI;
+             ctx.font = `bold ${tamanhoFonteBase * 0.9}px sans-serif`;
+             ctx.textAlign = 'left';
+             ctx.textBaseline = 'top'; // Alinha pelo topo
+             const textoJogX = areaJogadorRect.x + 10 * escalaDesenho;
+             const textoJogY = areaJogadorRect.y + 10 * escalaDesenho;
+             // Verifica se o texto "Você" colidiria com o botão "Passar"
+             const textoWidth = ctx.measureText("Você").width;
+             if (!mostrarBotaoPassar || textoJogX + textoWidth < areaBotaoPassarRect.x - 10 * escalaDesenho) {
+                ctx.fillText("Você", textoJogX, textoJogY);
+             }
+
+
+             // Peças do Jogador (Frente)
+             const larguraTotalMao = maoJogador.length * (pecaLarguraV + espacoMaoEscalado) - espacoMaoEscalado;
+             let startXJogador = CENTRO_X - larguraTotalMao / 2;
+             // Garante que a mão não comece fora da área do jogador
+             startXJogador = Math.max(areaJogadorRect.x + 10 * escalaDesenho, startXJogador);
+
+             // Calcula Y para centralizar, considerando espaço para o botão se necessário
+             let offsetYJogador = (areaJogadorRect.altura - pecaAlturaV) / 2;
+             // Se o botão estiver visível e potencialmente sobrepor as peças, desce as peças um pouco
+             if (mostrarBotaoPassar && areaBotaoPassarRect.y + areaBotaoPassarRect.altura > areaJogadorRect.y + offsetYJogador) {
+                 offsetYJogador += (areaBotaoPassarRect.y + areaBotaoPassarRect.altura) - (areaJogadorRect.y + offsetYJogador) + 5 * escalaDesenho;
+             }
+             const pecaYJogador = areaJogadorRect.y + offsetYJogador;
+
+             maoJogador.forEach((peca, i) => {
+                 const pecaX = startXJogador + i * (pecaLarguraV + espacoMaoEscalado);
+                 // Só desenha se a peça couber totalmente dentro da área visível da mão
+                 if (pecaX + pecaLarguraV < areaJogadorRect.x + areaJogadorRect.largura - 10 * escalaDesenho) {
+                     const jogavel = isPecaJogavel(peca) && jogadorPodeInteragir && !jogoAcabou;
+                     const selecionada = (i === pecaSelecionada);
+                     peca.desenharFrente(pecaX, pecaYJogador, peca.l1, peca.l2, 'vertical', selecionada, jogavel);
+                 }
+             });
+        }
+
+        function desenharMonte() {
+            if (!areaMonteRect) return;
+
+            // Fundo e Borda da Área
+            ctx.fillStyle = COR_AREA_JOGADOR;
+            ctx.fillRect(areaMonteRect.x, areaMonteRect.y, areaMonteRect.largura, areaMonteRect.altura);
+            ctx.strokeStyle = COR_BORDA_AREA;
+            ctx.strokeRect(areaMonteRect.x, areaMonteRect.y, areaMonteRect.largura, areaMonteRect.altura);
+
+            // Posição da Peça Verso (ou placeholder)
+            const montePecaX = areaMonteRect.x + 15 * escalaDesenho;
+            const montePecaY = areaMonteRect.y + (areaMonteRect.altura - pecaAlturaV) / 2; // Centraliza verticalmente
+
+            // Área Clicável (mesmo se vazio, para referência visual)
+            areaClicarMonte = { x: montePecaX, y: montePecaY, largura: pecaLarguraV, altura: pecaAlturaV };
+
+            // Posição do Texto
+            const textoMonteX = montePecaX + pecaLarguraV + 15 * escalaDesenho;
+            const textoMonteY = areaMonteRect.y + areaMonteRect.altura / 2; // Centraliza verticalmente
+
+            // Texto e Estilo do Texto
+            ctx.fillStyle = COR_TEXTO_UI;
+            ctx.font = `${tamanhoFonteBase * 0.9}px sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+
+            if (monte.length > 0) {
+                // Desenha peça verso representando o monte
+                (new Peca(0, 0)).desenharVerso(montePecaX, montePecaY, 'vertical');
+                // Escreve a quantidade
+                ctx.fillText(`Monte: ${monte.length}`, textoMonteX, textoMonteY);
+
+                // Destaque para comprar (se aplicável)
+                const jogadorDeveComprar = jogadorPodeInteragir && !podeJogarAlgumaPeca(maoJogador) && !jogoAcabou;
+                if (jogadorDeveComprar) {
+                    ctx.strokeStyle = COR_DESTAQUE_COMPRA_STROKE;
+                    ctx.lineWidth = 3 * escalaDesenho;
+                    // Re-desenha o corpo da peça com destaque (sem preenchimento)
+                    (new Peca(0, 0)).desenharCorpo(montePecaX, montePecaY, pecaLarguraV, pecaAlturaV, 'transparent', COR_DESTAQUE_COMPRA_STROKE, COR_DESTAQUE_COMPRA_STROKE);
+                }
+            } else {
+                // Monte vazio: Desenha um contorno vazio e texto
+                ctx.strokeStyle = COR_LINHA_PECA;
+                ctx.lineWidth = 1 * escalaDesenho;
+                ctx.strokeRect(montePecaX, montePecaY, pecaLarguraV, pecaAlturaV); // Placeholder
+                ctx.fillText("Monte Vazio", textoMonteX, textoMonteY);
+            }
+        }
+
+        function desenharMesa() {
+            // Se a mesa está vazia, não há o que desenhar e áreas de jogo ficam inativas
+            if (mesa.length === 0) {
+                areaJogarEsquerda = { ativa: false };
+                areaJogarDireita = { ativa: false };
+                return;
+            }
+
+            // Encontra a peça do meio (ou a primeira se for ímpar)
+            const indiceMeio = Math.floor(mesa.length / 2);
+            const { pecaVisual: pecaMeioVisual } = mesa[indiceMeio];
+
+            // Posição inicial da peça do meio (centro do canvas)
+            const xInicial = CENTRO_X - pecaLarguraH / 2; // Horizontal por padrão
+            const yInicial = CENTRO_Y - pecaAlturaH / 2;
+
+            // Desenha a peça do meio
+            pecaMeioVisual.desenharFrente(xInicial, yInicial, pecaMeioVisual.l1, pecaMeioVisual.l2, 'horizontal');
+
+            // Guarda informações sobre as peças nas pontas para desenhar áreas clicáveis depois
+            let infoPontaEsquerda = null;
+            let infoPontaDireita = null;
+
+            // Se só tem uma peça, ela é ambas as pontas
+            if (mesa.length === 1) {
+                infoPontaEsquerda = { x: xInicial, y: yInicial, orientacao: 'horizontal', direcaoVisual: 'esquerda' };
+                infoPontaDireita = { x: xInicial, y: yInicial, orientacao: 'horizontal', direcaoVisual: 'direita' };
+            }
+
+            // Variáveis para desenhar para a ESQUERDA
+            let xAtualEsq = xInicial;
+            let yAtualEsq = yInicial;
+            let orientacaoAtualEsq = 'horizontal';
+            let direcaoVisualEsq = 'esquerda'; // Direção em que a *próxima* peça será desenhada
+
+            // Desenha peças à esquerda da peça central
+            for (let i = indiceMeio - 1; i >= 0; i--) {
+                const { pecaVisual: pecaAtualVisual } = mesa[i];
+                const { largura: largAnterior, altura: altAnterior } = obterDimensoesPeca(orientacaoAtualEsq);
+
+                // Tenta colocar na direção atual
+                let { x: nextX, y: nextY, orientacao: nextOrientacao } = calcularPosicaoProximaPeca(
+                    xAtualEsq, yAtualEsq, largAnterior, altAnterior, direcaoVisualEsq, pecaAtualVisual.ehDoble
+                );
+
+                // Verifica Colisão e Muda Direção se Necessário
+                const { largura: largAtual, altura: altAtual } = obterDimensoesPeca(nextOrientacao);
+                let mudouDirecao = false;
+                if (direcaoVisualEsq === 'esquerda' && nextX < limiteEsquerdoMesa) {
+                    direcaoVisualEsq = (direcaoLogicaEsquerda === 'cima') ? 'cima' : 'baixo'; // Vira para cima ou baixo
+                    mudouDirecao = true;
+                } else if (direcaoVisualEsq === 'cima' && nextY < limiteSuperiorMesa) {
+                    direcaoVisualEsq = 'direita'; // Vira para a direita (voltando)
+                    mudouDirecao = true;
+                } else if (direcaoVisualEsq === 'baixo' && (nextY + altAtual) > limiteInferiorMesa) {
+                    direcaoVisualEsq = 'direita'; // Vira para a direita (voltando)
+                    mudouDirecao = true;
+                }
+
+                // Recalcula se a direção mudou
+                if (mudouDirecao) {
+                    const recalculado = calcularPosicaoProximaPeca(
+                        xAtualEsq, yAtualEsq, largAnterior, altAnterior, direcaoVisualEsq, pecaAtualVisual.ehDoble
+                    );
+                    nextX = recalculado.x;
+                    nextY = recalculado.y;
+                    nextOrientacao = recalculado.orientacao;
+                }
+
+                // Desenha a peça atual
+                pecaAtualVisual.desenharFrente(nextX, nextY, pecaAtualVisual.l1, pecaAtualVisual.l2, nextOrientacao);
+
+                // Atualiza estado para a próxima iteração
+                xAtualEsq = nextX;
+                yAtualEsq = nextY;
+                orientacaoAtualEsq = nextOrientacao;
+
+                // Se for a última peça (a mais à esquerda), guarda suas infos
+                if (i === 0) {
+                    infoPontaEsquerda = { x: xAtualEsq, y: yAtualEsq, orientacao: orientacaoAtualEsq, direcaoVisual: direcaoVisualEsq };
+                }
+            }
+
+            // Variáveis para desenhar para a DIREITA (resetando a partir do meio)
+            let xAtualDir = xInicial;
+            let yAtualDir = yInicial;
+            let orientacaoAtualDir = 'horizontal';
+            let direcaoVisualDir = 'direita'; // Direção em que a *próxima* peça será desenhada
+
+            // Desenha peças à direita da peça central
+            for (let i = indiceMeio + 1; i < mesa.length; i++) {
+                const { pecaVisual: pecaAtualVisual } = mesa[i];
+                const { largura: largAnterior, altura: altAnterior } = obterDimensoesPeca(orientacaoAtualDir);
+
+                // Tenta colocar na direção atual
+                 let { x: nextX, y: nextY, orientacao: nextOrientacao } = calcularPosicaoProximaPeca(
+                    xAtualDir, yAtualDir, largAnterior, altAnterior, direcaoVisualDir, pecaAtualVisual.ehDoble
+                );
+
+                // Verifica Colisão e Muda Direção se Necessário
+                const { largura: largAtual, altura: altAtual } = obterDimensoesPeca(nextOrientacao);
+                let mudouDirecao = false;
+                 if (direcaoVisualDir === 'direita' && (nextX + largAtual) > limiteDireitoMesa) {
+                     direcaoVisualDir = (direcaoLogicaDireita === 'cima') ? 'cima' : 'baixo'; // Vira para cima ou baixo
+                     mudouDirecao = true;
+                 } else if (direcaoVisualDir === 'cima' && nextY < limiteSuperiorMesa) {
+                     direcaoVisualDir = 'esquerda'; // Vira para a esquerda (voltando)
+                     mudouDirecao = true;
+                 } else if (direcaoVisualDir === 'baixo' && (nextY + altAtual) > limiteInferiorMesa) {
+                     direcaoVisualDir = 'esquerda'; // Vira para a esquerda (voltando)
+                     mudouDirecao = true;
+                 }
+
+                 // Recalcula se a direção mudou
+                 if (mudouDirecao) {
+                    const recalculado = calcularPosicaoProximaPeca(
+                        xAtualDir, yAtualDir, largAnterior, altAnterior, direcaoVisualDir, pecaAtualVisual.ehDoble
+                    );
+                    nextX = recalculado.x;
+                    nextY = recalculado.y;
+                    nextOrientacao = recalculado.orientacao;
+                 }
+
+                // Desenha a peça atual
+                pecaAtualVisual.desenharFrente(nextX, nextY, pecaAtualVisual.l1, pecaAtualVisual.l2, nextOrientacao);
+
+                // Atualiza estado para a próxima iteração
+                xAtualDir = nextX;
+                yAtualDir = nextY;
+                orientacaoAtualDir = nextOrientacao;
+
+                // Se for a última peça (a mais à direita), guarda suas infos
+                if (i === mesa.length - 1) {
+                    infoPontaDireita = { x: xAtualDir, y: yAtualDir, orientacao: orientacaoAtualDir, direcaoVisual: direcaoVisualDir };
+                }
+            }
+
+            // --- Desenhar Áreas Clicáveis (Highlights de Jogada) ---
+            areaJogarEsquerda = { ativa: false };
+            areaJogarDireita = { ativa: false };
+
+            if (pecaSelecionada !== null && jogadorPodeInteragir && !jogoAcabou) {
+                 const pecaDaMao = maoJogador[pecaSelecionada];
+                 if (pecaDaMao) { // Verifica se a peça selecionada ainda existe
+                     const encaixeEsquerda = checarEncaixe(pecaDaMao, 'esquerda');
+                     const encaixeDireita = checarEncaixe(pecaDaMao, 'direita');
+
+                     // Tamanho da área de clique (quadrado)
+                     const tamanhoAreaClick = Math.max(pecaLarguraH, pecaAlturaH) * 0.7;
+                     const margemAreaClick = 8 * escalaDesenho; // Espaço entre a peça e a área
+
+                     // Desenha área clicável na ESQUERDA (se houver ponta e encaixe válido)
+                     if (encaixeEsquerda.valida && infoPontaEsquerda) {
+                         const { x: pX, y: pY, orientacao: pO, direcaoVisual: dV } = infoPontaEsquerda;
+                         const { largura: pL, altura: pA } = obterDimensoesPeca(pO);
+                         let areaX, areaY;
+
+                         // Calcula posição da área baseado na direção visual da ponta
+                         switch (dV) {
+                             case 'esquerda': areaX = pX - tamanhoAreaClick - margemAreaClick; areaY = pY + pA / 2 - tamanhoAreaClick / 2; break;
+                             case 'direita':  areaX = pX + pL + margemAreaClick; areaY = pY + pA / 2 - tamanhoAreaClick / 2; break; // Caso vire e volte
+                             case 'cima':     areaX = pX + pL / 2 - tamanhoAreaClick / 2; areaY = pY - tamanhoAreaClick - margemAreaClick; break;
+                             case 'baixo':    areaX = pX + pL / 2 - tamanhoAreaClick / 2; areaY = pY + pA + margemAreaClick; break;
+                             default:         areaX = pX - 50; areaY = pY; // Fallback
+                         }
+                         areaJogarEsquerda = { x: areaX, y: areaY, largura: tamanhoAreaClick, altura: tamanhoAreaClick, ativa: true };
+                         // Desenha o destaque
+                         ctx.fillStyle = COR_DESTAQUE_JOGAVEL_FILL;
+                         ctx.strokeStyle = COR_DESTAQUE_JOGAVEL_STROKE;
+                         ctx.lineWidth = 2 * escalaDesenho;
+                         ctx.fillRect(areaX, areaY, tamanhoAreaClick, tamanhoAreaClick);
+                         ctx.strokeRect(areaX, areaY, tamanhoAreaClick, tamanhoAreaClick);
+                     }
+
+                      // Desenha área clicável na DIREITA (se houver ponta e encaixe válido)
+                     if (encaixeDireita.valida && infoPontaDireita) {
+                         const { x: pX, y: pY, orientacao: pO, direcaoVisual: dV } = infoPontaDireita;
+                         const { largura: pL, altura: pA } = obterDimensoesPeca(pO);
+                         let areaX, areaY;
+
+                         // Calcula posição da área baseado na direção visual da ponta
+                         switch (dV) {
+                             case 'direita':  areaX = pX + pL + margemAreaClick; areaY = pY + pA / 2 - tamanhoAreaClick / 2; break;
+                             case 'esquerda': areaX = pX - tamanhoAreaClick - margemAreaClick; areaY = pY + pA / 2 - tamanhoAreaClick / 2; break; // Caso vire e volte
+                             case 'cima':     areaX = pX + pL / 2 - tamanhoAreaClick / 2; areaY = pY - tamanhoAreaClick - margemAreaClick; break;
+                             case 'baixo':    areaX = pX + pL / 2 - tamanhoAreaClick / 2; areaY = pY + pA + margemAreaClick; break;
+                             default:         areaX = pX + 50; areaY = pY; // Fallback
+                         }
+                         areaJogarDireita = { x: areaX, y: areaY, largura: tamanhoAreaClick, altura: tamanhoAreaClick, ativa: true };
+                         // Desenha o destaque
+                         ctx.fillStyle = COR_DESTAQUE_JOGAVEL_FILL;
+                         ctx.strokeStyle = COR_DESTAQUE_JOGAVEL_STROKE;
+                         ctx.lineWidth = 2 * escalaDesenho;
+                         ctx.fillRect(areaX, areaY, tamanhoAreaClick, tamanhoAreaClick);
+                         ctx.strokeRect(areaX, areaY, tamanhoAreaClick, tamanhoAreaClick);
+                     }
+                 } else {
+                     // Peça selecionada não existe mais (ex: acabou de ser jogada?) - deseleciona
+                     pecaSelecionada = null;
+                 }
+             }
+        }
+
+        // Função auxiliar para obter dimensões baseadas na orientação
+        function obterDimensoesPeca(orientacao) {
+            return {
+                largura: (orientacao === 'horizontal') ? pecaLarguraH : pecaLarguraV,
+                altura: (orientacao === 'horizontal') ? pecaAlturaH : pecaAlturaV
+            };
+        }
+
+        // Função auxiliar para calcular a posição da próxima peça na mesa
+        function calcularPosicaoProximaPeca(xAnterior, yAnterior, largAnterior, altAnterior, direcao, ehDoble) {
+            let nextX = xAnterior;
+            let nextY = yAnterior;
+            let nextOrientacao = 'horizontal'; // Assume horizontal por padrão
+
+            // Dobles são sempre colocados na vertical quando possível, exceto o primeiro
+            if (ehDoble && mesa.length > 0) {
+                 nextOrientacao = 'vertical';
+            }
+
+            const { largura: largAtual, altura: altAtual } = obterDimensoesPeca(nextOrientacao);
+
+            switch (direcao) {
+                case 'esquerda':
+                    nextOrientacao = 'horizontal'; // Peças à esquerda são horizontais
+                    nextX = xAnterior - obterDimensoesPeca(nextOrientacao).largura - espacoMesaEscalado;
+                    nextY = yAnterior + (altAnterior / 2) - (obterDimensoesPeca(nextOrientacao).altura / 2); // Alinha centro Y
+                    break;
+                case 'direita':
+                    nextOrientacao = 'horizontal'; // Peças à direita são horizontais
+                    nextX = xAnterior + largAnterior + espacoMesaEscalado;
+                    nextY = yAnterior + (altAnterior / 2) - (obterDimensoesPeca(nextOrientacao).altura / 2); // Alinha centro Y
+                    break;
+                case 'baixo':
+                    nextOrientacao = 'vertical'; // Peças para baixo são verticais
+                    nextY = yAnterior + altAnterior + espacoMesaEscalado;
+                    nextX = xAnterior + (largAnterior / 2) - (obterDimensoesPeca(nextOrientacao).largura / 2); // Alinha centro X
+                    break;
+                case 'cima':
+                    nextOrientacao = 'vertical'; // Peças para cima são verticais
+                    nextY = yAnterior - obterDimensoesPeca(nextOrientacao).altura - espacoMesaEscalado;
+                    nextX = xAnterior + (largAnterior / 2) - (obterDimensoesPeca(nextOrientacao).largura / 2); // Alinha centro X
+                    break;
+            }
+             // Se a peça for doble e a orientação calculada foi horizontal, força vertical (exceto 1a peça)
+            if (ehDoble && nextOrientacao === 'horizontal' && mesa.length > 0) {
+                 nextOrientacao = 'vertical';
+                 // Recalcula X e Y para vertical se a direção era horizontal
+                 if (direcao === 'esquerda' || direcao === 'direita') {
+                    const { largura: lV, altura: aV } = obterDimensoesPeca('vertical');
+                    if(direcao === 'esquerda') {
+                       nextX = xAnterior - lV - espacoMesaEscalado; // Ou xAnterior + largAnterior/2 - lV/2 ?
+                       nextY = yAnterior + altAnterior/2 - aV/2; // Alinha pelo centro Y
+                    } else { // Direita
+                       nextX = xAnterior + largAnterior + espacoMesaEscalado;
+                       nextY = yAnterior + altAnterior/2 - aV/2; // Alinha pelo centro Y
+                    }
+                    // TODO: Precisa de lógica mais robusta para posicionar doble vertical vindo de horizontal
+                 }
+            }
+
+
+            return { x: nextX, y: nextY, orientacao: nextOrientacao };
+        }
+
+
+        function desenharBotaoPassar() {
+            if (!mostrarBotaoPassar || !areaBotaoPassarRect || !jogadorPodeInteragir || jogoAcabou) {
+                return;
+            }
+
+            // Estilo baseado no hover
+            ctx.fillStyle = hoverBotaoPassar ? COR_BOTAO_PASSAR_HOVER_FILL : COR_BOTAO_PASSAR_FILL;
+            ctx.strokeStyle = '#555'; // Borda cinza escura
+            ctx.lineWidth = 1 * escalaDesenho;
+            const raioCanto = 5 * escalaDesenho;
+
+            // Desenha retângulo arredondado (se suportado) ou normal
+            if (ctx.roundRect) {
+                ctx.beginPath();
+                ctx.roundRect(areaBotaoPassarRect.x, areaBotaoPassarRect.y, areaBotaoPassarRect.largura, areaBotaoPassarRect.altura, raioCanto);
+                ctx.fill();
+                ctx.stroke();
+            } else {
+                ctx.fillRect(areaBotaoPassarRect.x, areaBotaoPassarRect.y, areaBotaoPassarRect.largura, areaBotaoPassarRect.altura);
+                ctx.strokeRect(areaBotaoPassarRect.x, areaBotaoPassarRect.y, areaBotaoPassarRect.largura, areaBotaoPassarRect.altura);
+            }
+
+            // Texto do Botão
+            ctx.fillStyle = COR_BOTAO_PASSAR_TEXT;
+            ctx.font = `bold ${tamanhoFonteBase * 0.85}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("Passar", areaBotaoPassarRect.x + areaBotaoPassarRect.largura / 2, areaBotaoPassarRect.y + areaBotaoPassarRect.altura / 2);
+        }
+
+        function desenharStatus() {
+            if (!areaStatusRect) return; // Garante que a área existe
+
+            // Fundo da barra de status
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(areaStatusRect.x, areaStatusRect.y, areaStatusRect.largura, areaStatusRect.altura);
+
+            // Texto da mensagem de status
+            ctx.fillStyle = COR_TEXTO_STATUS;
+            ctx.font = `${tamanhoFonteBase * 0.9}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(mensagemStatus, CENTRO_X, areaStatusRect.y + areaStatusRect.altura / 2);
+        }
+
+        function desenharMensagemFimJogo() {
+            if (!jogoAcabou || !mensagemFimJogo) {
+                return; // Só desenha se o jogo acabou e tem mensagem
+            }
+            ctx.save(); // Salva estado atual do contexto
+
+            // Overlay semitransparente sobre todo o jogo
+            ctx.fillStyle = COR_OVERLAY_FIM;
+            ctx.fillRect(0, 0, CANVAS_LARGURA, CANVAS_ALTURA);
+
+            // Configurações do texto da mensagem final
+            ctx.font = `bold ${tamanhoFonteBase * 1.8}px sans-serif`;
+            ctx.fillStyle = COR_TEXTO_FIM;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Divide a mensagem em linhas (se houver \n)
+            const linhas = mensagemFimJogo.split('\n');
+            const alturaLinha = tamanhoFonteBase * 2.2; // Espaçamento entre linhas
+            const yInicial = CENTRO_Y - (linhas.length - 1) * alturaLinha / 2; // Calcula Y da primeira linha para centralizar o bloco
+
+            // Desenha cada linha
+            linhas.forEach((linha, i) => {
+                ctx.fillText(linha, CENTRO_X, yInicial + i * alturaLinha);
+            });
+
+            ctx.restore(); // Restaura estado anterior do contexto
+        }
+
+        function desenharJogo() {
+            ctx.clearRect(0, 0, CANVAS_LARGURA, CANVAS_ALTURA); // Limpa frame anterior
+            desenharFundo();
+            ctx.imageSmoothingEnabled = true; // Melhora aparência em escalas
+
+            // Desenha elementos em ordem de sobreposição (fundo -> topo)
+            desenharMonte();
+            desenharMesa();
+            desenharAreaJogadorIA();
+            desenharBotaoPassar(); // Desenha sobre a área do jogador, se necessário
+            desenharStatus();
+            desenharMensagemFimJogo(); // Desenha por último, sobre tudo
+
+            atualizarCursor(); // Define o cursor apropriado (espera, ponteiro, etc.)
+        }
+
+        // --- Lógica do Jogo ---
+
+        function criarTodasAsPecas() {
+            todasAsPecas = [];
+            for (let i = 0; i <= 6; i++) {
+                for (let j = i; j <= 6; j++) { // Começa j=i para não repetir (0-1 e 1-0 são a mesma)
+                    todasAsPecas.push(new Peca(i, j));
+                }
+            }
+        }
+
+        // Embaralha um array usando Fisher-Yates (moderno)
+        function embaralhar(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]]; // Troca elementos
+            }
+        }
+
+        function distribuirPecas() {
+            criarTodasAsPecas();
+            embaralhar(todasAsPecas);
+
+            // Distribui 7 peças para cada jogador
+            maoJogador = todasAsPecas.slice(0, 7);
+            maoIA = todasAsPecas.slice(7, 14);
+            monte = todasAsPecas.slice(14); // O restante vai para o monte
+
+            // Reseta estado do jogo
+            mesa = [];
+            pontas = { esquerda: null, direita: null };
+            pecaSelecionada = null;
+            jogoAcabou = false;
+            mensagemFimJogo = "";
+            passesConsecutivos = 0;
+            jogadorPodeInteragir = false; // Definido após a primeira jogada
+            mostrarBotaoPassar = false;
+            direcaoLogicaEsquerda = 'esquerda'; // Reseta direções de crescimento
+            direcaoLogicaDireita = 'direita';
+            jogadorQueIniciou = null;
+        }
+
+        // Determina quem começa e qual a maior peça (carroça ou mais pontos)
+        function determinarPrimeiroJogadorEPeca() {
+            let maiorPecaJogador = { indice: -1, valor: -1 };
+            let maiorPecaIA = { indice: -1, valor: -1 };
+
+            // Função para calcular o valor de uma peça para início
+            // Dobles (carroças) valem mais (100 + valor), senão soma dos lados
+            const calcularValorInicio = (peca) => peca.ehDoble ? 100 + peca.l1 : peca.valorTotal;
+
+            // Encontra a maior peça na mão do jogador
+            maoJogador.forEach((peca, i) => {
+                const valor = calcularValorInicio(peca);
+                if (valor > maiorPecaJogador.valor) {
+                    maiorPecaJogador = { indice: i, valor: valor };
+                }
+            });
+
+            // Encontra a maior peça na mão da IA
+            maoIA.forEach((peca, i) => {
+                const valor = calcularValorInicio(peca);
+                if (valor > maiorPecaIA.valor) {
+                    maiorPecaIA = { indice: i, valor: valor };
+                }
+            });
+
+            // Compara e determina o primeiro jogador
+            if (maiorPecaJogador.valor > maiorPecaIA.valor) {
+                return { jogador: JOGADOR, indicePeca: maiorPecaJogador.indice };
+            } else if (maiorPecaIA.valor > maiorPecaJogador.valor) {
+                return { jogador: IA, indicePeca: maiorPecaIA.indice };
+            } else {
+                // Em caso de empate no valor (ou se ambos não tiverem peças?), jogador começa
+                // (Pode acontecer se ambos tiverem peças não-dobles de mesmo valor como maior)
+                // Ou se o maior valor for -1 para ambos (mãos vazias - erro?)
+                if (maiorPecaJogador.indice !== -1) {
+                     return { jogador: JOGADOR, indicePeca: maiorPecaJogador.indice };
+                } else if (maiorPecaIA.indice !== -1) {
+                    // Se só a IA tem peça (improvável na distribuição padrão)
+                    return { jogador: IA, indicePeca: maiorPecaIA.indice };
+                } else {
+                    // Caso extremo: Sem peças? Jogador começa com a primeira que tiver (se tiver)
+                     console.warn("Nenhuma peça encontrada para determinar início? Iniciando com Jogador[0].");
+                     return { jogador: JOGADOR, indicePeca: 0 }; // Fallback
+                }
+            }
+        }
+
+        // Verifica se uma peça da mão pode ser jogada em alguma das pontas da mesa
+        function isPecaJogavel(pecaDaMao) {
+            if (!pecaDaMao) return false; // Peça inválida
+
+            // Se a mesa está vazia, qualquer peça é jogável (para iniciar)
+            if (mesa.length === 0) return true;
+
+            const pontaEsquerdaValor = pontas.esquerda;
+            const pontaDireitaValor = pontas.direita;
+            const lado1 = pecaDaMao.l1;
+            const lado2 = pecaDaMao.l2;
+
+            // Verifica se encaixa na esquerda (se a ponta esquerda existe)
+            const conectaNaEsquerda = (pontaEsquerdaValor !== null) &&
+                                       (lado1 === pontaEsquerdaValor || lado2 === pontaEsquerdaValor);
+
+            // Verifica se encaixa na direita (se a ponta direita existe)
+            const conectaNaDireita = (pontaDireitaValor !== null) &&
+                                      (lado1 === pontaDireitaValor || lado2 === pontaDireitaValor);
+
+            // É jogável se conectar em qualquer uma das pontas
+            return conectaNaEsquerda || conectaNaDireita;
+        }
+
+        // Verifica se o jogador (ou IA) possui alguma peça jogável na mão
+        function podeJogarAlgumaPeca(mao) {
+            // Se a mesa está vazia, só pode jogar se tiver peças na mão
+            if (mesa.length === 0) return mao.length > 0;
+
+            // Verifica cada peça na mão
+            for (const peca of mao) {
+                if (isPecaJogavel(peca)) {
+                    return true; // Encontrou uma jogável
+                }
+            }
+            return false; // Nenhuma peça na mão é jogável
+        }
+
+        // Verifica se uma peça específica da mão encaixa em um lado específico da mesa
+        function checarEncaixe(pecaDaMao, lado) { // lado = 'esquerda' ou 'direita'
+            if (!pecaDaMao || jogoAcabou) {
+                return { valida: false, conectaQualLado: null };
+            }
+
+            // Caso especial: Primeira jogada (mesa vazia) - sempre válida
+            if (mesa.length === 0) {
+                 // Assume que o lado 'l1' da peça da mão será o lado de conexão (arbitrário, pois não há ponta ainda)
+                return { valida: true, conectaQualLado: 'l1' };
+            }
+
+            // Obtém o valor da ponta da mesa correspondente ao lado
+            const valorPonta = (lado === 'esquerda') ? pontas.esquerda : pontas.direita;
+
+            // Se a ponta não existe (não deveria acontecer após a 1a jogada), não é válido
+            if (valorPonta === null) {
+                console.error(`Erro: Tentando encaixar no lado ${lado} mas a ponta é null.`);
+                return { valida: false, conectaQualLado: null };
+            }
+
+            // Verifica se algum dos lados da peça da mão corresponde ao valor da ponta
+            if (pecaDaMao.l1 === valorPonta) {
+                return { valida: true, conectaQualLado: 'l1' }; // Lado l1 da peça conecta
+            }
+            if (pecaDaMao.l2 === valorPonta) {
+                return { valida: true, conectaQualLado: 'l2' }; // Lado l2 da peça conecta
+            }
+
+            // Nenhum lado conectou
+            return { valida: false, conectaQualLado: null };
+        }
+
+        /**
+         * Realiza uma jogada, adicionando a peça à mesa e atualizando o estado.
+         * @param {string|null} quem - JOGADOR, IA, ou null para a primeira jogada.
+         * @param {number|Peca} indiceOuPeca - Índice na mão (se quem=JOGADOR/IA) ou a Peca (se quem=null).
+         * @param {string|null} lado - 'esquerda', 'direita', ou null para a primeira jogada (centro).
+         * @returns {boolean} - True se a jogada foi bem-sucedida, false caso contrário.
+         */
+        function realizarJogada(quem, indiceOuPeca, lado) {
+            if (jogoAcabou && quem !== null) return false; // Não permite jogadas após o fim (exceto a inicial)
+
+            let maoOrigem = null;
+            let pecaOriginalDaMao = null;
+            let indiceNaMao = -1;
+
+            // Determina a peça original e a mão de origem
+            if (quem === JOGADOR) {
+                maoOrigem = maoJogador;
+                indiceNaMao = indiceOuPeca;
+                pecaOriginalDaMao = maoOrigem?.[indiceNaMao];
+            } else if (quem === IA) {
+                maoOrigem = maoIA;
+                indiceNaMao = indiceOuPeca;
+                pecaOriginalDaMao = maoOrigem?.[indiceNaMao];
+            } else { // Primeira jogada (quem === null)
+                pecaOriginalDaMao = indiceOuPeca; // A própria peça foi passada
+            }
+
+            if (!pecaOriginalDaMao) {
+                console.error("Erro: Peça original inválida para jogar.", { quem, indiceOuPeca });
+                return false;
+            }
+
+            // Verifica se o encaixe é válido (exceto para a primeira jogada)
+            const { valida: encaixeValido, conectaQualLado } = checarEncaixe(pecaOriginalDaMao, lado);
+            if (!encaixeValido && mesa.length > 0) {
+                if (quem === JOGADOR) {
+                    atualizarStatus("Jogada inválida! Tente outra peça ou lado.");
+                    pecaSelecionada = null; // Deseleciona
+                    desenharJogo();
+                } else {
+                     console.error(`IA tentou jogada inválida: ${pecaOriginalDaMao.id} no lado ${lado}`);
+                }
+                return false;
+            }
+
+            // Determina qual lado da peça ficará para fora (exposto) e qual conectará
+            let ladoConecta, ladoExposto;
+            if (mesa.length === 0) {
+                // Primeira peça: Define arbitrariamente, l1 conecta à "esquerda", l2 à "direita"
+                ladoConecta = pecaOriginalDaMao.l1; // Será ponta esquerda
+                ladoExposto = pecaOriginalDaMao.l2; // Será ponta direita
+            } else {
+                ladoConecta = (conectaQualLado === 'l1') ? pecaOriginalDaMao.l1 : pecaOriginalDaMao.l2;
+                ladoExposto = (conectaQualLado === 'l1') ? pecaOriginalDaMao.l2 : pecaOriginalDaMao.l1;
+            }
+
+            // Cria a Peca "visual" para a mesa, orientando-a corretamente
+            // Se joga na esquerda, o lado exposto fica à esquerda (lExp, lCon)
+            // Se joga na direita ou centro, o lado exposto fica à direita (lCon, lExp)
+            let pecaVisualParaMesa = (lado === 'esquerda')
+                ? new Peca(ladoExposto, ladoConecta)
+                : new Peca(ladoConecta, ladoExposto);
+
+            // Remove a peça da mão de origem (se não for a primeira jogada)
+            if (quem !== null && maoOrigem && indiceNaMao >= 0 && indiceNaMao < maoOrigem.length) {
+                maoOrigem.splice(indiceNaMao, 1);
+            } else if (quem !== null) {
+                // Isso não deveria acontecer se a lógica estiver correta
+                console.error(`Erro ao tentar remover peça do índice ${indiceNaMao} da mão de ${quem}.`);
+                return false; // Aborta a jogada
+            }
+
+            // Adiciona a peça visual à mesa na posição correta
+            const itemMesa = { pecaVisual: pecaVisualParaMesa };
+            if (mesa.length === 0) {
+                mesa.push(itemMesa);
+                pontas.esquerda = ladoConecta; // Valor da ponta esquerda
+                pontas.direita = ladoExposto;  // Valor da ponta direita
+            } else if (lado === 'esquerda') {
+                mesa.unshift(itemMesa); // Adiciona no início do array
+                pontas.esquerda = ladoExposto; // Atualiza a ponta esquerda
+            } else { // lado === 'direita'
+                mesa.push(itemMesa); // Adiciona no fim do array
+                pontas.direita = ladoExposto; // Atualiza a ponta direita
+            }
+
+             console.log(`Jogada: ${pecaOriginalDaMao.id} no ${lado || 'centro'}. PV: ${pecaVisualParaMesa.l1}/${pecaVisualParaMesa.l2}. Pontas: E=${pontas.esquerda} D=${pontas.direita}.`);
+
+
+            // --- Pós-Jogada ---
+            if (quem !== null) { // Se não foi a primeira jogada
+                passesConsecutivos = 0; // Reseta contagem de passes
+                pecaSelecionada = null; // Deseleciona peça do jogador
+                mostrarBotaoPassar = false; // Esconde botão de passar
+
+                if (!verificarFimDeJogo()) {
+                    proximoTurno(quem); // Passa a vez para o outro jogador
+                } else {
+                    desenharJogo(); // Apenas redesenha se o jogo acabou
+                }
+            } else { // Se foi a primeira jogada (quem === null)
+                // Define o próximo turno para o oponente de quem começou
+                turnoAtual = (jogadorQueIniciou === JOGADOR) ? IA : JOGADOR;
+                atualizarStatus(); // Define a mensagem inicial do próximo turno
+                desenharJogo();
+
+                // Se for a vez da IA, agenda a jogada dela
+                if (turnoAtual === IA) {
+                    jogadorPodeInteragir = false;
+                    setTimeout(jogarTurnoIA, DELAY_IA); // Adiciona um delay para a IA
+                } else {
+                    // Se for a vez do Jogador, permite interação e verifica se pode jogar/comprar
+                    jogadorPodeInteragir = true;
+                    atualizarCursor(); // Muda o cursor
+                    // Verifica se o jogador precisa comprar ou passar logo de cara
+                    if (!podeJogarAlgumaPeca(maoJogador)) {
+                        if (monte.length > 0) {
+                            mostrarBotaoPassar = false; // Não mostra passar se pode comprar
+                            atualizarStatus("Sua Vez: Compre uma peça.");
+                        } else {
+                            mostrarBotaoPassar = true; // Mostra passar se não pode comprar
+                            atualizarStatus("Sua Vez: Passe a vez.");
+                        }
+                    }
+                    desenharJogo(); // Redesenha com estado atualizado
+                }
+            }
+
+            return true; // Jogada bem-sucedida
+        }
+
+        // Tenta comprar uma peça do monte para a mão especificada
+        function realizarCompra(quem) {
+            if (jogoAcabou || monte.length === 0) return false; // Não pode comprar se acabou ou monte vazio
+
+            const maoDestino = (quem === JOGADOR) ? maoJogador : maoIA;
+
+            // Regra: Jogador só pode comprar se não tiver jogada
+            if (quem === JOGADOR && podeJogarAlgumaPeca(maoDestino)) {
+                atualizarStatus("Você tem peças para jogar! Não pode comprar.");
+                desenharJogo();
+                return false;
+            }
+
+            // Compra a peça
+            const novaPeca = monte.pop(); // Remove do monte
+            maoDestino.push(novaPeca);   // Adiciona na mão
+            console.log(`${quem} comprou ${novaPeca.id}. Monte restante: ${monte.length}`);
+
+            passesConsecutivos = 0; // Comprar reseta passes
+
+            // Atualiza estado para o jogador após a compra
+            if (quem === JOGADOR) {
+                pecaSelecionada = null; // Deseleciona qualquer peça
+                // Verifica se AGORA pode jogar
+                if (!podeJogarAlgumaPeca(maoJogador)) {
+                    // Ainda não pode jogar
+                    if (monte.length > 0) {
+                         mostrarBotaoPassar = false; // Ainda pode comprar mais
+                         atualizarStatus("Comprou. Ainda sem jogada. Compre novamente.");
+                    } else {
+                         mostrarBotaoPassar = true; // Não pode comprar mais, tem que passar
+                         atualizarStatus("Comprou. Sem jogada e monte vazio. Passe a vez.");
+                    }
+                } else {
+                    // Agora pode jogar
+                    mostrarBotaoPassar = false;
+                    atualizarStatus("Comprou. Agora você pode jogar.");
+                }
+                desenharJogo(); // Redesenha a mão e status
+            }
+            // Se a IA comprou, a lógica de continuar o turno dela está em jogarTurnoIA
+
+            return true; // Compra bem-sucedida
+        }
+
+        // Jogador clica no botão "Passar"
+        function passarVez() {
+            // Validações
+            if (jogoAcabou || turnoAtual !== JOGADOR || !mostrarBotaoPassar) {
+                console.warn("Tentativa inválida de passar a vez.");
+                return;
+            }
+
+            passesConsecutivos++;
+            atualizarStatus(`Você passou a vez.`);
+            mostrarBotaoPassar = false; // Esconde o botão após passar
+            pecaSelecionada = null;   // Garante deseleção
+            desenharJogo();
+
+            if (!verificarFimDeJogo()) {
+                proximoTurno(JOGADOR); // Passa a vez para a IA
+            }
+        }
+
+        // Passa o turno para o próximo jogador
+        function proximoTurno(quemJogouOuPassou) {
+            if (jogoAcabou) return; // Não muda turno se o jogo acabou
+
+            turnoAtual = (quemJogouOuPassou === JOGADOR) ? IA : JOGADOR;
+            atualizarStatus(); // Define mensagem padrão para o novo turno
+            desenharJogo();
+
+            if (turnoAtual === IA) {
+                jogadorPodeInteragir = false;
+                atualizarCursor(); // Cursor de espera
+                setTimeout(jogarTurnoIA, DELAY_IA); // Agenda jogada da IA
+            } else { // Turno do Jogador
+                jogadorPodeInteragir = true;
+                // Verifica se o jogador tem opções
+                if (!podeJogarAlgumaPeca(maoJogador)) {
+                    if (monte.length > 0) {
+                        mostrarBotaoPassar = false; // Pode comprar
+                        atualizarStatus("Sua Vez: Compre uma peça.");
+                    } else {
+                        mostrarBotaoPassar = true; // Deve passar
+                        atualizarStatus("Sua Vez: Passe a vez.");
+                    }
+                } else {
+                    mostrarBotaoPassar = false; // Pode jogar
+                    // A mensagem padrão será definida por atualizarStatus()
+                }
+                desenharJogo(); // Redesenha com o estado atualizado
+                atualizarCursor(); // Cursor normal ou ponteiro
+            }
+        }
+
+        // Verifica condições de fim de jogo
+        function verificarFimDeJogo() {
+            let fim = false;
+            let msg = "";
+            let pontosJogador = 0;
+            let pontosIA = 0;
+
+            // 1. Alguém bateu (ficou sem peças)?
+            if (maoJogador.length === 0) {
+                msg = "Você Bateu!\nVenceu!";
+                fim = true;
+            } else if (maoIA.length === 0) {
+                msg = "IA Bateu!\nIA Venceu!";
+                fim = true;
+            }
+            // 2. Jogo bloqueado? (Dois passes seguidos OU ninguém pode jogar e monte vazio)
+            else if (passesConsecutivos >= 2 ||
+                     (!podeJogarAlgumaPeca(maoJogador) && !podeJogarAlgumaPeca(maoIA) && monte.length === 0))
+            {
+                pontosJogador = maoJogador.reduce((soma, peca) => soma + peca.valorTotal, 0);
+                pontosIA = maoIA.reduce((soma, peca) => soma + peca.valorTotal, 0);
+                msg = "Jogo Bloqueado!\n";
+                if (pontosJogador < pontosIA) {
+                    msg += `Você venceu por pontos (${pontosJogador} vs ${pontosIA})`;
+                } else if (pontosIA < pontosJogador) {
+                    msg += `IA venceu por pontos (${pontosIA} vs ${pontosJogador})`;
+                } else {
+                    msg += `Empate (${pontosJogador} pontos cada)`;
+                }
+                fim = true;
+            }
+
+            // Se o jogo acabou, define a mensagem final e atualiza o status
+            if (fim) {
+                msg += "\n\nClique para jogar novamente.";
+                mensagemFimJogo = msg;
+                atualizarStatus("Fim de Jogo.", true); // Marca como fim e atualiza status bar
+                return true; // Indica que o jogo terminou
+            }
+
+            return false; // Jogo continua
+        }
+
+        // Lógica de decisão e execução da jogada da IA
+        function jogarTurnoIA() {
+            if (jogoAcabou || turnoAtual !== IA) return; // Sai se não for a vez da IA ou o jogo acabou
+
+            atualizarStatus("IA pensando...");
+            desenharJogo(); // Mostra status "pensando"
+
+            let melhorJogada = null; // { indice: number, lado: 'esquerda'|'direita' }
+            let maiorValor = -1;    // Prioriza peças de maior valor (simples estratégia)
+
+            // Avalia todas as peças na mão da IA
+            for (let i = 0; i < maoIA.length; i++) {
+                const pecaAtual = maoIA[i];
+                // Calcula um valor estratégico (dobles são bons, peças altas também)
+                const valorEstrategico = pecaAtual.ehDoble ? 100 + pecaAtual.l1 : pecaAtual.valorTotal;
+
+                // Tenta encaixar na direita
+                const encaixeDir = checarEncaixe(pecaAtual, 'direita');
+                if (encaixeDir.valida) {
+                    if (valorEstrategico > maiorValor) {
+                        maiorValor = valorEstrategico;
+                        melhorJogada = { indice: i, lado: 'direita' };
+                    }
+                }
+
+                // Tenta encaixar na esquerda
+                const encaixeEsq = checarEncaixe(pecaAtual, 'esquerda');
+                 // Prioriza esquerda se o valor for igual ou maior (empate favorece esquerda? Ou tanto faz?)
+                if (encaixeEsq.valida) {
+                    if (valorEstrategico >= maiorValor) { // >= para talvez variar jogadas
+                        maiorValor = valorEstrategico;
+                        melhorJogada = { indice: i, lado: 'esquerda' };
+                    }
+                }
+            }
+
+            // Executa a ação da IA
+            if (melhorJogada) {
+                // Encontrou uma jogada
+                const pecaId = maoIA[melhorJogada.indice].id;
+                atualizarStatus(`IA jogando ${pecaId} na ${melhorJogada.lado}...`);
+                desenharJogo(); // Mostra a peça que vai jogar
+                // Pequeno delay antes de efetivar a jogada visualmente
+                setTimeout(() => {
+                    realizarJogada(IA, melhorJogada.indice, melhorJogada.lado);
+                }, DELAY_IA / 2); // Metade do delay total
+            } else {
+                // Não encontrou jogada, precisa comprar ou passar
+                if (monte.length > 0) {
+                    // Tenta comprar
+                    atualizarStatus("IA comprando...");
+                    desenharJogo();
+                    setTimeout(() => {
+                        if (realizarCompra(IA)) {
+                            // Após comprar, tenta jogar novamente (recursivo, mas com delay)
+                            setTimeout(jogarTurnoIA, DELAY_IA / 2);
+                        } else {
+                            // Falha na compra (não deveria acontecer se monte > 0)
+                            console.error("IA falhou ao tentar comprar do monte não vazio.");
+                            passesConsecutivos++; // Considera como passe se falhar
+                            atualizarStatus("IA passou (erro na compra).");
+                            desenharJogo();
+                            if (!verificarFimDeJogo()) proximoTurno(IA);
+                        }
+                    }, DELAY_IA / 3); // Delay curto para compra
+                } else {
+                    // Não pode comprar (monte vazio), passa a vez
+                    passesConsecutivos++;
+                    atualizarStatus("IA passou a vez.");
+                    desenharJogo();
+                    if (!verificarFimDeJogo()) {
+                        proximoTurno(IA);
+                    }
+                }
+            }
+        }
+
+
+        // --- Eventos & Inicialização ---
+
+        // Obtém posição do mouse relativa ao canvas
+        function getMousePos(canvasElement, event) {
+            const rect = canvasElement.getBoundingClientRect();
+            const scaleX = canvasElement.width / rect.width;
+            const scaleY = canvasElement.height / rect.height;
+            return {
+                x: (event.clientX - rect.left) * scaleX,
+                y: (event.clientY - rect.top) * scaleY
+            };
+        }
+
+        // Verifica se um ponto (x, y) está dentro de um retângulo (com x, y, largura, altura)
+        function isDentro(ponto, retangulo) {
+            return retangulo && ponto &&
+                   retangulo.largura > 0 && retangulo.altura > 0 && // Garante retângulo válido
+                   ponto.x >= retangulo.x && ponto.x <= retangulo.x + retangulo.largura &&
+                   ponto.y >= retangulo.y && ponto.y <= retangulo.y + retangulo.altura;
+        }
+
+        // Atualiza o estado de hover do botão passar e o cursor do mouse
+        function verificarHover(event) {
+            // Se o jogo acabou, o cursor é sempre de ponteiro para reiniciar
+            if (jogoAcabou) {
+                if (!canvas.classList.contains('clicavel')) {
+                    canvas.classList.remove('esperando');
+                    canvas.classList.add('clicavel');
+                }
+                hoverBotaoPassar = false; // Botão não existe no fim
+                return;
+            }
+
+            // Se não é a vez do jogador, cursor é de espera
+            if (!jogadorPodeInteragir) {
+                hoverBotaoPassar = false; // Botão não é interativo
+                if (!canvas.classList.contains('esperando')) {
+                     canvas.classList.remove('clicavel');
+                     canvas.classList.add('esperando');
+                 }
+                return;
+            }
+
+            // Se é a vez do jogador, verifica interações possíveis
+            const posMouse = getMousePos(canvas, event);
+            let cursorDeveSerClicavel = false;
+            let botaoPassarEstaHover = false;
+
+            // 1. Hover no botão Passar (se visível)
+            if (mostrarBotaoPassar && areaBotaoPassarRect && isDentro(posMouse, areaBotaoPassarRect)) {
+                cursorDeveSerClicavel = true;
+                botaoPassarEstaHover = true;
+            }
+
+            // 2. Hover na área de Compra (se aplicável)
+            const podeComprar = !podeJogarAlgumaPeca(maoJogador) && monte.length > 0;
+            if (podeComprar && areaClicarMonte && isDentro(posMouse, areaClicarMonte)) {
+                cursorDeveSerClicavel = true;
+            }
+
+            // 3. Hover nas peças jogáveis na mão
+            const larguraTotalMao = maoJogador.length * (pecaLarguraV + espacoMaoEscalado) - espacoMaoEscalado;
+            let startXJogador = Math.max(areaJogadorRect.x + 10 * escalaDesenho, CENTRO_X - larguraTotalMao / 2);
+             // Recalcula Y da peça do jogador para hover preciso
+            let offsetYJogadorHover = (areaJogadorRect.altura - pecaAlturaV) / 2;
+             if (mostrarBotaoPassar && areaBotaoPassarRect.y + areaBotaoPassarRect.altura > areaJogadorRect.y + offsetYJogadorHover) {
+                 offsetYJogadorHover += (areaBotaoPassarRect.y + areaBotaoPassarRect.altura) - (areaJogadorRect.y + offsetYJogadorHover) + 5 * escalaDesenho;
+             }
+            const pecaYJogadorHover = areaJogadorRect.y + offsetYJogadorHover;
+
+            maoJogador.forEach((peca, i) => {
+                const pecaX = startXJogador + i * (pecaLarguraV + espacoMaoEscalado);
+                // Verifica se está sobre uma peça VÁLIDA e JOGÁVEL dentro da área
+                if (peca && isPecaJogavel(peca) && peca.contemPontoMao(posMouse.x, posMouse.y, pecaX, pecaYJogadorHover) &&
+                    pecaX >= areaJogadorRect.x && pecaX + pecaLarguraV <= areaJogadorRect.x + areaJogadorRect.largura) {
+                    cursorDeveSerClicavel = true;
+                }
+            });
+
+            // 4. Hover nas áreas de Jogada na Mesa (se peça selecionada)
+            if (pecaSelecionada !== null) {
+                if (areaJogarEsquerda.ativa && isDentro(posMouse, areaJogarEsquerda)) {
+                    cursorDeveSerClicavel = true;
+                }
+                if (areaJogarDireita.ativa && isDentro(posMouse, areaJogarDireita)) {
+                    cursorDeveSerClicavel = true;
+                }
+            }
+
+            // Atualiza estado de hover do botão (redesenha se mudou)
+            if (botaoPassarEstaHover !== hoverBotaoPassar) {
+                hoverBotaoPassar = botaoPassarEstaHover;
+                desenharJogo(); // Redesenha para mostrar efeito hover no botão
+            }
+
+            // Atualiza classe do cursor no canvas
+            if (cursorDeveSerClicavel && !canvas.classList.contains('clicavel')) {
+                 canvas.classList.remove('esperando');
+                 canvas.classList.add('clicavel');
+            } else if (!cursorDeveSerClicavel && canvas.classList.contains('clicavel')) {
+                 canvas.classList.remove('clicavel');
+                 // Se não for clicável E não for a vez da IA, volta pro default
+                 if(!canvas.classList.contains('esperando')) {
+                      // (Não faz nada, deixa o cursor default do CSS)
+                 }
+            }
+        }
+
+        // Define o cursor do canvas baseado no estado do jogo
+        function atualizarCursor() {
+             if (jogoAcabou) {
+                canvas.classList.remove('esperando');
+                canvas.classList.add('clicavel'); // Clicável para reiniciar
+            } else if (!jogadorPodeInteragir || turnoAtual === IA) {
+                canvas.classList.add('esperando');
+                canvas.classList.remove('clicavel'); // Cursor de espera
+            } else {
+                canvas.classList.remove('esperando');
+                // 'clicavel' será definido por verificarHover
+                 // Se não for clicável, remove a classe para usar o default
+                 if(!canvas.classList.contains('clicavel')) {
+                    // (Mantém o cursor default)
+                 }
+            }
+        }
+
+
+        // Atualiza a mensagem na barra de status e estado de interação
+        function atualizarStatus(novaMensagem = null, ehFimDeJogo = false) {
+            jogoAcabou = ehFimDeJogo; // Atualiza estado global de fim de jogo
+            // Só permite interação se for turno do jogador E o jogo não acabou
+            jogadorPodeInteragir = (turnoAtual === JOGADOR && !jogoAcabou);
+
+            if (novaMensagem && !ehFimDeJogo) {
+                // Mensagem explícita foi passada (e não é fim de jogo)
+                mensagemStatus = novaMensagem;
+            } else if (!jogoAcabou) {
+                // Define mensagem padrão se nenhuma foi passada
+                if (turnoAtual === JOGADOR) {
+                    if (!podeJogarAlgumaPeca(maoJogador)) {
+                        // Jogador não pode jogar
+                        mensagemStatus = monte.length > 0 ? "Sua Vez: Compre uma peça." : "Sua Vez: Passe a vez.";
+                    } else {
+                        // Jogador pode jogar
+                        mensagemStatus = pecaSelecionada === null ? "Sua Vez: Escolha uma peça." : "Sua Vez: Escolha onde jogar.";
+                    }
+                } else { // Turno da IA
+                     // Mantém "IA pensando..." ou "IA jogando..." se já estiver definido, senão padrão
+                     if (!mensagemStatus || !mensagemStatus.toLowerCase().includes("ia")) {
+                          mensagemStatus = "Vez da IA...";
+                     }
+                }
+            } else if (ehFimDeJogo && novaMensagem) {
+                 // Mensagem de fim de jogo (geralmente curta, ex: "Fim de Jogo.")
+                 mensagemStatus = novaMensagem;
+                 // A mensagem detalhada do fim está em mensagemFimJogo
+            }
+
+            // Define se o botão Passar deve ser visível
+            mostrarBotaoPassar = jogadorPodeInteragir && !podeJogarAlgumaPeca(maoJogador) && monte.length === 0 && !jogoAcabou;
+
+            atualizarCursor(); // Garante que o cursor reflita o novo estado
+        }
+
+        // Processa cliques do mouse no canvas
+        function handleMouseClick(event) {
+            // 1. Clique para reiniciar após o fim do jogo
+            if (jogoAcabou) {
+                iniciarJogo();
+                return;
+            }
+
+            // 2. Ignora cliques se não for a vez do jogador
+            if (!jogadorPodeInteragir) {
+                return;
+            }
+
+            const posClick = getMousePos(canvas, event);
+
+            // 3. Clique no botão Passar (se visível e aplicável)
+            if (mostrarBotaoPassar && areaBotaoPassarRect && isDentro(posClick, areaBotaoPassarRect)) {
+                passarVez();
+                return;
+            }
+
+            // 4. Clique para Comprar Peça (se aplicável)
+            const precisaComprar = !podeJogarAlgumaPeca(maoJogador) && monte.length > 0;
+            if (precisaComprar && areaClicarMonte && isDentro(posClick, areaClicarMonte)) {
+                realizarCompra(JOGADOR);
+                return;
+            }
+
+            // 5. Clique nas áreas de Jogada na Mesa (se uma peça estiver selecionada)
+            if (pecaSelecionada !== null) {
+                const pecaSelObj = maoJogador[pecaSelecionada];
+                if (pecaSelObj) { // Verifica se a peça ainda existe
+                    let jogadaRealizada = false;
+                    // Tenta jogar na esquerda
+                    if (areaJogarEsquerda.ativa && isDentro(posClick, areaJogarEsquerda)) {
+                         // Re-checa encaixe para garantir (embora a área só deva aparecer se for válido)
+                        if (checarEncaixe(pecaSelObj, 'esquerda').valida) {
+                            jogadaRealizada = realizarJogada(JOGADOR, pecaSelecionada, 'esquerda');
+                        }
+                    }
+                    // Tenta jogar na direita (só se não jogou na esquerda)
+                    else if (areaJogarDireita.ativa && isDentro(posClick, areaJogarDireita)) {
+                         if (checarEncaixe(pecaSelObj, 'direita').valida) {
+                            jogadaRealizada = realizarJogada(JOGADOR, pecaSelecionada, 'direita');
+                        }
+                    }
+
+                    // Se uma jogada foi feita, o resto da lógica (passar turno, etc.)
+                    // já foi tratado dentro de realizarJogada. Apenas retorna.
+                    if (jogadaRealizada) {
+                        return;
+                    }
+                } else {
+                    // Peça selecionada não existe mais? Deseleciona.
+                    console.warn("Peça selecionada não encontrada na mão.");
+                    pecaSelecionada = null;
+                    atualizarStatus();
+                    desenharJogo();
+                    // Continua para verificar se clicou em outra peça
+                }
+                // Se clicou fora das áreas de jogar, DESELECIONA a peça atual
+                 pecaSelecionada = null;
+                 atualizarStatus(); // Volta para "Escolha uma peça"
+                 desenharJogo();
+                 // Não retorna ainda, pode ter clicado em outra peça para selecionar
+            }
+
+            // 6. Clique para Selecionar/Deselecionar uma Peça na Mão
+            let indiceClicado = -1;
+            const larguraTotalMao = maoJogador.length * (pecaLarguraV + espacoMaoEscalado) - espacoMaoEscalado;
+            let startXJogador = Math.max(areaJogadorRect.x + 10 * escalaDesenho, CENTRO_X - larguraTotalMao / 2);
+            // Recalcula Y da peça do jogador para clique preciso
+            let offsetYJogadorClick = (areaJogadorRect.altura - pecaAlturaV) / 2;
+             if (mostrarBotaoPassar && areaBotaoPassarRect.y + areaBotaoPassarRect.altura > areaJogadorRect.y + offsetYJogadorClick) {
+                 offsetYJogadorClick += (areaBotaoPassarRect.y + areaBotaoPassarRect.altura) - (areaJogadorRect.y + offsetYJogadorClick) + 5 * escalaDesenho;
+             }
+            const pecaYJogadorClick = areaJogadorRect.y + offsetYJogadorClick;
+
+            for (let i = 0; i < maoJogador.length; i++) {
+                const pecaX = startXJogador + i * (pecaLarguraV + espacoMaoEscalado);
+                // Verifica colisão com a peça atual na mão
+                if (maoJogador[i] && maoJogador[i].contemPontoMao(posClick.x, posClick.y, pecaX, pecaYJogadorClick) &&
+                    pecaX >= areaJogadorRect.x && pecaX + pecaLarguraV <= areaJogadorRect.x + areaJogadorRect.largura) // Garante estar na área
+                {
+                    indiceClicado = i;
+                    break; // Encontrou a peça clicada
+                }
+            }
+
+            if (indiceClicado !== -1) {
+                // Clicou em uma peça na mão
+                const pecaClicada = maoJogador[indiceClicado];
+                if (isPecaJogavel(pecaClicada)) {
+                    // Se a peça é jogável, seleciona ou deseleciona
+                    pecaSelecionada = (pecaSelecionada === indiceClicado) ? null : indiceClicado;
+                    atualizarStatus(); // Atualiza mensagem (Escolha peça/Escolha onde jogar)
+                    desenharJogo(); // Redesenha com a seleção/deseleção
+                } else {
+                    // Peça não jogável
+                    pecaSelecionada = null; // Garante deseleção
+                    atualizarStatus("Esta peça não pode ser jogada agora.");
+                    desenharJogo();
+                }
+                return; // Ação de clique na mão foi tratada
+            }
+
+             // 7. Clicou em qualquer outro lugar (não interativo)
+             // Se tinha uma peça selecionada, ela já foi deselecionada no passo 5.
+             // Se não tinha, não faz nada. O status e desenho já estão atualizados.
+        }
+
+        // Ajusta o tamanho do canvas para preencher a janela mantendo a proporção
+        function ajustarCanvasProporcionalmente() {
+            const margemBody = 20; // Espaço total nas laterais/topo/baixo do body
+            const viewportWidth = window.innerWidth - margemBody;
+            const viewportHeight = window.innerHeight - margemBody;
+            const aspectRatio = 20 / 9; // Proporção desejada (largura / altura)
+
+            let novoLargura = viewportWidth;
+            let novoAltura = novoLargura / aspectRatio;
+
+            // Se a altura calculada exceder a altura disponível, recalcula baseado na altura
+            if (novoAltura > viewportHeight) {
+                novoAltura = viewportHeight;
+                novoLargura = novoAltura * aspectRatio;
+            }
+
+            // Define tamanho mínimo para garantir legibilidade
+            const minWidth = 640;
+            const minHeight = minWidth / aspectRatio; // 360
+
+            canvas.width = Math.max(minWidth, Math.round(novoLargura));
+            canvas.height = Math.max(minHeight, Math.round(novoAltura));
+
+             console.log(`Canvas resized: ${canvas.width}x${canvas.height}`);
+        }
+
+        // Configuração inicial do jogo
+        function iniciarJogo() {
+            console.log("--- Iniciando Dominó Minimalista v5.1 ---");
+            ajustarCanvasProporcionalmente(); // Ajusta tamanho do canvas primeiro
+            ajustarTamanhoPosicoes();    // Calcula posições e escalas com base no novo tamanho
+
+            distribuirPecas(); // Cria, embaralha e distribui
+
+            // Determina quem começa
+            const infoInicio = determinarPrimeiroJogadorEPeca();
+            if (!infoInicio || infoInicio.indicePeca < 0 ||
+                (infoInicio.jogador === JOGADOR && infoInicio.indicePeca >= maoJogador.length) ||
+                (infoInicio.jogador === IA && infoInicio.indicePeca >= maoIA.length) ) {
+                 console.error("Erro crítico ao determinar jogador inicial ou peça.", infoInicio);
+                 alert("Erro ao iniciar o jogo. Verifique o console.");
+                 return;
+            }
+
+            jogadorQueIniciou = infoInicio.jogador;
+            turnoAtual = jogadorQueIniciou; // Define o turno inicial
+
+            // Pega a peça inicial da mão correspondente
+            let maoInicial = (turnoAtual === JOGADOR) ? maoJogador : maoIA;
+            let pecaInicialOriginal = null;
+             // Verifica se o índice é válido antes de remover
+            if (infoInicio.indicePeca >= 0 && infoInicio.indicePeca < maoInicial.length) {
+                 // Remove a peça da mão e a guarda
+                 pecaInicialOriginal = maoInicial.splice(infoInicio.indicePeca, 1)[0];
+            } else {
+                 // Fallback: se o índice for inválido, pega a primeira peça (se existir)
+                 console.warn(`Índice inicial inválido (${infoInicio.indicePeca}), usando a primeira peça de ${turnoAtual}.`);
+                 if (maoInicial.length > 0) {
+                    pecaInicialOriginal = maoInicial.splice(0, 1)[0];
+                 } else {
+                     alert("Erro: Mão inicial vazia, impossível começar.");
+                     return;
+                 }
+            }
+
+
+            if (pecaInicialOriginal) {
+                const idInicial = pecaInicialOriginal.id;
+                console.log(`Primeiro a jogar: ${turnoAtual} com a peça ${idInicial}`);
+                atualizarStatus(`Início da Partida. ${turnoAtual === JOGADOR ? 'Você começa' : 'IA começa'} com ${idInicial}.`);
+
+                pecaSelecionada = null; // Garante que nada está selecionado
+                jogoAcabou = false;
+                jogadorPodeInteragir = false; // Interação só começa após a primeira peça ser colocada
+
+                // Usa setTimeout para colocar a primeira peça após um pequeno delay (visual)
+                setTimeout(() => {
+                    // Chama realizarJogada com 'quem = null' para indicar a jogada inicial
+                    realizarJogada(null, pecaInicialOriginal, null);
+                }, 200); // 200ms de delay
+
+            } else {
+                // Não deveria acontecer se a lógica anterior estiver correta
+                alert("Erro crítico: Não foi possível obter a peça inicial.");
+            }
+        }
+
+        // --- Listeners ---
+        canvas.addEventListener('click', handleMouseClick);
+        canvas.addEventListener('mousemove', verificarHover); // Para feedback visual (cursor, botão)
+        window.addEventListener('resize', () => {
+             // Reinicia o jogo ao redimensionar para recalcular tudo
+             console.log("Window resized, restarting game...");
+             iniciarJogo();
+        });
+        window.onload = iniciarJogo; // Inicia o jogo quando a página carrega
+
+    </script>
+</body>
+</html>

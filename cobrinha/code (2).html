@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jogo da Cobrinha Pixelado com IA (Anti-Loop v4 - Correção Syntax)</title>
+    <style>
+        /* CSS Mantido Igual */
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding-top: 20px;
+            margin: 0;
+            background-color: #1a1a2e;
+            font-family: 'Courier New', Courier, monospace;
+            color: #e0f2e9;
+            flex-wrap: wrap;
+        }
+
+        canvas {
+            border: 5px solid #4e4e8e;
+            background-color: #2a2a4a;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            box-shadow: 0 0 15px rgba(128, 128, 255, 0.4);
+            margin: 10px;
+        }
+
+        #game-container,
+        #nn-container,
+        #controls-container {
+            text-align: center;
+            margin: 10px;
+            padding: 15px;
+            background-color: #2a2a4a;
+            border: 2px solid #4e4e8e;
+            border-radius: 8px;
+        }
+
+        #info,
+        #ai-info {
+            margin-bottom: 10px;
+            font-size: 1.1em;
+            color: #a2d5f2;
+        }
+
+        #instructions,
+        #ai-instructions {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #bbb;
+        }
+
+        button {
+            background-color: #4e4e8e;
+            color: #e0f2e9;
+            border: 2px solid #a2d5f2;
+            padding: 8px 15px;
+            margin: 5px;
+            font-family: inherit;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        button:hover {
+            background-color: #6a6aaf;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        #nnCanvas {
+            background-color: #353555;
+        }
+
+        .neuron {
+            transition: fill 0.1s ease-in-out;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- HTML Mantido Igual -->
+    <div id="game-container">
+        <h2>Jogo</h2>
+        <div id="info"> Modo: <span id="mode">Jogador</span> | Pontos: <span id="score">0</span> | Nível: <span id="level">1</span> | Recorde (Jogador): <span id="highScore">0</span>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="instructions"> Use as Setas para mover (Modo Jogador). </div>
+    </div>
+    <div id="nn-container">
+        <h2>Visualizador da Rede Neural</h2>
+        <canvas id="nnCanvas"></canvas>
+        <div id="ai-instructions"> Círculos representam neurônios. Cor indica ativação (escuro=baixo, claro=alto). </div>
+    </div>
+    <div id="controls-container">
+        <h2>Controles & Treinamento IA</h2>
+        <div id="ai-info"> Geração: <span id="generation">0</span> | Melhor Fitness (Geral): <span id="bestFitness">0</span> | Fitness Atual: <span id="currentFitness">0</span>
+            <br> Melhor NN Salvo? <span id="savedStatus">Não</span>
+        </div>
+        <button id="playerModeBtn">Modo Jogador</button>
+        <button id="aiModeBtn">Rodar Melhor IA</button>
+        <button id="trainBtn">Iniciar Treinamento</button>
+        <button id="stopTrainBtn" disabled>Parar Treinamento</button>
+        <button id="saveNNBtn" disabled>Salvar Melhor NN</button>
+        <button id="loadNNBtn">Carregar NN Salvo</button>
+        <button id="exportNNBtn" disabled>Exportar Melhor NN</button>
+        <button id="clearNNBtn">Limpar NN Salvo</button>
+        <input type="file" id="importNNInput" accept=".json" style="display: none;">
+        <button id="importNNBtn">Importar NN (.json)</button>
+        <br>
+        <label for="speedRange">Velocidade Simulação:</label>
+        <input type="range" id="speedRange" min="1" max="200" value="50">
+        <span id="speedValue">50</span>ms
+    </div>
+    <script>
+        // --- Elementos DOM (Mantidos) ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const nnCanvas = document.getElementById('nnCanvas');
+        const nnCtx = nnCanvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const levelElement = document.getElementById('level');
+        const highScoreElement = document.getElementById('highScore');
+        const modeElement = document.getElementById('mode');
+        const generationElement = document.getElementById('generation');
+        const bestFitnessElement = document.getElementById('bestFitness');
+        const currentFitnessElement = document.getElementById('currentFitness');
+        const savedStatusElement = document.getElementById('savedStatus');
+        const playerModeBtn = document.getElementById('playerModeBtn');
+        const aiModeBtn = document.getElementById('aiModeBtn');
+        const trainBtn = document.getElementById('trainBtn');
+        const stopTrainBtn = document.getElementById('stopTrainBtn');
+        const saveNNBtn = document.getElementById('saveNNBtn');
+        const loadNNBtn = document.getElementById('loadNNBtn');
+        const exportNNBtn = document.getElementById('exportNNBtn');
+        const clearNNBtn = document.getElementById('clearNNBtn');
+        const importNNInput = document.getElementById('importNNInput');
+        const importNNBtn = document.getElementById('importNNBtn');
+        const speedRange = document.getElementById('speedRange');
+        const speedValue = document.getElementById('speedValue');
+        // --- Configs Jogo, IA, NN, Anti-Loop (Mantidas) ---
+        const GRID_SIZE = 20;
+        const GRID_WIDTH = 20;
+        const GRID_HEIGHT = 16;
+        const CANVAS_WIDTH = GRID_SIZE * GRID_WIDTH;
+        const CANVAS_HEIGHT = GRID_SIZE * GRID_HEIGHT;
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+        const COLOR_BACKGROUND_DARK = "#3b3b58";
+        const COLOR_BACKGROUND_LIGHT = "#4f4f76";
+        const COLOR_SNAKE_HEAD = "#ff6b6b";
+        const COLOR_SNAKE_BODY = "#ff8e71";
+        const COLOR_SNAKE_SHADOW = "#c44d4d";
+        const COLOR_FOOD = "#86ff70";
+        const COLOR_FOOD_SHADOW = "#5db04d";
+        const COLOR_EYE = "#ffffff";
+        const COLOR_PUPIL = "#000000";
+        const COLOR_GAME_OVER_BG = "rgba(42, 42, 74, 0.8)";
+        const COLOR_GAME_OVER_TEXT = "#ffdd59";
+        const COLOR_SHADOW_OFFSET = Math.max(1, Math.floor(GRID_SIZE * 0.1));
+        const NN_INPUT_NODES = 8;
+        const NN_HIDDEN_NODES = 12;
+        const NN_OUTPUT_NODES = 3;
+        const NN_VIS_WIDTH = 300;
+        const NN_VIS_HEIGHT = CANVAS_HEIGHT;
+        const NN_NEURON_RADIUS = 8;
+        const NN_LAYER_SPACING = 80;
+        const NN_NEURON_SPACING_V = 25;
+        nnCanvas.width = NN_VIS_WIDTH;
+        nnCanvas.height = NN_VIS_HEIGHT;
+        const GA_POPULATION_SIZE = 50;
+        const GA_MUTATION_RATE = 0.1;
+        const GA_MUTATION_AMOUNT = 0.2;
+        const GA_ELITISM_COUNT = 2;
+        const LOOP_DETECTION_WINDOW = 20;
+        const LOOP_DETECTION_THRESHOLD = 5;
+        const LOOP_PUNISHMENT = -120;
+        // --- Estado Jogo & IA (Mantidos) ---
+        let snake;
+        let food;
+        let direction;
+        let nextDirection;
+        let score;
+        let level;
+        let gameInterval;
+        let isGameOver;
+        let baseSpeed = 150;
+        let highScore = localStorage.getItem('snakeHighScorePixelPlayer') || 0;
+        let foodPulseState = 0;
+        let gameMode = 'player';
+        let simulationSpeed = 50;
+        let gameTimer = 0;
+        let maxIdleSteps = GRID_WIDTH * GRID_HEIGHT;
+        let stepsSinceLastFood = 0;
+        let positionHistory = [];
+        let nn;
+        let population = [];
+        let currentGeneration = 0;
+        let bestFitness = -Infinity;
+        let bestNNWeights = null;
+        let currentFitness = 0;
+        let isTraining = false;
+        let currentGenomeIndex = 0;
+        // --- Classe NeuralNetwork (DESCOMPRIMIDA) ---
+        class NeuralNetwork {
+            constructor(inputNodes, hiddenNodes, outputNodes, weights = null) {
+                this.inputNodes = inputNodes;
+                this.hiddenNodes = hiddenNodes;
+                this.outputNodes = outputNodes;
+                if (weights) {
+                    this.weights_ih = weights.ih; // Input -> Hidden
+                    this.weights_ho = weights.ho; // Hidden -> Output
+                    this.bias_h = weights.bh; // Bias Hidden
+                    this.bias_o = weights.bo; // Bias Output
+                } else {
+                    // Inicializar pesos e biases aleatoriamente (-1 a 1)
+                    this.weights_ih = this.randomMatrix(this.hiddenNodes, this.inputNodes);
+                    this.weights_ho = this.randomMatrix(this.outputNodes, this.hiddenNodes);
+                    this.bias_h = this.randomMatrix(this.hiddenNodes, 1);
+                    this.bias_o = this.randomMatrix(this.outputNodes, 1);
+                }
+                // Para visualização
+                this.input_activations = new Array(inputNodes).fill(0);
+                this.hidden_activations = new Array(hiddenNodes).fill(0);
+                this.output_activations = new Array(outputNodes).fill(0);
+            }
+            // Função de ativação Sigmoid
+            sigmoid(x) {
+                return 1 / (1 + Math.exp(-x));
+            }
+            randomMatrix(rows, cols) {
+                let matrix = [];
+                for (let i = 0; i < rows; i++) {
+                    matrix[i] = [];
+                    for (let j = 0; j < cols; j++) {
+                        matrix[i][j] = Math.random() * 2 - 1; // Valores entre -1 e 1
+                    }
+                }
+                return matrix;
+            }
+            feedForward(inputArray) {
+                if (inputArray.length !== this.inputNodes) {
+                    console.error(`Input array length (${inputArray.length}) does not match NN input nodes (${this.inputNodes})`);
+                    return new Array(this.outputNodes).fill(0);
+                }
+                this.input_activations = [...inputArray]; // Guarda para visualização
+                // --- Input -> Hidden ---
+                let hidden = this.matrixMultiply(this.weights_ih, this.arrayToMatrix(inputArray));
+                hidden = this.matrixAdd(hidden, this.bias_h);
+                for (let i = 0; i < hidden.length; i++) {
+                    hidden[i][0] = this.sigmoid(hidden[i][0]);
+                }
+                this.hidden_activations = hidden.flat(); // Guarda para visualização
+                // --- Hidden -> Output ---
+                let output = this.matrixMultiply(this.weights_ho, hidden);
+                output = this.matrixAdd(output, this.bias_o);
+                for (let i = 0; i < output.length; i++) {
+                    output[i][0] = this.sigmoid(output[i][0]);
+                }
+                this.output_activations = output.flat(); // Guarda para visualização
+                return this.output_activations; // Retorna array plano
+            }
+            // --- Funções Auxiliares de Matriz ---
+            arrayToMatrix(arr) {
+                return arr.map(e => [e]); // Cria matriz coluna
+            }
+            matrixMultiply(m1, m2) {
+                const rows1 = m1.length;
+                const cols1 = m1[0].length;
+                const rows2 = m2.length;
+                const cols2 = m2[0].length;
+                if (cols1 !== rows2) {
+                    console.error("Matrix multiplication dimension mismatch");
+                    return null;
+                }
+                let result = new Array(rows1).fill(0).map(() => new Array(cols2).fill(0));
+                for (let i = 0; i < rows1; i++) {
+                    for (let j = 0; j < cols2; j++) {
+                        let sum = 0;
+                        for (let k = 0; k < cols1; k++) {
+                            sum += m1[i][k] * m2[k][j];
+                        }
+                        result[i][j] = sum;
+                    }
+                }
+                return result;
+            }
+            matrixAdd(m1, m2) {
+                const rows = m1.length;
+                const cols = m1[0].length;
+                if (rows !== m2.length || cols !== m2[0].length) {
+                    console.error("Matrix addition dimension mismatch");
+                    return null;
+                }
+                let result = new Array(rows).fill(0).map(() => new Array(cols).fill(0));
+                for (let i = 0; i < rows; i++) {
+                    for (let j = 0; j < cols; j++) {
+                        result[i][j] = m1[i][j] + m2[i][j];
+                    }
+                }
+                return result;
+            }
+            // --- Funções para GA ---
+            getWeights() {
+                return {
+                    ih: this.weights_ih,
+                    ho: this.weights_ho,
+                    bh: this.bias_h,
+                    bo: this.bias_o
+                };
+            }
+            mutate(rate, amount) {
+                const mutateMatrix = (matrix) => {
+                    return matrix.map(row => row.map(val => Math.random() < rate ? val + (Math.random() * 2 - 1) * amount : val));
+                };
+                let newWeights = {
+                    ih: mutateMatrix(this.weights_ih),
+                    ho: mutateMatrix(this.weights_ho),
+                    bh: mutateMatrix(this.bias_h),
+                    bo: mutateMatrix(this.bias_o)
+                };
+                return new NeuralNetwork(this.inputNodes, this.hiddenNodes, this.outputNodes, newWeights);
+            }
+            crossover(partner) {
+                const crossoverMatrix = (m1, m2) => {
+                    const rows = m1.length;
+                    const cols = m1[0].length;
+                    let childMatrix = new Array(rows).fill(0).map(() => new Array(cols).fill(0));
+                    const cutPointRow = Math.floor(Math.random() * rows);
+                    const cutPointCol = Math.floor(Math.random() * cols);
+                    for (let i = 0; i < rows; i++) {
+                        for (let j = 0; j < cols; j++) {
+                            if (i < cutPointRow || (i === cutPointRow && j <= cutPointCol)) {
+                                childMatrix[i][j] = m1[i][j];
+                            } else {
+                                childMatrix[i][j] = m2[i][j];
+                            }
+                        }
+                    }
+                    return childMatrix;
+                };
+                let childWeights = {
+                    ih: crossoverMatrix(this.weights_ih, partner.weights_ih),
+                    ho: crossoverMatrix(this.weights_ho, partner.weights_ho),
+                    bh: crossoverMatrix(this.bias_h, partner.bias_h),
+                    bo: crossoverMatrix(this.bias_o, partner.bias_o)
+                };
+                return new NeuralNetwork(this.inputNodes, this.hiddenNodes, this.outputNodes, childWeights);
+            }
+        } // <--- FECHAMENTO DA CLASSE NN
+        // --- Funções de Desenho (Jogo - DESCOMPRIMIDAS) ---
+        function drawTile(ctx, gridX, gridY, color, shadowColor) {
+            const pixelX = gridX * GRID_SIZE;
+            const pixelY = gridY * GRID_SIZE;
+            if (shadowColor) {
+                ctx.fillStyle = shadowColor;
+                ctx.fillRect(pixelX + COLOR_SHADOW_OFFSET, pixelY + COLOR_SHADOW_OFFSET, GRID_SIZE, GRID_SIZE);
+            }
+            ctx.fillStyle = color;
+            ctx.fillRect(pixelX, pixelY, GRID_SIZE, GRID_SIZE);
+        }
+
+        function drawEyes(ctx, headX, headY, currentDirection) {
+            const eyeSize = Math.max(2, Math.floor(GRID_SIZE * 0.2));
+            const pupilSize = Math.max(1, Math.floor(eyeSize * 0.5));
+            const eyeOffsetX = Math.floor(GRID_SIZE * 0.25);
+            const eyeOffsetY = Math.floor(GRID_SIZE * 0.25);
+            const pixelX = headX * GRID_SIZE;
+            const pixelY = headY * GRID_SIZE;
+            let pupilShiftX = 0;
+            let pupilShiftY = 0;
+            switch (currentDirection) {
+                case 'up':
+                    pupilShiftY = -Math.floor(eyeSize * 0.2);
+                    break;
+                case 'down':
+                    pupilShiftY = Math.floor(eyeSize * 0.2);
+                    break;
+                case 'left':
+                    pupilShiftX = -Math.floor(eyeSize * 0.2);
+                    break;
+                case 'right':
+                    pupilShiftX = Math.floor(eyeSize * 0.2);
+                    break;
+            }
+            ctx.fillStyle = COLOR_EYE;
+            ctx.fillRect(pixelX + eyeOffsetX - eyeSize / 2, pixelY + eyeOffsetY - eyeSize / 2, eyeSize, eyeSize);
+            ctx.fillStyle = COLOR_PUPIL;
+            ctx.fillRect(pixelX + eyeOffsetX - pupilSize / 2 + pupilShiftX, pixelY + eyeOffsetY - pupilSize / 2 + pupilShiftY, pupilSize, pupilSize);
+            const eye2OffsetX = GRID_SIZE - eyeOffsetX;
+            ctx.fillStyle = COLOR_EYE;
+            ctx.fillRect(pixelX + eye2OffsetX - eyeSize / 2, pixelY + eyeOffsetY - eyeSize / 2, eyeSize, eyeSize);
+            ctx.fillStyle = COLOR_PUPIL;
+            ctx.fillRect(pixelX + eye2OffsetX - pupilSize / 2 + pupilShiftX, pixelY + eyeOffsetY - pupilSize / 2 + pupilShiftY, pupilSize, pupilSize);
+        }
+
+        function drawSnake(ctx, snakeToDraw, currentDirection) {
+            for (let i = 1; i < snakeToDraw.length; i++) {
+                drawTile(ctx, snakeToDraw[i].x, snakeToDraw[i].y, COLOR_SNAKE_BODY, COLOR_SNAKE_SHADOW);
+            }
+            if (snakeToDraw.length > 0) {
+                drawTile(ctx, snakeToDraw[0].x, snakeToDraw[0].y, COLOR_SNAKE_HEAD, COLOR_SNAKE_SHADOW);
+                drawEyes(ctx, snakeToDraw[0].x, snakeToDraw[0].y, currentDirection);
+            }
+        }
+
+        function drawFood(ctx, foodToDraw) {
+            if (!foodToDraw) return;
+            const pulseAmount = Math.sin(foodPulseState) * (GRID_SIZE * 0.1);
+            const currentSize = GRID_SIZE - pulseAmount * 2;
+            const offset = pulseAmount;
+            const pixelX = foodToDraw.x * GRID_SIZE;
+            const pixelY = foodToDraw.y * GRID_SIZE;
+            ctx.fillStyle = COLOR_FOOD_SHADOW;
+            ctx.fillRect(pixelX + COLOR_SHADOW_OFFSET, pixelY + COLOR_SHADOW_OFFSET, GRID_SIZE, GRID_SIZE);
+            ctx.fillStyle = COLOR_FOOD;
+            ctx.fillRect(pixelX + offset, pixelY + offset, currentSize, currentSize);
+            const innerSize = currentSize * 0.5;
+            const innerOffset = (currentSize - innerSize) / 2;
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillRect(pixelX + offset + innerOffset, pixelY + offset + innerOffset, innerSize, innerSize);
+            foodPulseState += 0.15;
+            if (foodPulseState > Math.PI * 2) foodPulseState = 0;
+        }
+
+        function drawBackground(ctx) {
+            for (let y = 0; y < GRID_HEIGHT; y++) {
+                for (let x = 0; x < GRID_WIDTH; x++) {
+                    const color = (x + y) % 2 === 0 ? COLOR_BACKGROUND_DARK : COLOR_BACKGROUND_LIGHT;
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x * GRID_SIZE, y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+                }
+            }
+        }
+
+        function drawGameOver(ctx, finalScore) {
+            ctx.fillStyle = COLOR_GAME_OVER_BG;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            ctx.font = `bold ${Math.floor(CANVAS_WIDTH / 12)}px 'Courier New',Courier,monospace`;
+            ctx.fillStyle = COLOR_GAME_OVER_TEXT;
+            ctx.textAlign = "center";
+            ctx.fillText("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+            ctx.font = `${Math.floor(CANVAS_WIDTH / 20)}px 'Courier New',Courier,monospace`;
+            ctx.fillStyle = "#e0f2e9";
+            ctx.fillText(`Pontos: ${finalScore}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+            if (gameMode === 'player') {
+                ctx.font = `${Math.floor(CANVAS_WIDTH / 25)}px 'Courier New',Courier,monospace`;
+                ctx.fillText("Pressione ESPAÇO para reiniciar", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+            }
+        }
+        // --- Funções de Desenho (Visualizador NN - DESCOMPRIMIDO) ---
+        function drawNN(nnToDraw) {
+            nnCtx.clearRect(0, 0, NN_VIS_WIDTH, NN_VIS_HEIGHT);
+            nnCtx.fillStyle = "#353555";
+            nnCtx.fillRect(0, 0, NN_VIS_WIDTH, NN_VIS_HEIGHT);
+            if (!nnToDraw) return;
+            const layerHeights = {
+                input: NN_VIS_HEIGHT / (nnToDraw.inputNodes + 1),
+                hidden: NN_VIS_HEIGHT / (nnToDraw.hiddenNodes + 1),
+                output: NN_VIS_HEIGHT / (nnToDraw.outputNodes + 1)
+            };
+            const layerPosX = {
+                input: NN_LAYER_SPACING / 2,
+                hidden: NN_LAYER_SPACING / 2 + NN_LAYER_SPACING,
+                output: NN_LAYER_SPACING / 2 + 2 * NN_LAYER_SPACING
+            };
+            const getActivationColor = (v) => {
+                const i = Math.round(50 + 205 * v);
+                return `rgb(${i},${i},${i})`;
+            };
+            nnCtx.strokeStyle = "rgba(180, 180, 200, 0.3)";
+            nnCtx.lineWidth = 1;
+            // Input -> Hidden
+            for (let i = 0; i < nnToDraw.inputNodes; i++) {
+                for (let j = 0; j < nnToDraw.hiddenNodes; j++) {
+                    nnCtx.beginPath();
+                    nnCtx.moveTo(layerPosX.input, layerHeights.input * (i + 1));
+                    nnCtx.lineTo(layerPosX.hidden, layerHeights.hidden * (j + 1));
+                    nnCtx.stroke();
+                }
+            }
+            // Hidden -> Output
+            for (let i = 0; i < nnToDraw.hiddenNodes; i++) {
+                for (let j = 0; j < nnToDraw.outputNodes; j++) {
+                    nnCtx.beginPath();
+                    nnCtx.moveTo(layerPosX.hidden, layerHeights.hidden * (i + 1));
+                    nnCtx.lineTo(layerPosX.output, layerHeights.output * (j + 1));
+                    nnCtx.stroke();
+                }
+            }
+            nnCtx.lineWidth = 2;
+            // Input Layer
+            for (let i = 0; i < nnToDraw.inputNodes; i++) {
+                nnCtx.beginPath();
+                nnCtx.arc(layerPosX.input, layerHeights.input * (i + 1), NN_NEURON_RADIUS, 0, Math.PI * 2);
+                nnCtx.fillStyle = getActivationColor(nnToDraw.input_activations[i] || 0);
+                nnCtx.strokeStyle = "#a2d5f2";
+                nnCtx.fill();
+                nnCtx.stroke();
+            }
+            // Hidden Layer
+            for (let i = 0; i < nnToDraw.hiddenNodes; i++) {
+                nnCtx.beginPath();
+                nnCtx.arc(layerPosX.hidden, layerHeights.hidden * (i + 1), NN_NEURON_RADIUS, 0, Math.PI * 2);
+                nnCtx.fillStyle = getActivationColor(nnToDraw.hidden_activations[i] || 0);
+                nnCtx.strokeStyle = "#a2d5f2";
+                nnCtx.fill();
+                nnCtx.stroke();
+            }
+            // Output Layer
+            for (let i = 0; i < nnToDraw.outputNodes; i++) {
+                nnCtx.beginPath();
+                nnCtx.arc(layerPosX.output, layerHeights.output * (i + 1), NN_NEURON_RADIUS, 0, Math.PI * 2);
+                nnCtx.fillStyle = getActivationColor(nnToDraw.output_activations[i] || 0);
+                nnCtx.strokeStyle = "#ffdd59";
+                nnCtx.fill();
+                nnCtx.stroke();
+            }
+        }
+        // --- Lógica do Jogo (resetGameState, moveSnake, etc. - Mantidas) ---
+        function resetGameState() {
+            snake = [{
+                x: Math.floor(GRID_WIDTH / 3),
+                y: Math.floor(GRID_HEIGHT / 2)
+            }, {
+                x: Math.floor(GRID_WIDTH / 3) - 1,
+                y: Math.floor(GRID_HEIGHT / 2)
+            },];
+            direction = 'right';
+            nextDirection = null;
+            score = 0;
+            level = 1;
+            foodPulseState = 0;
+            gameTimer = 0;
+            stepsSinceLastFood = 0;
+            currentFitness = 0;
+            positionHistory = [];
+            generateFood();
+            isGameOver = false;
+        }
+
+        function moveSnake() {
+            if (isGameOver) return;
+            let mD = direction;
+            if (gameMode === 'player' && nextDirection) {
+                if ((nextDirection === 'up' && direction !== 'down') || (nextDirection === 'down' && direction !== 'up') || (nextDirection === 'left' && direction !== 'right') || (nextDirection === 'right' && direction !== 'left')) {
+                    mD = nextDirection;
+                }
+                nextDirection = null;
+            } else if (gameMode === 'ai' || gameMode === 'training') {
+                if (!nn) {
+                    console.warn("AI sem NN.");
+                    return;
+                }
+                mD = getAIDirection(nn);
+            }
+            direction = mD;
+            let h = {
+                ...snake[0]
+            };
+            switch (direction) {
+                case 'up':
+                    h.y -= 1;
+                    break;
+                case 'down':
+                    h.y += 1;
+                    break;
+                case 'left':
+                    h.x -= 1;
+                    break;
+                case 'right':
+                    h.x += 1;
+                    break;
+            }
+            gameTimer++;
+            stepsSinceLastFood++;
+            snake.unshift(h);
+            let aF = false;
+            if (h.x === food.x && h.y === food.y) {
+                score += 10;
+                currentFitness += 100;
+                stepsSinceLastFood = 0;
+                positionHistory = [];
+                aF = true;
+                if (gameMode === 'player' && score % 50 === 0) {
+                    level++;
+                }
+                updateGameInfo();
+                generateFood();
+            } else {
+                snake.pop();
+                currentFitness += 1;
+            }
+            if (!aF && (gameMode === 'ai' || gameMode === 'training')) {
+                const cPS = `${h.x},${h.y}`;
+                positionHistory.push(cPS);
+                if (positionHistory.length > LOOP_DETECTION_WINDOW) {
+                    positionHistory.shift();
+                }
+                if (positionHistory.length === LOOP_DETECTION_WINDOW) {
+                    let vC = 0;
+                    for (const p of positionHistory) {
+                        if (p === cPS) {
+                            vC++;
+                        }
+                    }
+                    if (vC >= LOOP_DETECTION_THRESHOLD) {
+                        console.log(`Loop! G:${currentGeneration} I:${currentGenomeIndex} P:${cPS} C:${vC}`);
+                        currentFitness += LOOP_PUNISHMENT;
+                        gameOver();
+                        return;
+                    }
+                }
+            }
+            if (stepsSinceLastFood > maxIdleSteps) {
+                console.log(`Inanição! G:${currentGeneration} I:${currentGenomeIndex} S:${stepsSinceLastFood}`);
+                currentFitness -= 50;
+                gameOver();
+            }
+        }
+
+        function checkCollision() {
+            if (!snake || snake.length === 0) return false;
+            const h = snake[0];
+            if (h.x < 0 || h.x >= GRID_WIDTH || h.y < 0 || h.y >= GRID_HEIGHT) {
+                return true;
+            }
+            for (let i = 1; i < snake.length; i++) {
+                if (h.x === snake[i].x && h.y === snake[i].y) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function generateFood() {
+            let nFP;
+            let att = 0;
+            const maxAtt = GRID_WIDTH * GRID_HEIGHT;
+            do {
+                nFP = {
+                    x: Math.floor(Math.random() * GRID_WIDTH),
+                    y: Math.floor(Math.random() * GRID_HEIGHT)
+                };
+                att++;
+            } while (isFoodOnSnake(nFP) && att < maxAtt);
+            if (att >= maxAtt) {
+                console.warn("Não gerar comida.");
+                gameOver();
+            } else {
+                food = nFP;
+            }
+        }
+
+        function isFoodOnSnake(p) {
+            if (!snake) return false;
+            return snake.some(s => s.x === p.x && s.y === p.y);
+        }
+
+        function updateGameInfo() {
+            modeElement.textContent = gameMode.charAt(0).toUpperCase() + gameMode.slice(1);
+            scoreElement.textContent = score;
+            levelElement.textContent = level;
+            highScoreElement.textContent = highScore;
+            currentFitnessElement.textContent = Math.round(currentFitness);
+            generationElement.textContent = currentGeneration;
+            bestFitnessElement.textContent = Math.round(bestFitness);
+            checkSavedStatus();
+        }
+
+        function gameLoop() {
+            if (isGameOver && (gameMode === 'ai' || gameMode === 'training')) {
+                handleEndOfSimulation();
+                return;
+            }
+            if (isGameOver && gameMode === 'player') {
+                return;
+            }
+            drawBackground(ctx);
+            moveSnake();
+            if (isGameOver) {
+                if (gameMode === 'ai' || gameMode === 'training') handleEndOfSimulation();
+                return;
+            }
+            if (checkCollision()) {
+                currentFitness -= 150;
+                gameOver();
+                if (gameMode === 'ai' || gameMode === 'training') handleEndOfSimulation();
+                return;
+            }
+            if (food) drawFood(ctx, food);
+            if (snake) drawSnake(ctx, snake, direction);
+            if ((gameMode === 'ai' || gameMode === 'training') && nn) {
+                drawNN(nn);
+            } else {
+                nnCtx.clearRect(0, 0, NN_VIS_WIDTH, NN_VIS_HEIGHT);
+                nnCtx.fillStyle = "#353555";
+                nnCtx.fillRect(0, 0, NN_VIS_WIDTH, NN_VIS_HEIGHT);
+                nnCtx.fillStyle = "#888";
+                nnCtx.textAlign = "center";
+                nnCtx.font = "14px 'Courier New'";
+                nnCtx.fillText("Visualizador Inativo", NN_VIS_WIDTH / 2, NN_VIS_HEIGHT / 2);
+            }
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            if (gameMode === 'player') {
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('snakeHighScorePixelPlayer', highScore);
+                }
+                updateGameInfo();
+                drawGameOver(ctx, score);
+                stopGameLoop();
+            }
+        }
+
+        function startGameLoop() {
+            stopGameLoop();
+            let lS = (gameMode === 'player') ? baseSpeed : simulationSpeed;
+            gameInterval = setInterval(gameLoop, lS);
+        }
+
+        function stopGameLoop() {
+            clearInterval(gameInterval);
+            gameInterval = null;
+        }
+
+        function handleEndOfSimulation() {
+            stopGameLoop();
+            if (gameMode === 'training') {
+                population[currentGenomeIndex].fitness = currentFitness;
+                currentGenomeIndex++;
+                if (currentGenomeIndex < GA_POPULATION_SIZE) {
+                    startSimulation(population[currentGenomeIndex]);
+                } else {
+                    evolvePopulation();
+                    if (isTraining) {
+                        currentGenomeIndex = 0;
+                        startSimulation(population[currentGenomeIndex]);
+                    } else {
+                        console.log("Treino parado pós-gen.");
+                        updateUIState();
+                    }
+                }
+            } else if (gameMode === 'ai') {
+                drawGameOver(ctx, score);
+                console.log("AI fim. Fitness:", currentFitness);
+                updateUIState();
+            }
+        }
+        // --- Lógica da IA (getAIInputs, getAIDirection - Mantidas) ---
+        function getAIInputs() {
+            if (!snake || snake.length === 0 || !food) {
+                return new Array(NN_INPUT_NODES).fill(0);
+            }
+            const h = snake[0];
+            const ipts = new Array(NN_INPUT_NODES).fill(0);
+            let cA = {
+                ...h
+            };
+            let cL = {
+                ...h
+            };
+            let cR = {
+                ...h
+            };
+            let dx = 0,
+                dy = 0;
+            switch (direction) {
+                case 'up':
+                    dy = -1;
+                    cA.y -= 1;
+                    cL.x -= 1;
+                    cR.x += 1;
+                    break;
+                case 'down':
+                    dy = 1;
+                    cA.y += 1;
+                    cL.x += 1;
+                    cR.x -= 1;
+                    break;
+                case 'left':
+                    dx = -1;
+                    cA.x -= 1;
+                    cL.y += 1;
+                    cR.y -= 1;
+                    break;
+                case 'right':
+                    dx = 1;
+                    cA.x += 1;
+                    cL.y -= 1;
+                    cR.y += 1;
+                    break;
+            }
+            const iD = (c) => {
+                if (c.x < 0 || c.x >= GRID_WIDTH || c.y < 0 || c.y >= GRID_HEIGHT) {
+                    return 1;
+                }
+                for (let i = 1; i < snake.length; i++) {
+                    if (snake[i].x === c.x && snake[i].y === c.y) {
+                        return 1;
+                    }
+                }
+                return 0;
+            };
+            ipts[0] = iD(cA);
+            ipts[1] = iD(cL);
+            ipts[2] = iD(cR);
+            const fV = {
+                x: food.x - h.x,
+                y: food.y - h.y
+            };
+            const dot = dx * fV.x + dy * fV.y;
+            const cross = dx * fV.y - dy * fV.x;
+            if (dot > 0) ipts[3] = 1;
+            if (cross > 0) ipts[4] = 1;
+            if (cross < 0) ipts[5] = 1;
+            ipts[6] = dx;
+            ipts[7] = dy;
+            return ipts;
+        }
+
+        function getAIDirection(cNN) {
+            const ipts = getAIInputs();
+            const outs = cNN.feedForward(ipts);
+            let maxA = -Infinity;
+            let bAI = 1;
+            for (let i = 0; i < outs.length; i++) {
+                if (outs[i] > maxA) {
+                    maxA = outs[i];
+                    bAI = i;
+                }
+            }
+            let nD = direction;
+            const dirs = ['up', 'right', 'down', 'left'];
+            const cDI = dirs.indexOf(direction);
+            if (bAI === 0) {
+                nD = dirs[(cDI + 3) % 4];
+            } else if (bAI === 2) {
+                nD = dirs[(cDI + 1) % 4];
+            }
+            return nD;
+        }
+        // --- Lógica GA (initializePopulation, evolvePopulation - Mantidas) ---
+        function initializePopulation() {
+            population = [];
+            let lW = loadNNFromStorage();
+            let bN = null;
+            if (lW) {
+                console.log("População a partir do NN salvo.");
+                bN = new NeuralNetwork(NN_INPUT_NODES, NN_HIDDEN_NODES, NN_OUTPUT_NODES, lW);
+                population.push(bN);
+                for (let i = 1; i < GA_POPULATION_SIZE; i++) {
+                    population.push(bN.mutate(GA_MUTATION_RATE * 1.5, GA_MUTATION_AMOUNT * 1.5));
+                }
+            } else {
+                console.log("População aleatória.");
+                for (let i = 0; i < GA_POPULATION_SIZE; i++) {
+                    population.push(new NeuralNetwork(NN_INPUT_NODES, NN_HIDDEN_NODES, NN_OUTPUT_NODES));
+                }
+                bestFitness = -Infinity;
+                bestNNWeights = null;
+            }
+            currentGeneration = 0;
+            currentGenomeIndex = 0;
+            updateGameInfo();
+        }
+
+        function startSimulation(iNN) {
+            stopGameLoop();
+            nn = iNN;
+            resetGameState();
+            startGameLoop();
+        }
+
+        function evolvePopulation() {
+            population.sort((a, b) => (b.fitness ?? -Infinity) - (a.fitness ?? -Infinity));
+            if (population.length > 0 && (population[0].fitness ?? -Infinity) > bestFitness) {
+                bestFitness = population[0].fitness;
+                bestNNWeights = population[0].getWeights();
+                console.log(`Nova melhor fitness G:${currentGeneration}: ${bestFitness}`);
+                updateUIState();
+            }
+            let nP = [];
+            for (let i = 0; i < GA_ELITISM_COUNT && i < population.length; i++) {
+                nP.push(new NeuralNetwork(NN_INPUT_NODES, NN_HIDDEN_NODES, NN_OUTPUT_NODES, population[i].getWeights()));
+            }
+            let pool = population.slice(0, Math.max(1, Math.floor(GA_POPULATION_SIZE * 0.4)));
+            while (nP.length < GA_POPULATION_SIZE) {
+                let pA = pool[Math.floor(Math.random() * pool.length)];
+                let pB = pool[Math.floor(Math.random() * pool.length)];
+                let c = pA.crossover(pB);
+                c = c.mutate(GA_MUTATION_RATE, GA_MUTATION_AMOUNT);
+                nP.push(c);
+            }
+            population = nP;
+            currentGeneration++;
+            updateGameInfo();
+        }
+        // --- Funções de Controle e UI (Mantidas) ---
+        function setMode(nM) {
+            gameMode = nM;
+            isGameOver = false;
+            stopGameLoop();
+            stopTraining();
+            if (gameMode === 'player') {
+                nn = null;
+                resetGameState();
+                updateGameInfo();
+                drawBackground(ctx);
+                drawSnake(ctx, snake, direction);
+                drawFood(ctx, food);
+                startGameLoop();
+                nnCtx.clearRect(0, 0, NN_VIS_WIDTH, NN_VIS_HEIGHT);
+            } else if (gameMode === 'ai') {
+                if (!bestNNWeights) {
+                    alert("Nenhuma IA treinada/carregada.");
+                    setMode('player');
+                    return;
+                }
+                nn = new NeuralNetwork(NN_INPUT_NODES, NN_HIDDEN_NODES, NN_OUTPUT_NODES, bestNNWeights);
+                startSimulation(nn);
+            } else if (gameMode === 'training') {
+                startTraining();
+            }
+            updateUIState();
+        }
+
+        function startTraining() {
+            if (isTraining) return;
+            isTraining = true;
+            gameMode = 'training';
+            console.log("Iniciando treinamento...");
+            initializePopulation();
+            if (population.length > 0) {
+                currentGenomeIndex = 0;
+                startSimulation(population[currentGenomeIndex]);
+            } else {
+                console.error("Falha init pop.");
+                isTraining = false;
+            }
+            updateUIState();
+        }
+
+        function stopTraining() {
+            if (!isTraining) return;
+            isTraining = false;
+            console.log("Parando treinamento...");
+            stopGameLoop();
+            updateUIState();
+        }
+
+        function updateUIState() {
+            playerModeBtn.disabled = gameMode === 'player';
+            aiModeBtn.disabled = gameMode === 'ai' || isTraining || !bestNNWeights;
+            trainBtn.disabled = isTraining;
+            stopTrainBtn.disabled = !isTraining;
+            saveNNBtn.disabled = !bestNNWeights || isTraining;
+            loadNNBtn.disabled = isTraining;
+            exportNNBtn.disabled = !bestNNWeights || isTraining;
+            clearNNBtn.disabled = isTraining;
+            importNNBtn.disabled = isTraining;
+            speedRange.disabled = isTraining || gameMode === 'player';
+            speedValue.textContent = simulationSpeed + 'ms';
+            checkSavedStatus();
+        }
+        // --- Funções de Persistência (importNNFromFile ajustada) ---
+        const STORAGE_KEY = 'snakeAI_bestNNWeights_v4'; // Mudei key novamente por precaução
+        function saveNNToStorage() {
+            if (!bestNNWeights) {
+                console.warn("Tentativa de salvar NN nulo.");
+                return;
+            }
+            try {
+                const ws = JSON.stringify(bestNNWeights);
+                localStorage.setItem(STORAGE_KEY, ws);
+                localStorage.setItem(STORAGE_KEY + '_fitness', bestFitness);
+                console.log("Melhor NN salvo. Fitness:", bestFitness);
+                checkSavedStatus();
+            } catch (e) {
+                console.error("Erro ao salvar NN:", e);
+                alert("Erro ao salvar.");
+            }
+        }
+
+        function loadNNFromStorage() {
+            try {
+                const ws = localStorage.getItem(STORAGE_KEY);
+                if (ws) {
+                    const lw = JSON.parse(ws);
+                    const sF = parseFloat(localStorage.getItem(STORAGE_KEY + '_fitness'));
+                    if (lw && lw.ih && lw.ho && lw.bh && lw.bo && !isNaN(sF)) {
+                        bestNNWeights = lw;
+                        bestFitness = sF;
+                        console.log("NN carregado. Fitness:", bestFitness);
+                        checkSavedStatus();
+                        updateGameInfo();
+                        updateUIState();
+                        return lw;
+                    } else {
+                        console.warn("Dados salvos inválidos.");
+                        localStorage.removeItem(STORAGE_KEY);
+                        localStorage.removeItem(STORAGE_KEY + '_fitness');
+                        bestFitness = -Infinity;
+                        bestNNWeights = null;
+                        return null;
+                    }
+                }
+            } catch (e) {
+                console.error("Erro ao carregar NN:", e);
+                alert("Erro ao carregar NN.");
+            }
+            bestFitness = -Infinity;
+            bestNNWeights = null;
+            checkSavedStatus();
+            return null;
+        }
+
+        function checkSavedStatus() {
+            const sd = localStorage.getItem(STORAGE_KEY);
+            const sf = localStorage.getItem(STORAGE_KEY + '_fitness');
+            savedStatusElement.textContent = (sd && sf) ? `Sim (Fitness: ${Math.round(parseFloat(sf))})` : "Não";
+        }
+
+        function clearNNSavedData() {
+            if (confirm("Apagar NN salvo?")) {
+                localStorage.removeItem(STORAGE_KEY);
+                localStorage.removeItem(STORAGE_KEY + '_fitness');
+                bestNNWeights = null;
+                bestFitness = -Infinity;
+                console.log("NN salvo limpo.");
+                alert("NN salvo removido.");
+                checkSavedStatus();
+                updateGameInfo();
+                updateUIState();
+            }
+        }
+
+        function exportNNToFile() {
+            if (!bestNNWeights) {
+                alert("Nenhum NN para exportar.");
+                return;
+            }
+            try {
+                const data = {
+                    fitness: bestFitness,
+                    weights: bestNNWeights
+                };
+                const ws = JSON.stringify(data, null, 2);
+                const blob = new Blob([ws], {
+                    type: 'application/json'
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `snake_ai_nn_gen${currentGeneration}_fit${Math.round(bestFitness)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                console.log("Melhor NN exportado.");
+            } catch (e) {
+                console.error("Erro ao exportar:", e);
+                alert("Erro ao exportar.");
+            }
+        }
+
+        function importNNFromFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const ct = e.target.result;
+                    const id = JSON.parse(ct);
+                    if (id && id.weights && id.weights.ih && id.weights.ho && id.weights.bh && id.weights.bo && id.fitness !== undefined) {
+                        bestNNWeights = id.weights;
+                        bestFitness = id.fitness;
+                        console.log("NN importado. Fitness:", bestFitness);
+                        alert(`NN importado! Fitness: ${bestFitness}`);
+                        saveNNToStorage();
+                        checkSavedStatus();
+                        updateGameInfo();
+                        updateUIState();
+                        if (gameMode === 'player' && confirm("Ativar modo IA com NN importado?")) {
+                            setMode('ai');
+                        }
+                    } else {
+                        throw new Error("Estrutura JSON inválida ou fitness ausente.");
+                    }
+                } catch (err) {
+                    console.error("Erro importar NN:", err);
+                    alert(`Erro importar: ${err.message}`);
+                    updateUIState();
+                } finally {
+                    importNNInput.value = '';
+                }
+            };
+            reader.onerror = (e) => {
+                console.error("Erro ler arquivo:", e);
+                alert("Erro ler arquivo.");
+                importNNInput.value = '';
+            };
+            reader.readAsText(file);
+        }
+        // --- Event Listeners (Mantidos) ---
+        function handleKeyDown(event) {
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(event.key)) {
+                event.preventDefault();
+            }
+            if (gameMode === 'player') {
+                if (isGameOver && event.key === ' ') {
+                    resetGameState();
+                    startGameLoop();
+                    return;
+                }
+                if (isGameOver) return;
+                switch (event.key) {
+                    case 'ArrowUp':
+                        if (direction !== 'down') nextDirection = 'up';
+                        break;
+                    case 'ArrowDown':
+                        if (direction !== 'up') nextDirection = 'down';
+                        break;
+                    case 'ArrowLeft':
+                        if (direction !== 'right') nextDirection = 'left';
+                        break;
+                    case 'ArrowRight':
+                        if (direction !== 'left') nextDirection = 'right';
+                        break;
+                }
+            }
+        }
+        document.addEventListener('keydown', handleKeyDown);
+        playerModeBtn.addEventListener('click', () => setMode('player'));
+        aiModeBtn.addEventListener('click', () => setMode('ai'));
+        trainBtn.addEventListener('click', startTraining);
+        stopTrainBtn.addEventListener('click', stopTraining);
+        saveNNBtn.addEventListener('click', saveNNToStorage);
+        loadNNBtn.addEventListener('click', () => {
+            if (loadNNFromStorage()) {
+                alert("NN carregado!");
+                if (gameMode === 'player' && confirm("Ativar modo IA?")) {
+                    setMode('ai');
+                }
+            } else {
+                alert("Nenhum NN salvo encontrado.");
+            }
+        });
+        exportNNBtn.addEventListener('click', exportNNToFile);
+        clearNNBtn.addEventListener('click', clearNNSavedData);
+        importNNBtn.addEventListener('click', () => importNNInput.click());
+        importNNInput.addEventListener('change', importNNFromFile);
+        speedRange.addEventListener('input', (e) => {
+            simulationSpeed = parseInt(e.target.value);
+            speedValue.textContent = simulationSpeed + 'ms';
+            if ((gameMode === 'ai' || gameMode === 'training') && !isTraining && gameInterval) {
+                startGameLoop();
+            }
+        });
+        // --- Inicialização ---
+        updateGameInfo();
+        loadNNFromStorage();
+        setMode('player');
+        console.log("Jogo (vComAntiLoop v4) inicializado.");
+    </script>
+</body>
+
+</html>

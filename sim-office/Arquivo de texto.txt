@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Simulador de Escritório - THREE.js</title>
+    <style>
+        body { margin:0; overflow:hidden; background:#222; }
+        #hud {
+            position: absolute;
+            top: 8px; left: 8px;
+            padding: 12px;
+            background: rgba(30,30,30,0.95);
+            color: #fff;
+            border-radius:8px;
+            font-family:monospace;
+            font-size:16px;
+            min-width: 260px;
+            max-width: 340px;
+            display: none;
+            box-shadow: 0 2px 12px #0008;
+        }
+    </style>
+</head>
+<body>
+    <div id="hud"></div>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/"
+      }
+    }
+  </script>
+
+    <script type="module">
+    // --- IMPORT THREE.JS CORE AND ADDONS --- <-- ADDED THIS SECTION
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    // --- END IMPORTS ---
+
+//
+// --- PARAMETRIZAÇÃO ---
+const office = {
+    w: 38, d: 21, h: 4.5,
+    wallT: 0.5,
+    rooms: {
+        main: { x:1,  y:0,   z:1,   w:14, d:19, doors:[ { x:3.5, z:0 }, ] },
+        biblio: { x:16, y:0,  z:1,  w:8, d:8,  doors:[ { x:0, z:3.5 } ] },
+        kitchen: { x:16, y:0,  z:10.5, w:8, d:10, doors:[ { x:0, z:3.5 } ] },
+        banheiro: { x:26, y:0, z:1,  w:9, d:9,  doors:[ { x:0, z:2 } ] }
+    }
+};
+
+// ---- MATRIZ DE NAVEGAÇÃO BÁSICA (GRID) ----
+const GRID_SIZE = 1;
+let navGrid = [];
+
+function pointToGrid(x, z) { // converte coords reais para grid
+    return [
+        Math.floor((x + 0.5*GRID_SIZE)/GRID_SIZE),
+        Math.floor((z + 0.5*GRID_SIZE)/GRID_SIZE)
+    ];
+}
+function gridToPoint(gx, gz) {
+    return [
+        gx * GRID_SIZE,
+        gz * GRID_SIZE
+    ];
+}
+
+// ---- ESCENA E CÂMERA ----
+const scene = new THREE.Scene(); // Now THREE is defined via import
+scene.background = new THREE.Color(0xaad3db);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.3, 65);
+camera.position.set(20,24,34);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement); // Now OrbitControls is defined via import
+controls.maxPolarAngle = Math.PI/2 - 0.04;
+controls.minDistance = 8;
+controls.target.set(18,1,14);
+controls.update();
+
+// ---- LUZES ----
+const sun = new THREE.DirectionalLight(0xffffff, 0.65);
+sun.position.set(10,48,18);
+sun.castShadow = true;
+scene.add(sun, new THREE.AmbientLight(0x668888, 0.44));
+
+const floorTex = new THREE.TextureLoader().load('https://cdn.pixabay.com/photo/2016/11/19/12/00/texture-1837980_960_720.jpg');
+floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+floorTex.repeat.set(office.w/3, office.d/3);
+
+// --- PISO ---
+const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(office.w, 0.25, office.d),
+    new THREE.MeshPhongMaterial({
+        map: floorTex
+    })
+);
+floor.position.set(office.w/2, -0.13, office.d/2);
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ---- CRIANDO DECORAÇÕES E PAREDES ----
+function addWall(x, y, z, w, h, d, doorList=[]) {
+    // portas são furos no mesh
+    const shape = new THREE.Shape();
+    shape.moveTo(0,0);
+    shape.lineTo(w,0);
+    shape.lineTo(w,h);
+    shape.lineTo(0,h);
+    shape.lineTo(0,0);
+    doorList.forEach(door => {
+        // cada porta é um "furo" (3x2m)
+        let dh=2.2, dw=1.45;
+        let dx = door.x, dz=door.z||0, dy=0;
+        let doorShape = new THREE.Path();
+        doorShape.moveTo(dx,dy);
+        doorShape.lineTo(dx+dw,dy);
+        doorShape.lineTo(dx+dw,dy+dh);
+        doorShape.lineTo(dx,dy+dh);
+        doorShape.lineTo(dx,dy);
+        shape.holes.push(doorShape);
+    });
+    let geo = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false });
+    let mat = new THREE.MeshLambertMaterial({ color: 0xeee8da, side: THREE.DoubleSide });
+    let wall = new THREE.Mesh(geo, mat);
+    wall.position.set(x, y, z);
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    return wall;
+}
+
+// --- Função para texturas procedural básica colorida para objetos pequenos ---
+function baseColorMat(color) {
+    return new THREE.MeshLambertMaterial({ color });
+}
+
+function randomColorish() {
+    // Cores de roupa sóbrias
+    const cores = [0x204268,0xab5a39,0x29654e,0xde542d,0x782daf,0x202c49,0x5f4833,0xb9b9b9,0x263f26];
+    return cores[Math.floor(Math.random()*cores.length)];
+}
+
+// Janelas (só para efeito visual)
+function addJanela(x, y, z, w, h, d) {
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(w, h),
+        new THREE.MeshPhongMaterial({ color:0xccefff, transparent:true, opacity:0.45, side:THREE.DoubleSide })
+    );
+    mesh.position.set(x+w/2, y+h/2, z+d+0.02);
+    scene.add(mesh);
+}
+
+// --- Montando ambientes ---
+function montarAmbientes() {
+    // Escritório Principal
+    let m = office.rooms.main;
+    // paredes externas
+    scene.add(
+        addWall(m.x, m.y, m.z, m.w, office.h, office.wallT, [{ x:3.5, z:0 }]), // frente com porta
+        addWall(m.x, m.y, m.z+ m.d -office.wallT, m.w, office.h, office.wallT), // fundo
+        addWall(m.x, m.y, m.z, office.wallT, office.h, m.d),
+        addWall(m.x+ m.w -office.wallT, m.y, m.z, office.wallT, office.h, m.d), // lateral direita
+    );
+    // Janelas nas laterais
+    addJanela(m.x+m.w-0.5, 1, m.z+4, office.wallT, 2, 3);
+    addJanela(m.x+m.w-0.5, 1, m.z+11, office.wallT, 2, 3);
+
+    // Biblioteca
+    let b = office.rooms.biblio;
+    scene.add(
+        addWall(b.x, b.y, b.z, b.w, office.h, office.wallT, [{ x:0, z:3.5 }]),
+        addWall(b.x, b.y, b.z+ b.d -office.wallT, b.w, office.h, office.wallT),
+        addWall(b.x, b.y, b.z, office.wallT, office.h, b.d),
+        addWall(b.x+ b.w -office.wallT, b.y, b.z, office.wallT, office.h, b.d)
+    );
+    addJanela(b.x+b.w-0.5, 1.3, b.z+2.5, office.wallT, 2, 3);
+
+    // Cozinha
+    let c = office.rooms.kitchen;
+    scene.add(
+        addWall(c.x, c.y, c.z, c.w, office.h, office.wallT, [{ x:0, z:3.5 }]),
+        addWall(c.x, c.y, c.z+ c.d -office.wallT, c.w, office.h, office.wallT),
+        addWall(c.x, c.y, c.z, office.wallT, office.h, c.d),
+        addWall(c.x+ c.w -office.wallT, c.y, c.z, office.wallT, office.h, c.d)
+    );
+
+    // Banheiro
+    let bn = office.rooms.banheiro;
+    scene.add(
+        addWall(bn.x, bn.y, bn.z, bn.w, office.h, office.wallT, [{x:0, z:2}]),
+        addWall(bn.x, bn.y, bn.z+ bn.d -office.wallT, bn.w, office.h, office.wallT),
+        addWall(bn.x, bn.y, bn.z, office.wallT, office.h, bn.d),
+        addWall(bn.x+ bn.w -office.wallT, bn.y, bn.z, office.wallT, office.h, bn.d)
+    );
+    addJanela(bn.x+bn.w-0.5, 1.2, bn.z+1.5, office.wallT, 2, 4);
+}
+montarAmbientes();
+
+// Plantas decorativas
+function addPlanta(x, z) {
+    let t = Math.random()*0.13+0.17;
+    let trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.1, 0.07, t*7, 8),
+        baseColorMat(0x9e611c)
+    );
+    trunk.position.set(x, t*3.5, z);
+
+    let leaves = new THREE.Mesh(
+        new THREE.SphereGeometry(t*2.5, 7,4),
+        baseColorMat(0x249823)
+    );
+    leaves.position.set(x, t*8, z);
+
+    scene.add(trunk, leaves);
+}
+addPlanta(4, 5);
+addPlanta(25,6);
+addPlanta(12,15);
+addPlanta(26,16);
+
+// Mesas, cadeiras e computadores do escritório
+const workerSeatList=[];
+function montarEstacoes(){
+    let m = office.rooms.main;
+    for(let w=0;w<3;w++){
+        for(let l=0;l<3;l++){
+            let px = m.x+2.6 + w*3.7;
+            let pz = m.z+2.7+l*4.2;
+            addEstacao(px, pz, (w%2==0)?1:-1, workerSeatList);
+        }
+    }
+}
+
+function addEstacao(x, z, dir=1, seatList){
+    // mesa
+    let deskMat = new THREE.MeshLambertMaterial({color:0xbd936d});
+    let mesa = new THREE.Mesh(new THREE.BoxGeometry(1.5,0.18,0.7),deskMat);
+    mesa.position.set(x,0.45,z);
+    mesa.castShadow = true;
+    mesa.receiveShadow = true;
+    scene.add(mesa);
+    // cadeira
+    let chair = new THREE.Mesh(new THREE.BoxGeometry(0.48,0.25,0.48),baseColorMat(0x3958c5));
+    chair.position.set(x-0.62*dir,0.19,z);
+    chair.castShadow=true; chair.receiveShadow=true;
+    scene.add(chair);
+    // computador
+    let pc = new THREE.Mesh(new THREE.BoxGeometry(0.17,0.26,0.13),baseColorMat(0x222324));
+    pc.position.set(x+0.38*dir,0.62,z);
+    scene.add(pc);
+    let monitor = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.22, 0.04),baseColorMat(0x333a47));
+    monitor.position.set(x+0.16*dir,0.83,z);
+    scene.add(monitor);
+    // armazena "local" da estação de assento
+    seatList.push({
+        pos: [x-0.55*dir,0.30,z],
+        dir
+    });
+}
+montarEstacoes();
+
+// Mobiliando biblioteca
+const biblioSeats=[];
+function mobiliarBiblioteca() {
+    let b = office.rooms.biblio;
+    // estantes
+    for(let j=0;j<3;j++){
+        let estX = b.x+1+ j*2.65;
+        let est = new THREE.Mesh(new THREE.BoxGeometry(2.2,2.2,0.35), baseColorMat(0xc2764c));
+        est.position.set(estX, 1.25, b.z+1);
+        scene.add(est);
+    }
+    // sofás
+    for(let k=0;k<2;k++){
+        let soX = b.x+1.2 + k*5;
+        let so = new THREE.Mesh(new THREE.BoxGeometry(2.1,0.43,0.85), baseColorMat(0xbad5ca));
+        so.position.set(soX,0.25,b.z+5.4);
+        scene.add(so);
+        biblioSeats.push( { pos: [soX,0.43,b.z+5.4], ocupado: false } ); // Added ocupado flag
+    }
+}
+mobiliarBiblioteca();
+
+// Cozinha (balcão, mesas, cadeiras)
+const cozinhaMesas= [], cozinhaAssentos=[];
+function mobiliarCozinha() {
+    let c = office.rooms.kitchen;
+    // Balcão "servido"
+    let balcao = new THREE.Mesh(new THREE.BoxGeometry(2.6,0.55,0.38), baseColorMat(0xddd1b4));
+    balcao.position.set(c.x+1.22,0.32, c.z+1.18);
+    scene.add(balcao);
+    // mesas
+    for(let j=0;j<2;j++){
+        let mx =c.x+4.7+j*2.7, mz = c.z+2.8;
+        let mesa = new THREE.Mesh(new THREE.BoxGeometry(1.8,0.12,1.6),baseColorMat(0xe1c676));
+        mesa.position.set(mx,0.34,mz); scene.add(mesa);
+        cozinhaMesas.push([mx,mz]);
+        // cadeiras
+        for(let ci=-1;ci<=1;ci+=2){
+            let cx=mx+ci*0.9, cz=mz-1.1;
+            let ch = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.23,0.55),baseColorMat(0xc54254));
+            ch.position.set(cx,0.17,cz); scene.add(ch);
+            cozinhaAssentos.push({pos: [cx,0.23,cz], ocupado: false}); // Added ocupado flag
+            let cy=mx+ci*0.9, cz2=mz+1.1;
+            let ch2 = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.23,0.53),baseColorMat(0xc54254));
+            ch2.position.set(cy,0.17,cz2); scene.add(ch2);
+            cozinhaAssentos.push({pos: [cy,0.23,cz2], ocupado: false}); // Added ocupado flag
+        }
+    }
+}
+mobiliarCozinha();
+
+// Banheiro - cabines (vasos)
+const banheirosCabines=[];
+function mobiliarBanheiro() {
+    let bn = office.rooms.banheiro;
+    for(let s=0;s<3;s++){
+        let vx = bn.x+1+ s*2.5, vz=bn.z+3, vY=0.39;
+        // Parede divisória
+        let w = new THREE.Mesh(
+            new THREE.BoxGeometry(1.55,2.15,0.12),
+            baseColorMat(0xa1b0b8));
+        w.position.set(vx,vY+0.98,vz-0.65);
+        scene.add(w);
+        // porta
+        let porta = new THREE.Mesh(
+            new THREE.BoxGeometry(0.95,1.91,0.11),
+            baseColorMat(0x3568af)
+        );
+        porta.position.set(vx, vY+0.96, vz-0.08);
+        scene.add(porta);
+
+        // vaso
+        let vaso = new THREE.Mesh(new THREE.CylinderGeometry(0.23,0.26,0.47,15),
+            baseColorMat(0xe0e0e0));
+        vaso.position.set(vx, vY+0.26, vz+0.32);
+        scene.add(vaso);
+        banheirosCabines.push({
+            pos: [vx, vY+0.5,vz+0.22],
+            ocupado: false
+        });
+    }
+}
+mobiliarBanheiro();
+
+// Mapeando zonas walkable (grelha simples)
+function gerarNavGrid() {
+    let nx = Math.floor((office.w)/GRID_SIZE); // Adjusted bounds slightly
+    let nz = Math.floor((office.d)/GRID_SIZE); // Adjusted bounds slightly
+    navGrid = [];
+    for(let x=0; x<=nx; x++){
+        navGrid[x] = [];
+        for(let z=0; z<=nz; z++){
+            let qX = x*GRID_SIZE + 0.5*GRID_SIZE; // Use center of grid cell
+            let qZ = z*GRID_SIZE + 0.5*GRID_SIZE; // Use center of grid cell
+
+            // Teste simples: está DENTRO de uma sala (não na parede)?
+            let walk = false;
+            let wallThicknessMargin = office.wallT * 0.6; // Small margin to avoid being inside walls
+
+            for (let key in office.rooms) {
+                const r = office.rooms[key];
+                if (qX > r.x + wallThicknessMargin &&
+                    qX < r.x + r.w - wallThicknessMargin &&
+                    qZ > r.z + wallThicknessMargin &&
+                    qZ < r.z + r.d - wallThicknessMargin ){
+                    walk = true;
+                    break; // Found a room it's inside
+                }
+            }
+            navGrid[x][z] = walk;
+        }
+    }
+    // abrir os "furos" das portas (making area around door walkable)
+    function portaToGridCoords(roomX, roomZ, doorX, doorZ){
+        // Calculate world coordinates of door center more accurately
+        // Assuming doors are centered on the wall thickness
+        let worldX, worldZ;
+        if (doorZ === 0) { // Door on front wall (relative to room)
+             worldX = roomX + doorX + 1.45/2; // center of door width
+             worldZ = roomZ + office.wallT/2;
+        } else if (doorX === 0) { // Door on left wall (relative to room)
+             worldX = roomX + office.wallT/2;
+             worldZ = roomZ + doorZ + 1.45/2; // center of door height (use width for calculation)
+        } else { // Add cases for other walls if needed
+            worldX = roomX + doorX;
+            worldZ = roomZ + doorZ;
+        }
+        return pointToGrid(worldX, worldZ);
+    }
+
+    for (let key in office.rooms) {
+        const room = office.rooms[key];
+        room.doors.forEach(porta=>{
+            let [doorGX, doorGZ] = portaToGridCoords(room.x, room.z, porta.x, porta.z || 0);
+             // Make a small area around the door grid coords walkable
+            for(let i=-1; i<=1; i++){
+                for(let j=-1; j<=1; j++){
+                    let gx = doorGX + i;
+                    let gz = doorGZ + j;
+                    if (gx >= 0 && gx < navGrid.length && gz >= 0 && navGrid[gx] && gz < navGrid[gx].length) {
+                         // Only set to true if it wasn't already false (don't overwrite existing walls)
+                         // Actually, let's just force it true for doors
+                         navGrid[gx][gz] = true;
+                    }
+                }
+            }
+        });
+    }
+}
+gerarNavGrid();
+
+
+// --- Pathfinding muito básico (A*) em grid walkable (simplificado) ---
+function AStarPath(startGrid, endGrid) {
+    // Heuristic function (Manhattan distance)
+    function h(a, b) { return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]); }
+
+    const openSet = new Map(); // Map: "x,y" -> { node: [x,y], gScore: number, fScore: number }
+    const cameFrom = new Map(); // Map: "x,y" -> [prevX, prevY]
+
+    const startKey = startGrid.join(",");
+    openSet.set(startKey, { node: startGrid, gScore: 0, fScore: h(startGrid, endGrid) });
+
+    const closedSet = new Set(); // Set: "x,y"
+
+    while (openSet.size > 0) {
+        // Find node in openSet with the lowest fScore
+        let currentKey = null;
+        let lowestFScore = Infinity;
+        for (const [key, data] of openSet.entries()) {
+            if (data.fScore < lowestFScore) {
+                lowestFScore = data.fScore;
+                currentKey = key;
+            }
+        }
+
+        const currentData = openSet.get(currentKey);
+        const currentNode = currentData.node;
+
+        // Goal reached?
+        if (currentNode[0] === endGrid[0] && currentNode[1] === endGrid[1]) {
+            // Reconstruct path
+            const path = [currentNode];
+            let tempKey = currentKey;
+            while (cameFrom.has(tempKey)) {
+                const prevNode = cameFrom.get(tempKey);
+                path.push(prevNode);
+                tempKey = prevNode.join(",");
+            }
+            return path.reverse();
+        }
+
+        openSet.delete(currentKey);
+        closedSet.add(currentKey);
+
+        // Explore neighbors (4 directions)
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const neighborNode = [currentNode[0] + dx, currentNode[1] + dz];
+            const neighborKey = neighborNode.join(",");
+
+            // Check bounds and walkability
+            if (neighborNode[0] < 0 || neighborNode[0] >= navGrid.length ||
+                neighborNode[1] < 0 || !navGrid[neighborNode[0]] || neighborNode[1] >= navGrid[neighborNode[0]].length ||
+                !navGrid[neighborNode[0]][neighborNode[1]] || // Check if walkable
+                closedSet.has(neighborKey)) {
+                continue; // Skip invalid or already evaluated neighbors
+            }
+
+            const tentativeGScore = currentData.gScore + 1; // Cost is 1 per step
+
+            let neighborData = openSet.get(neighborKey);
+            if (!neighborData || tentativeGScore < neighborData.gScore) {
+                 // This path to neighbor is better than any previous one. Record it!
+                cameFrom.set(neighborKey, currentNode);
+                 if (!neighborData) {
+                     neighborData = { node: neighborNode, gScore: 0, fScore: 0 }; // Create if new
+                 }
+                 neighborData.gScore = tentativeGScore;
+                 neighborData.fScore = tentativeGScore + h(neighborNode, endGrid);
+                 openSet.set(neighborKey, neighborData); // Add/Update in openSet
+            }
+        }
+    }
+
+    // Open set is empty but goal was never reached
+    console.warn("A* Path not found from", startGrid, "to", endGrid);
+    return null;
+}
+
+
+function findNavTo(startPos, endPos){
+    let st = pointToGrid(startPos[0], startPos[2]);
+    let end = pointToGrid(endPos[0], endPos[2]);
+
+    // Ensure start/end points are actually walkable, if not, find nearest walkable
+     if (!navGrid[st[0]] || !navGrid[st[0]][st[1]]) {
+         console.warn("Start point not walkable, finding nearest for", st);
+         st = findNearestWalkable(st);
+         if (!st) return null; // No walkable near start
+     }
+     if (!navGrid[end[0]] || !navGrid[end[0]][end[1]]) {
+        console.warn("End point not walkable, finding nearest for", end);
+        end = findNearestWalkable(end);
+        if (!end) return null; // No walkable near end
+     }
+
+    let path = AStarPath(st, end);
+    if(!path) return null;
+
+    // Convert grid path back to world points (centers of grid cells)
+    return path.map(([gx,gz])=>{
+        let p = gridToPoint(gx,gz);
+        return [p[0] + GRID_SIZE/2, startPos[1], p[1] + GRID_SIZE/2]; // Use Y from original startPos
+    });
+}
+
+// Helper to find the nearest walkable grid cell (simple spiral search)
+function findNearestWalkable(startGrid) {
+    const maxSearchRadius = 5; // Limit search to avoid infinite loop
+    if (navGrid[startGrid[0]] && navGrid[startGrid[0]][startGrid[1]]) {
+        return startGrid; // Already walkable
+    }
+    for (let radius = 1; radius <= maxSearchRadius; radius++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            for (let dz = -radius; dz <= radius; dz++) {
+                if (Math.abs(dx) !== radius && Math.abs(dz) !== radius) continue; // Only check perimeter
+                let nx = startGrid[0] + dx;
+                let nz = startGrid[1] + dz;
+                if (nx >= 0 && nx < navGrid.length && nz >= 0 && navGrid[nx] && nz < navGrid[nx].length && navGrid[nx][nz]) {
+                    return [nx, nz];
+                }
+            }
+        }
+    }
+    console.error("Could not find walkable near", startGrid);
+    return null; // None found within radius
+}
+
+
+// --- CONSTRUTOR DE TRABALHADOR 3D ---
+function criarTrabalhador(index, pos, dir=1) {
+    // Corpo
+    let worker = new THREE.Group();
+    let roupa = randomColorish();
+    let pelego = new THREE.Mesh(new THREE.CylinderGeometry(0.23,0.28,0.83,14), baseColorMat(roupa));
+    pelego.position.set(0,0.48,0); worker.add(pelego);
+
+    // cabeça
+    let sex = Math.random()<0.5?"m":"f";
+    let skin = sex==="m" ? 0xf1d3b2 : 0xe5bba4;
+    let head = new THREE.Mesh(new THREE.SphereGeometry(0.25,16,11), baseColorMat(skin));
+    head.position.set(0,1.14,0.01); worker.add(head);
+
+    // cabelo
+    if (Math.random()<0.95) {
+        let hair = new THREE.Mesh(
+            (sex=="f")? new THREE.BoxGeometry(0.30,0.22,0.29) : new THREE.BoxGeometry(0.29,0.12,0.25),
+            baseColorMat(sex==="f"?0x743d1a:0x32220e)
+        );
+        hair.position.set(0,1.24,0.02);
+        worker.add(hair);
+    }
+    // olhos
+    let olho = new THREE.Mesh(new THREE.SphereGeometry(0.045,7,5), baseColorMat(0x222));
+    olho.position.set(0.08,1.16,0.17); worker.add(olho);
+    let olho2 = olho.clone(); olho2.position.x*=-1; worker.add(olho2);
+
+    // braços
+    for(let br=0; br<2; br++){
+        let a=br?1:-1;
+        let b = new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.47,8), baseColorMat(roupa));
+        b.position.set(0.24*a,0.77,0); worker.add(b);
+    }
+    // pernas
+    for(let br=0; br<2; br++){
+        let a= br?1:-1;
+        let l = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.08,0.47,10), baseColorMat(0x222e44));
+        l.position.set(0.09*a,0.18,0.03); worker.add(l);
+    }
+    // informação lógica
+    worker.userData = {
+        id: index,
+        nome: "Dev_"+(index+1),
+        pos: [...pos], // pos grid real (x,y,z) - Initial position
+        direcao: dir, // Initial facing direction if relevant
+        rot: dir>0?Math.PI/12:-Math.PI/12, // Initial rotation? Seems unused
+        hunger: 80+Math.random()*18,
+        sleep: 88+Math.random()*10,
+        toilet: 94+Math.random()*4,
+        marker: null,
+        path: [],
+        state: "trabalhando", // Start at workstation
+        seat: [...pos], // Store the assigned work seat position
+        obj: worker,
+        destino: null, // Current target position object {pos: [x,y,z], ...}
+        actionTimeout: 0,
+        markerSel: null // mesh marcador seleção
+    };
+    worker.position.set(...pos);
+    worker.rotation.y = (dir === 1) ? Math.PI : 0; // Face desk initially
+    worker.castShadow = true;
+    // Make children cast shadow too
+    worker.traverse(child => {
+        if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true; // Meshes can also receive shadows
+        }
+    });
+    workers_pool.push(worker);
+    scene.add(worker);
+    return worker;
+}
+
+const workers_pool = [];
+// Gera trabalhadores ligados aos assentos disponíveis:
+for (let i = 0; i < Math.min(workerSeatList.length, 9); i++) {
+    criarTrabalhador(i, workerSeatList[i].pos, workerSeatList[i].dir);
+}
+
+// --- MARCADORES SOBRE A CABEÇA ---
+function addMarcador(worker, color="#ec3d41") {
+    // Using a simple 3D sprite instead of DOM element for better integration
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const context = canvas.getContext('2d');
+    context.fillStyle = color;
+    context.beginPath();
+    context.arc(32, 32, 28, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#900'; // Border color from original style
+    context.lineWidth = 4; // Border width from original style
+    context.stroke();
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.scale.set(0.3, 0.3, 1); // Adjust size as needed
+    sprite.position.set(0, 1.6, 0); // Position above head
+
+    worker.add(sprite); // Add sprite to the worker group
+    worker.userData.marker = sprite; // Store reference to the sprite
+    sprite.visible = false; // Initially hidden, show based on state? Or always show? Let's start visible
+}
+
+// --- SELEÇÃO DE TRABALHADOR ---
+let selectedWorker = null;
+const hud = document.getElementById('hud');
+function selectWorker(w) {
+    // Deselect previous
+    if (selectedWorker && selectedWorker.userData.markerSel){
+         selectedWorker.userData.markerSel.visible = false; // Hide selection marker
+    }
+
+    selectedWorker = w;
+    hud.style.display = "block";
+    updateHUD();
+
+    // Ensure selection marker exists and make it visible
+    if (!w.userData.markerSel) {
+        let g = new THREE.TorusGeometry(0.33,0.06,12,29);
+        let m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({color:0xfb4b4a, side: THREE.DoubleSide})); // Added DoubleSide
+        m.position.set(0,1.41,0);
+        m.rotation.x = Math.PI / 2; // Rotate torus to be flat
+        w.add(m);
+        w.userData.markerSel = m;
+    }
+    w.userData.markerSel.visible = true;
+}
+
+// --- MOSTRAR HUD ---
+function barra(valor, cor) {
+    let v = Math.max(0, Math.min(100, Math.floor(valor))); // Clamp value 0-100
+    let l = Math.floor(210 * (v / 100)); // Calculate width based on percentage
+    return `<div style="background:#555;width:210px; height:18px; border: 1px solid #111; display: inline-block;"><div style='width:${l}px;height:100%;background:${cor};'></div></div> ${v}%`; // Show percentage
+}
+function updateHUD() {
+    if (!selectedWorker) return;
+    let ud = selectedWorker.userData;
+    hud.innerHTML = `<b>${ud.nome}</b><br>
+    Estado: <b>${ud.state}</b><br>
+    Fome:    ${barra(ud.hunger, "#e44a1d")}
+    Sono:    ${barra(ud.sleep, "#26a4de")}
+    Banheiro:${barra(ud.toilet, "#a3e32e")}`;
+}
+
+// ---- CONTROLE DE CLIQUE E PROJETAR PARA CÂMERA ----
+const raycaster = new THREE.Raycaster();
+const clickMouse = new THREE.Vector2();
+
+window.addEventListener('click', function(e){
+    // Calculate mouse position in normalized device coordinates (-1 to +1) for both components
+    clickMouse.x = ( e.clientX / window.innerWidth ) * 2 - 1;
+    clickMouse.y = - ( e.clientY / window.innerHeight ) * 2 + 1;
+
+    raycaster.setFromCamera(clickMouse, camera);
+
+    // Calculate objects intersecting the picking ray - check children of workers
+    const intersects = raycaster.intersectObjects(workers_pool, true); // Set recursive to true
+
+    if (intersects.length > 0) {
+        // Find the top-level worker group object from the intersected mesh
+        let clickedWorker = null;
+        let currentObject = intersects[0].object;
+        while (currentObject) {
+             if (workers_pool.includes(currentObject)) {
+                 clickedWorker = currentObject;
+                 break;
+             }
+             currentObject = currentObject.parent;
+        }
+
+        if (clickedWorker) {
+            selectWorker(clickedWorker);
+        } else {
+             // Optional: Deselect if clicking elsewhere
+             // if (selectedWorker && selectedWorker.userData.markerSel) {
+             //     selectedWorker.userData.markerSel.visible = false;
+             // }
+             // selectedWorker = null;
+             // hud.style.display = "none";
+        }
+    } else {
+         // Optional: Deselect if clicking elsewhere
+         // if (selectedWorker && selectedWorker.userData.markerSel) {
+         //     selectedWorker.userData.markerSel.visible = false;
+         // }
+         // selectedWorker = null;
+         // hud.style.display = "none";
+    }
+});
+
+
+// ---- POSICIONAR MARCADORES 2D SOBRE OS PERSONAGENS ----
+// No longer needed if using 3D sprites for markers
+/* function updateMarkers(){
+    workers_pool.forEach( w => {
+        if (!w.userData.marker) addMarcador(w, "#fd8b3a"); // Create marker if it doesn't exist
+        // Marker is now a 3D sprite, positioned relative to the worker head
+        // Its position updates automatically with the worker group
+        // We might want to control its visibility based on worker state though
+        // Example: w.userData.marker.visible = (w.userData.hunger < 20);
+    });
+} */
+
+// ---- AGENTES/IA ----
+const WORKER_SPEED = 1.8; // Units per second
+const ACTION_TIME_HUNGER = 4.0; // Base time in seconds
+const ACTION_TIME_TOILET = 3.5;
+const ACTION_TIME_SLEEP = 6.0;
+
+function updateWorkerLogical(w, dt) {
+    let ud = w.userData;
+
+     // Update needs only when working or moving (not during actions)
+     if (ud.state === 'trabalhando' || ud.state === 'voltando' || ud.state.startsWith('indo_')) {
+        // Reduz Ao acaso (mas lento) as barras de necessidades
+        ud.hunger -= (0.6 + 1.0 * Math.random()) * dt; // Faster decrease
+        ud.sleep  -= (0.5 + 0.8 * Math.random()) * dt;
+        ud.toilet -= (0.4 + 0.9 * Math.random()) * dt; // Slightly faster decrease
+     }
+
+     // Clamp needs to minimum 0
+     ud.hunger = Math.max(0, ud.hunger);
+     ud.sleep = Math.max(0, ud.sleep);
+     ud.toilet = Math.max(0, ud.toilet);
+
+    // --- State Machine Logic ---
+    if (ud.state === "trabalhando") {
+         // Check needs
+        if (ud.hunger <= 10 && !ud.state.startsWith('indo_')) // Threshold to seek food
+            trocar_state(w, 'indo_cozinha');
+        else if (ud.toilet <= 15 && !ud.state.startsWith('indo_')) // Threshold
+            trocar_state(w, 'indo_banheiro');
+        else if (ud.sleep <= 20 && !ud.state.startsWith('indo_')) // Threshold
+            trocar_state(w,'indo_descansar');
+        else {
+            // Perform idle working animation (slight movement)
+            w.position.x = ud.seat[0] + 0.009*Math.sin(performance.now()/321 + ud.id);
+            w.position.z = ud.seat[2] + 0.008*Math.cos(performance.now()/317 + ud.id);
+             w.rotation.y = (ud.direcao === 1) ? Math.PI : 0; // Ensure facing desk
+        }
+
+    } else if (ud.state === "indo_cozinha") {
+        if (!ud.destino) {
+            // Find available kitchen seat
+             let dest = cozinhaAssentos.find(seat => !seat.ocupado);
+            if (dest) {
+                dest.ocupado = true; // Mark as occupied immediately
+                ud.destino = dest;
+                ud.path = findNavTo(
+                    [w.position.x, w.position.y, w.position.z],
+                    [dest.pos[0], w.position.y, dest.pos[2]] // Use current Y level
+                );
+                 if (!ud.path) { // Pathfinding failed, release seat and go back
+                     console.error(`Path to kitchen failed for ${ud.nome}`);
+                     dest.ocupado = false;
+                     ud.destino = null;
+                     trocar_state(w, 'voltando');
+                 }
+            } else {
+                // No seat available, maybe wait or go back? For now, go back.
+                trocar_state(w, 'voltando');
+            }
+        } else {
+            moveWorkerAlongPath(w, dt, "comendo");
+        }
+
+    } else if (ud.state === "comendo") {
+        // Sit and 'eat' - replenish hunger over time? Or instantly?
+        // Let's do instant + timeout
+        if (ud.actionTimeout <= 0) { // Just started eating
+            ud.hunger = 100;
+        }
+        ud.actionTimeout -= dt;
+        if (ud.actionTimeout <= 0) {
+             if (ud.destino) {
+                 ud.destino.ocupado = false; // Release the seat
+             }
+             ud.destino = null;
+             ud.path = [];
+             trocar_state(w, 'voltando');
+        }
+
+    } else if (ud.state === "indo_banheiro") {
+         if (!ud.destino) {
+             let cab = banheirosCabines.find(c => !c.ocupado);
+             if (cab) {
+                 cab.ocupado = true;
+                 ud.destino = cab;
+                 ud.path = findNavTo(
+                     [w.position.x, w.position.y, w.position.z],
+                     [cab.pos[0], w.position.y, cab.pos[2]]
+                 );
+                 if (!ud.path) {
+                    console.error(`Path to bathroom failed for ${ud.nome}`);
+                    cab.ocupado = false;
+                    ud.destino = null;
+                    trocar_state(w, 'voltando');
+                }
+             } else {
+                 trocar_state(w, 'voltando'); // No cabin free
+             }
+         } else {
+             moveWorkerAlongPath(w, dt, "usando_banheiro");
+         }
+
+    } else if (ud.state === "usando_banheiro") {
+        if (ud.actionTimeout <= 0) { // Just started
+            ud.toilet = 100;
+        }
+        ud.actionTimeout -= dt;
+        if (ud.actionTimeout <= 0) {
+             if (ud.destino) {
+                 ud.destino.ocupado = false; // Release cabin
+             }
+             ud.destino = null;
+             ud.path = [];
+             trocar_state(w, 'voltando');
+        }
+
+    } else if (ud.state === "indo_descansar") {
+        if(!ud.destino){
+            let dest = biblioSeats.find(b => !b.ocupado);
+            if(dest){
+                 dest.ocupado = true;
+                 ud.destino = dest;
+                 ud.path = findNavTo(
+                     [w.position.x, w.position.y, w.position.z],
+                     [dest.pos[0], w.position.y, dest.pos[2]]
+                 );
+                  if (!ud.path) {
+                    console.error(`Path to rest area failed for ${ud.nome}`);
+                    dest.ocupado = false;
+                    ud.destino = null;
+                    trocar_state(w, 'voltando');
+                  }
+            } else {
+                 trocar_state(w, 'voltando'); // No sofa free
+            }
+        } else {
+            moveWorkerAlongPath(w, dt, "descansando");
+        }
+
+    } else if (ud.state === "descansando") {
+        if (ud.actionTimeout <= 0) { // Just started
+             ud.sleep = 100;
+        }
+        ud.actionTimeout -= dt;
+        if(ud.actionTimeout <= 0){
+             if (ud.destino) {
+                 ud.destino.ocupado = false; // Release sofa
+             }
+             ud.destino = null;
+             ud.path = [];
+             trocar_state(w,'voltando');
+        }
+
+    } else if (ud.state === "voltando") {
+        // Go back to the assigned workstation seat
+        if (!ud.path || ud.path.length === 0) {
+            ud.path = findNavTo([w.position.x, w.position.y, w.position.z], ud.seat);
+             if (!ud.path) {
+                 console.error(`Path back to seat failed for ${ud.nome}. Trying again next frame.`);
+                 // Stay in 'voltando' state, will retry pathfinding next frame
+                 return;
+             }
+        }
+        // Check if already very close to seat to avoid pathfinding loop if target is slightly off
+         const seatVec = new THREE.Vector3(...ud.seat);
+         if (w.position.distanceTo(seatVec) < 0.2) {
+             w.position.set(...ud.seat); // Snap to exact seat position
+             trocar_state(w, "trabalhando");
+         } else {
+             moveWorkerAlongPath(w, dt, "trabalhando");
+         }
+    }
+}
+
+
+function trocar_state(w, novo){
+    let ud = w.userData;
+    // console.log(`${ud.nome} changing state from ${ud.state} to ${novo}`); // Debug state changes
+    ud.state = novo;
+    ud.path = []; // Clear path on state change
+    ud.destino = null; // Clear destination unless explicitly set by new state logic
+
+    // Set action timeouts for states that involve waiting
+    switch(novo){
+        case "comendo":         ud.actionTimeout = ACTION_TIME_HUNGER + Math.random()*1.5; break;
+        case "usando_banheiro": ud.actionTimeout = ACTION_TIME_TOILET + Math.random()*1.0; break;
+        case "descansando":     ud.actionTimeout = ACTION_TIME_SLEEP + Math.random()*2.0; break;
+        default:                ud.actionTimeout = 0; break; // No timeout for moving/working
+    }
+
+    // Update HUD if this worker is selected
+    if (selectedWorker === w) updateHUD();
+}
+
+// Movimento automático: segue o path atual
+function moveWorkerAlongPath(w, dt, fimState) {
+    let ud = w.userData;
+    if (!ud.path || ud.path.length === 0) {
+        // Reached destination (or no path) - transition to the next state
+        // Ensure position is accurate if a specific destination was set
+        if (ud.destino && ud.destino.pos) {
+             w.position.set(ud.destino.pos[0], ud.destino.pos[1], ud.destino.pos[2]); // Snap to destination pos
+        }
+        trocar_state(w, fimState);
+        return;
+    }
+
+    let targetPoint = new THREE.Vector3(...ud.path[0]);
+    let moveDirection = targetPoint.clone().sub(w.position);
+    let distanceToTarget = moveDirection.length();
+
+    // Calculate movement for this frame
+    let moveDistance = WORKER_SPEED * dt;
+
+    if (moveDistance >= distanceToTarget) {
+        // Reached or passed the current waypoint
+        w.position.copy(targetPoint); // Snap to waypoint
+        ud.path.shift(); // Remove the reached waypoint
+
+        // If that was the last waypoint, transition state
+        if (ud.path.length === 0) {
+            // Make sure final position matches destination if available
+             if (ud.destino && ud.destino.pos) {
+                 w.position.set(ud.destino.pos[0], ud.destino.pos[1], ud.destino.pos[2]);
+             }
+            trocar_state(w, fimState);
+        } else {
+             // Aim for the next waypoint immediately (recalculate direction)
+             let nextTargetPoint = new THREE.Vector3(...ud.path[0]);
+             moveDirection = nextTargetPoint.clone().sub(w.position);
+             // Rotate to face the next waypoint
+             let angle = Math.atan2(moveDirection.x, moveDirection.z); // Note: atan2(x, z) for Y rotation
+             w.rotation.y = angle;
+        }
+    } else {
+        // Move towards the current waypoint
+        moveDirection.normalize();
+        w.position.add(moveDirection.multiplyScalar(moveDistance));
+
+        // Rotate to face the direction of movement
+        let angle = Math.atan2(moveDirection.x, moveDirection.z); // Note: atan2(x, z) for Y rotation
+         // Smooth rotation?
+         // w.rotation.y = THREE.MathUtils.lerp(w.rotation.y, angle, 0.1); // Basic lerp
+         w.rotation.y = angle; // Instant rotation
+    }
+}
+
+
+// ---- LOOP ANIMAÇÃO ----
+let lt = performance.now() / 1000;
+function animate() {
+    requestAnimationFrame(animate);
+    let time = performance.now()/1000;
+    let dt = Math.min(time - lt, 0.05); // Limit max delta time to prevent jumps
+    lt = time;
+
+    controls.update(); // Update orbit controls
+
+    // Update worker logic and movement
+    for (let w of workers_pool) {
+        updateWorkerLogical(w, dt);
+    }
+    // updateMarkers(); // Update 2D markers if using them
+
+    // HUD update for selected worker (already happens in updateWorkerLogical/trocar_state)
+    // Camera follow for selected worker (optional)
+    /* if (selectedWorker){
+        // Lerp target towards selected worker's head height
+        let targetPos = selectedWorker.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+        controls.target.lerp(targetPos, 0.08); // Adjust lerp factor for smoothness
+    } */
+
+    renderer.render(scene, camera);
+}
+
+// ---- REDIMENSIONAR ----
+window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// --- Modo zoom e rotação ---
+controls.enableDamping = true;
+controls.dampingFactor = 0.1; // Adjusted damping factor
+
+// --- Start Animation ---
+animate();
+
+</script>
+</body>
+</html>

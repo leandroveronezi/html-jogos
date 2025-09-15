@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Escritório v7.5 (Layout Novo, Correções, Detalhes)</title>
+    <style>
+        /* CSS como antes */
+        body { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; background-color: #202124; margin: 0; overflow: hidden; font-family: sans-serif; color: #e8eaed; }
+        canvas { border: 1px solid #5f6368; cursor: grab; display: block; }
+        canvas:active { cursor: grabbing; }
+        #uiContainer { position: absolute; top: 10px; left: 10px; background-color: rgba(40, 40, 40, 0.8); padding: 8px 12px; border-radius: 5px; color: #e0e0e0; font-size: 0.9em; pointer-events: none; }
+        #info { margin-top: 5px; font-size: 0.8em; color: #9aa0a6; text-align: center; }
+    </style>
+</head>
+<body>
+    <div id="uiContainer">
+        <div id="taskInfo">Tarefas Pendentes: 0 / Ativas: 0</div>
+    </div>
+    <canvas id="webglCanvas"></canvas>
+    <div id="info">Arraste para girar. Use o scroll para zoom.</div>
+
+    <script>
+        // --- WebGL Context, Canvas Size (como antes) ---
+        const canvas = document.getElementById('webglCanvas');
+        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+        if (!gl) { alert('WebGL não suportado!'); throw new Error("WebGL not supported"); }
+        canvas.width = window.innerWidth * 0.95; canvas.height = window.innerHeight * 0.85;
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+        // --- Configurações & Constantes ---
+        const GRID_UNIT = 2.0;
+        const WALL_THICKNESS = GRID_UNIT * 0.1;
+        const WALL_HEIGHT_FACTOR = 2.8;
+        const EXT_WALL_HEIGHT_FACTOR = 3.0;
+        const DOOR_HEIGHT_FACTOR = WALL_HEIGHT_FACTOR * 0.8;
+        const DOOR_WIDTH_FACTOR = 0.8;
+        const NUM_WORKERS = 35; // Ajuste conforme necessário para o novo layout
+        const MAX_TASKS = 100;
+        const TASK_DURATION_MIN = 10000; const TASK_DURATION_MAX = 25000;
+        const WORK_TIME_BEFORE_BREAK_CHANCE = 18000; const WORK_TIME_BEFORE_BATHROOM_CHANCE = 30000;
+        const BREAK_DURATION_MIN = 6000; const BREAK_DURATION_MAX = 10000;
+        const BATHROOM_DURATION_MIN = 4000; const BATHROOM_DURATION_MAX = 7000;
+        const NEED_THRESHOLD = 0.7;
+        const CHANCE_TO_ACT_ON_NEED = 0.03;
+        const NPC_TOTAL_HEIGHT = GRID_UNIT * 0.85; const NPC_HEAD_RATIO = 0.25;
+        const STUCK_CHECK_INTERVAL = 5000; // Verificar NPCs presos a cada 5 segundos
+
+        // --- *** NOVO LAYOUT DO ESCRITÓRIO *** ---
+        // Legenda: 1=Parede Ext, 10=Parede Int, 0=Chão, 2=Mesa, 3=MaqCafe, 4=Biblioteca, 5=Sofa,
+        //          6=Planta, 7=Pufe, 8=BalcãoCafe, 'T'=TV, 11=PortaM, 12=PortaF
+        const officeLayout = [
+        //   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1], // 0
+            [1,2,0,2,0,2,0,2,0,2,0,0,0,10,0,0,5,0,7,0,5,0,0,0,1], // 1 Área de Descanso (Top-Right)
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,10,0,7,0,'T',0,7,0,0,0,0,1], // 2
+            [1,2,0,2,0,2,0,2,0,2,0,0,0,10,0,0,5,0,0,0,5,0,0,11,1], // 3 Banheiro M
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,10,10,10,10,10,10,10,10,10,10,0,1], // 4 Divisória Horizontal
+            [1,2,0,2,0,2,0,2,0,2,0,0,0,10,0,0,0,4,0,4,0,0,0,0,1], // 5 Biblioteca (Mid-Right)
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,10,0,4,0,0,0,0,0,4,0,0,1], // 6
+            [1,2,0,2,0,2,0,2,0,2,0,0,0,10,0,0,0,4,0,4,0,0,0,12,1], // 7 Banheiro F
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,10,10,10,10,10,10,10,10,10,10,0,1], // 8 Divisória Horizontal
+            [1,2,0,2,0,2,0,2,0,2,0,0,0,10,0,0,8,8,0,0,3,0,6,0,1], // 9 Área Café (Bottom-Right)
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,10,0,0,8,8,0,0,0,0,0,0,1], // 10
+            [1,2,0,2,0,2,0,2,0,2,0,0,0,0,0,0,0,0,0,0,0,0,6,0,1], // 11
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], // 12 Corredor / Espaço Aberto
+            [1,2,0,2,0,2,0,2,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], // 13
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]  // 14
+        ];
+        const WORLD_DEPTH_UNITS = officeLayout.length;
+        const WORLD_WIDTH_UNITS = officeLayout[0].length;
+
+
+        // --- Cores ---
+        const COLORS_RGB = { /* ... cores v7.4 ... */ floor:[.85,.85,.83],wall:[.78,.80,.82],wall_internal:[.9,.9,.9],desk_top:[.65,.5,.35],desk_leg:[.4,.4,.42],desk_drawer:[.55,.45,.30],computer_monitor:[.15,.15,.15],computer_base:[.6,.6,.6],chair_seat:[.35,.35,.4],chair_back:[.4,.4,.45],chair_base:[.25,.25,.25],bookshelf:[.7,.55,.4],book_colors:[[.6,.2,.2],[.2,.6,.2],[.2,.2,.6],[.7,.7,.3],[.5,.5,.5]], sofa:[.3,.5,.35],beanbag:[.6,.4,.7],plant_pot:[.7,.45,.35],plant_leaves:[.25,.6,.3],coffee_machine:[.8,.2,.2],coffee_counter:[.95,.95,.95],cafe_table_top:[.8,.75,.7],cafe_table_leg:[.5,.5,.5],tv_screen:[.05,.05,.05],tv_bezel:[.2,.2,.2],door_m:[.3,.6,.8],door_f:[.9,.5,.6],worker_skin:[.96,.8,.69],worker_shirt_colors:[[.26,.52,.96],[.92,.26,.21],[.98,.73,.02],[.2,.66,.35],[.6,.6,.65],[.8,.8,.8]],worker_pants_color:[.25,.25,.3]}; // Adicionado book_colors
+
+        // --- Câmera (como antes) ---
+        const camera = { /* ... camera v7 ... */ position:[WORLD_WIDTH_UNITS*GRID_UNIT/2,25,-25],target:[WORLD_WIDTH_UNITS*GRID_UNIT/2,0,WORLD_DEPTH_UNITS*GRID_UNIT/2],up:[0,1,0],fovDegrees:45,near:.1,far:300,angleY:.4,angleX:.8,distance:60,minDistance:10,maxDistance:150 };
+
+        // --- WebGL Shaders (como v7.2 - assumindo que estão completos) ---
+        const vsSourceFull = `#version 300 es ... (shader completo v7.2) ...`;
+        const fsSourceFull = `#version 300 es ... (shader completo v7.2) ...`;
+        // <<< Insira aqui o código completo dos shaders da v7.2/v7.4 >>>
+        const vsSrc = `#version 300 es
+            precision mediump float;
+            in vec3 a_position;
+            in vec3 a_normal;
+            uniform mat4 u_mvpMatrix;
+            uniform mat4 u_modelMatrix;
+            uniform mat3 u_normalMatrix;
+            out vec3 v_normal;
+            out vec3 v_worldPosition;
+            void main() {
+                gl_Position = u_mvpMatrix * vec4(a_position, 1.0);
+                v_normal = normalize(u_normalMatrix * a_normal);
+                v_worldPosition = (u_modelMatrix * vec4(a_position, 1.0)).xyz;
+            }`;
+        const fsSrc = `#version 300 es
+            precision mediump float;
+            in vec3 v_normal;
+            in vec3 v_worldPosition;
+            uniform vec3 u_color;
+            uniform vec3 u_lightDirection;
+            uniform vec3 u_ambientColor;
+            uniform vec3 u_directionalColor;
+            uniform vec3 u_viewPosition;
+            uniform float u_shininess;
+            uniform vec3 u_specularColor;
+            out vec4 outColor;
+            void main() {
+                vec3 normal = normalize(v_normal);
+                vec3 lightDir = normalize(-u_lightDirection);
+                vec3 viewDir = normalize(u_viewPosition - v_worldPosition);
+                vec3 ambient = u_ambientColor * u_color;
+                float diffuseFactor = max(dot(normal, lightDir), 0.0);
+                vec3 diffuse = u_directionalColor * diffuseFactor * u_color;
+                vec3 reflectDir = reflect(-lightDir, normal);
+                float specAngle = max(dot(viewDir, reflectDir), 0.0);
+                float specularFactor = pow(specAngle, u_shininess);
+                vec3 specular = u_specularColor * specularFactor;
+                vec3 finalColor = ambient + diffuse + specular;
+                outColor = vec4(finalColor, 1.0);
+            }`;
+
+
+        // --- Funções Base, Matrizes, Vec3 (como antes) ---
+        function createShader(gl, type, source) { const shader = gl.createShader(type); gl.shaderSource(shader, source); gl.compileShader(shader); if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { console.error('Shader error:', gl.getShaderInfoLog(shader)); gl.deleteShader(shader); return null; } return shader; }
+        function createProgram(gl, vs, fs) { const program = gl.createProgram(); gl.attachShader(program, vs); gl.attachShader(program, fs); gl.linkProgram(program); if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { console.error('Program error:', gl.getProgramInfoLog(program)); gl.deleteProgram(program); return null; } return program; }
+        function createBuffer(gl, data, type = gl.ARRAY_BUFFER) { const buffer = gl.createBuffer(); gl.bindBuffer(type, buffer); gl.bufferData(type, data, gl.STATIC_DRAW); return buffer; }
+        const mat3 = { /* ... mat3 normal calc ... */ create: () => new Float32Array(9), normalFromMat4: (out, a) => { let a00=a[0],a01=a[1],a02=a[2],a10=a[4],a11=a[5],a12=a[6],a20=a[8],a21=a[9],a22=a[10]; let b00=a11*a22-a12*a21,b10=a12*a20-a10*a22,b20=a10*a21-a11*a20; let det=a00*b00+a01*b10+a02*b20; if(!det)return null; det=1/det; out[0]=b00*det;out[1]=(a02*a21-a01*a22)*det;out[2]=(a01*a12-a02*a11)*det; out[3]=b10*det;out[4]=(a00*a22-a02*a20)*det;out[5]=(a02*a10-a00*a12)*det; out[6]=b20*det;out[7]=(a01*a20-a00*a21)*det;out[8]=(a00*a11-a01*a10)*det; return out; }};
+        const mat4 = { /* ... mat4 funcs ... */ create:()=>new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]), identity:(out)=>{out.set([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);return out;}, multiply:(out,a,b)=>{ let a00=a[0],a01=a[1],a02=a[2],a03=a[3],a10=a[4],a11=a[5],a12=a[6],a13=a[7],a20=a[8],a21=a[9],a22=a[10],a23=a[11],a30=a[12],a31=a[13],a32=a[14],a33=a[15];let b0=b[0],b1=b[1],b2=b[2],b3=b[3];out[0]=b0*a00+b1*a10+b2*a20+b3*a30;out[1]=b0*a01+b1*a11+b2*a21+b3*a31;out[2]=b0*a02+b1*a12+b2*a22+b3*a32;out[3]=b0*a03+b1*a13+b2*a23+b3*a33;b0=b[4];b1=b[5];b2=b[6];b3=b[7];out[4]=b0*a00+b1*a10+b2*a20+b3*a30;out[5]=b0*a01+b1*a11+b2*a21+b3*a31;out[6]=b0*a02+b1*a12+b2*a22+b3*a32;out[7]=b0*a03+b1*a13+b2*a23+b3*a33;b0=b[8];b1=b[9];b2=b[10];b3=b[11];out[8]=b0*a00+b1*a10+b2*a20+b3*a30;out[9]=b0*a01+b1*a11+b2*a21+b3*a31;out[10]=b0*a02+b1*a12+b2*a22+b3*a32;out[11]=b0*a03+b1*a13+b2*a23+b3*a33;b0=b[12];b1=b[13];b2=b[14];b3=b[15];out[12]=b0*a00+b1*a10+b2*a20+b3*a30;out[13]=b0*a01+b1*a11+b2*a21+b3*a31;out[14]=b0*a02+b1*a12+b2*a22+b3*a32;out[15]=b0*a03+b1*a13+b2*a23+b3*a33;return out;}, perspective:(out,fovy,aspect,near,far)=>{ const f=1/Math.tan(fovy/2);out[0]=f/aspect;out[1]=0;out[2]=0;out[3]=0;out[4]=0;out[5]=f;out[6]=0;out[7]=0;out[8]=0;out[9]=0;out[11]=-1;out[12]=0;out[13]=0;out[15]=0;if(far!=null&&far!==Infinity){const nf=1/(near-far);out[10]=(far+near)*nf;out[14]=(2*far*near)*nf;}else{out[10]=-1;out[14]=-2*near;}return out;}, lookAt:(out,eye,center,up)=>{ let x0,x1,x2,y0,y1,y2,z0,z1,z2,len,eyex=eye[0],eyey=eye[1],eyez=eye[2],upx=up[0],upy=up[1],upz=up[2],centerx=center[0],centery=center[1],centerz=center[2];z0=eyex-centerx;z1=eyey-centery;z2=eyez-centerz;len=1/Math.hypot(z0,z1,z2);z0*=len;z1*=len;z2*=len;x0=upy*z2-upz*z1;x1=upz*z0-upx*z2;x2=upx*z1-upy*z0;len=Math.hypot(x0,x1,x2);if(!len){x0=0;x1=0;x2=0;}else{len=1/len;x0*=len;x1*=len;x2*=len;}y0=z1*x2-z2*x1;y1=z2*x0-z0*x2;y2=z0*x1-z1*x0;len=Math.hypot(y0,y1,y2);if(!len){y0=0;y1=0;y2=0;}else{len=1/len;y0*=len;y1*=len;y2*=len;}out[0]=x0;out[1]=y0;out[2]=z0;out[3]=0;out[4]=x1;out[5]=y1;out[6]=z1;out[7]=0;out[8]=x2;out[9]=y2;out[10]=z2;out[11]=0;out[12]=-(x0*eyex+x1*eyey+x2*eyez);out[13]=-(y0*eyex+y1*eyey+y2*eyez);out[14]=-(z0*eyex+z1*eyey+z2*eyez);out[15]=1;return out;}, translate:(out,a,v)=>{ let x=v[0],y=v[1],z=v[2];if(a===out){out[12]=a[0]*x+a[4]*y+a[8]*z+a[12];out[13]=a[1]*x+a[5]*y+a[9]*z+a[13];out[14]=a[2]*x+a[6]*y+a[10]*z+a[14];out[15]=a[3]*x+a[7]*y+a[11]*z+a[15];}else{out.set(a);out[12]=a[0]*x+a[4]*y+a[8]*z+a[12];out[13]=a[1]*x+a[5]*y+a[9]*z+a[13];out[14]=a[2]*x+a[6]*y+a[10]*z+a[14];out[15]=a[3]*x+a[7]*y+a[11]*z+a[15];}return out;}, scale:(out,a,v)=>{ let x=v[0],y=v[1],z=v[2];out[0]=a[0]*x;out[1]=a[1]*x;out[2]=a[2]*x;out[3]=a[3]*x;out[4]=a[4]*y;out[5]=a[5]*y;out[6]=a[6]*y;out[7]=a[7]*y;out[8]=a[8]*z;out[9]=a[9]*z;out[10]=a[10]*z;out[11]=a[11]*z;out[12]=a[12];out[13]=a[13];out[14]=a[14];out[15]=a[15];return out;}, fromXRotation:(out,r)=>{ let s=Math.sin(r),c=Math.cos(r);mat4.identity(out);out[5]=c;out[6]=s;out[9]=-s;out[10]=c;return out;}, fromYRotation:(out,r)=>{ let s=Math.sin(r),c=Math.cos(r);mat4.identity(out);out[0]=c;out[2]=-s;out[8]=s;out[10]=c;return out;}, fromZRotation:(out,r)=>{ let s=Math.sin(r),c=Math.cos(r);mat4.identity(out);out[0]=c;out[1]=s;out[4]=-s;out[5]=c;return out;}};
+        const vec3 = { /* ... vec3 funcs ... */ subtract:(out,a,b)=>{out[0]=a[0]-b[0];out[1]=a[1]-b[1];out[2]=a[2]-b[2];return out;}, normalize:(out,a)=>{let l=Math.hypot(a[0],a[1],a[2]);if(l>1e-5){l=1/l;out[0]=a[0]*l;out[1]=a[1]*l;out[2]=a[2]*l;}else{out[0]=0;out[1]=0;out[2]=0;}return out;}, cross:(out,a,b)=>{out[0]=a[1]*b[2]-a[2]*b[1];out[1]=a[2]*b[0]-a[0]*b[2];out[2]=a[0]*b[1]-a[1]*b[0];return out;}, distance:(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]) };
+
+        // --- Programa e Localizações de Uniforms (como v7) ---
+        const program = createProgram(gl, createShader(gl, gl.VERTEX_SHADER, vsSrc), createShader(gl, gl.FRAGMENT_SHADER, fsSrc));
+        const positionAttribLocation = gl.getAttribLocation(program, 'a_position'); /* ... outros getAttribLocation/getUniformLocation como v7.4 ... */ const normalAttribLocation = gl.getAttribLocation(program, 'a_normal'); const mvpMatrixUniformLocation = gl.getUniformLocation(program, 'u_mvpMatrix'); const modelMatrixUniformLocation = gl.getUniformLocation(program, 'u_modelMatrix'); const normalMatrixUniformLocation = gl.getUniformLocation(program, 'u_normalMatrix'); const colorUniformLocation = gl.getUniformLocation(program, 'u_color'); const lightDirectionUniformLocation = gl.getUniformLocation(program, 'u_lightDirection'); const ambientColorUniformLocation = gl.getUniformLocation(program, 'u_ambientColor'); const directionalColorUniformLocation = gl.getUniformLocation(program, 'u_directionalColor'); const viewPositionUniformLocation = gl.getUniformLocation(program, 'u_viewPosition'); const shininessUniformLocation = gl.getUniformLocation(program, 'u_shininess'); const specularColorUniformLocation = gl.getUniformLocation(program, 'u_specularColor');
+
+        // --- Geometrias (como antes) ---
+        function createCubeGeometry() { const p=new Float32Array([-0.5,-0.5,0.5,0.5,-0.5,0.5,0.5,0.5,0.5,-0.5,0.5,0.5,-0.5,-0.5,-0.5,-0.5,0.5,-0.5,0.5,0.5,-0.5,0.5,-0.5,-0.5,-0.5,0.5,-0.5,-0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,-0.5,-0.5,-0.5,-0.5,0.5,-0.5,-0.5,0.5,-0.5,0.5,-0.5,-0.5,0.5,0.5,-0.5,-0.5,0.5,0.5,-0.5,0.5,0.5,0.5,0.5,-0.5,0.5,-0.5,-0.5,-0.5,-0.5,-0.5,0.5,-0.5,0.5,0.5,-0.5,0.5,-0.5]); const n=new Float32Array([0,0,1,0,0,1,0,0,1,0,0,1,0,0,-1,0,0,-1,0,0,-1,0,0,-1,0,1,0,0,1,0,0,1,0,0,1,0,0,-1,0,0,-1,0,0,-1,0,0,-1,0,1,0,0,1,0,0,1,0,0,1,0,0,-1,0,0,-1,0,0,-1,0,0,-1,0,0]); const i=new Uint16Array([0,1,2,0,2,3,4,5,6,4,6,7,8,9,10,8,10,11,12,13,14,12,14,15,16,17,18,16,18,19,20,21,22,20,22,23]); return{positionBuffer:createBuffer(gl,p),normalBuffer:createBuffer(gl,n),indexBuffer:createBuffer(gl,i,gl.ELEMENT_ARRAY_BUFFER),vertexCount:i.length}; }
+        function createPlaneGeometry() { const p=new Float32Array([-0.5,-0.5,0,0.5,-0.5,0,-0.5,0.5,0,0.5,0.5,0]); const n=new Float32Array([0,0,1,0,0,1,0,0,1,0,0,1]); const i=new Uint16Array([0,1,3,0,3,2]); return{positionBuffer:createBuffer(gl,p),normalBuffer:createBuffer(gl,n),indexBuffer:createBuffer(gl,i,gl.ELEMENT_ARRAY_BUFFER),vertexCount:i.length}; }
+        const geometries = { cube: createCubeGeometry(), plane: createPlaneGeometry() };
+
+        // --- Estado Global da Simulação (como antes) ---
+        const workers = []; const staticRenderables = []; const officeTasks = []; let nextTaskId = 0;
+        const deskSpots = []; const loungeSpots = []; const cafeSpots = [];
+        const bathroomSpotsM = []; const bathroomSpotsF = [];
+        let workerIdCounter = 0;
+        let stuckCheckTimer = STUCK_CHECK_INTERVAL; // Timer para a verificação de stuck
+
+        // --- Funções Auxiliares Grid, Pathfinding A* (como v7.3) ---
+        function gridToWorld(gridX, gridZ) { return [gridX * GRID_UNIT + GRID_UNIT / 2, 0, gridZ * GRID_UNIT + GRID_UNIT / 2]; }
+        function worldToGrid(worldX, worldZ) { return [Math.floor(worldX / GRID_UNIT), Math.floor(worldZ / GRID_UNIT)]; }
+        function isWalkable(gridX, gridZ) { if (gridZ < 0 || gridZ >= officeLayout.length || gridX < 0 || gridX >= officeLayout[0].length) return false; const tileType = officeLayout[gridZ]?.[gridX]; switch(tileType) { case 1: case 10: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 'T': return false; case 0: case 11: case 12: default: return true; } } // Removido 'C'
+        function findPath(startX, startZ, targetX, targetZ) { function heuristic(x1, z1, x2, z2) { return Math.abs(x1 - x2) + Math.abs(z1 - z2); } const startNode = { x: startX, z: startZ, g: 0, h: heuristic(startX, startZ, targetX, targetZ), f: 0, parent: null }; startNode.f = startNode.h; const openList = [startNode]; const closedList = new Set(); while (openList.length > 0) { openList.sort((a, b) => a.f - b.f); const currentNode = openList.shift(); if (currentNode.x === targetX && currentNode.z === targetZ) { const path = []; let temp = currentNode; while (temp) { path.push([temp.x, temp.z]); temp = temp.parent; } return path.reverse(); } closedList.add(`${currentNode.x},${currentNode.z}`); const neighbors = [ { x: currentNode.x, z: currentNode.z - 1 }, { x: currentNode.x, z: currentNode.z + 1 }, { x: currentNode.x - 1, z: currentNode.z }, { x: currentNode.x + 1, z: currentNode.z } ]; for (const neighborCoords of neighbors) { const nx = neighborCoords.x; const nz = neighborCoords.z; const neighborKey = `${nx},${nz}`; if (!isWalkable(nx, nz) || closedList.has(neighborKey)) { continue; } const gCostTentative = currentNode.g + 1; let neighborNode = openList.find(node => node.x === nx && node.z === nz); if (!neighborNode) { neighborNode = { x: nx, z: nz, g: gCostTentative, h: heuristic(nx, nz, targetX, targetZ), f: 0, parent: currentNode }; neighborNode.f = neighborNode.g + neighborNode.h; openList.push(neighborNode); } else if (gCostTentative < neighborNode.g) { neighborNode.parent = currentNode; neighborNode.g = gCostTentative; neighborNode.f = neighborNode.g + neighborNode.h; } } } console.warn(`A* Path not found from (${startX},${startZ}) to (${targetX},${targetZ})`); return null; }
+
+        // --- *** NOVA FUNÇÃO: Corrigir NPCs Presos *** ---
+        function correctStuckWorkers() {
+            workers.forEach(worker => {
+                // Se o worker estiver se movendo ou dentro do banheiro, não interfira (a menos que esteja preso há muito tempo)
+                // Simplificação: Verificar apenas se está em local não caminhável
+                 if (!isWalkable(worker.currentGrid[0], worker.currentGrid[1])) {
+                    console.warn(`Worker ${worker.id} stuck at non-walkable grid ${worker.currentGrid}. Attempting correction.`);
+                    let foundWalkable = false;
+                    // Procurar vizinho caminhável imediato
+                    const neighbors = [ { dx: 0, dz: -1 }, { dx: 0, dz: 1 }, { dx: -1, dz: 0 }, { dx: 1, dz: 0 }, {dx: -1, dz: -1}, {dx: 1, dz: -1}, {dx: -1, dz: 1}, {dx: 1, dz: 1} ]; // Inclui diagonais
+                    for (const n of neighbors) {
+                        const checkX = worker.currentGrid[0] + n.dx;
+                        const checkZ = worker.currentGrid[1] + n.dz;
+                        if (isWalkable(checkX, checkZ)) {
+                            const [newWorldX, _, newWorldZ] = gridToWorld(checkX, checkZ);
+                            worker.pos = [newWorldX, 0, newWorldZ];
+                            worker.currentGrid = [checkX, checkZ];
+                            worker.targetPos = [...worker.pos];
+                            worker.currentPath = null;
+                            worker.pathIndex = 0;
+                            worker.state = 'idle'; // Força estado idle
+                            worker.stateTimer = 500 + Math.random() * 1000;
+                             worker.isInsideBathroom = false; // Garante que não fique "preso" dentro do banheiro logicamente
+                            console.log(`Moved worker ${worker.id} to walkable grid ${worker.currentGrid}.`);
+                            foundWalkable = true;
+                            break;
+                        }
+                    }
+                    if (!foundWalkable) {
+                        console.error(`Could not find adjacent walkable grid for stuck worker ${worker.id} at ${worker.currentGrid}. Worker might remain stuck.`);
+                        // Fallback mais drástico: Mover para a mesa (se tiver uma)
+                        if(worker.deskGrid) {
+                            const deskGridX = worker.deskGrid[0];
+                            const deskGridZ = worker.deskGrid[1];
+                             if(isWalkable(deskGridX, deskGridZ)) { // Verifica se a própria mesa é caminhável (deveria ser)
+                                const [deskWorldX, _, deskWorldZ] = gridToWorld(deskGridX, deskGridZ);
+                                worker.pos = [deskWorldX, 0, deskWorldZ];
+                                worker.currentGrid = [deskGridX, deskGridZ];
+                                worker.targetPos = [...worker.pos];
+                                worker.currentPath = null;
+                                worker.pathIndex = 0;
+                                worker.state = 'idle';
+                                worker.stateTimer = 1000;
+                                worker.isInsideBathroom = false;
+                                console.log(`Moved worker ${worker.id} to their desk grid ${worker.currentGrid} as fallback.`);
+                            }
+                        }
+                    }
+                 }
+            });
+        }
+
+        // --- Geração de Tarefas (como antes) ---
+        function generateTasks(count) { for(let i=0;i<count;i++){if(officeTasks.length>=MAX_TASKS)break;officeTasks.push({id:nextTaskId++,duration:TASK_DURATION_MIN+Math.random()*(TASK_DURATION_MAX-TASK_DURATION_MIN),assignedWorkerId:null,status:'pending'});}}
+
+        // --- Inicialização do Mundo (Itens Atualizados para Novo Layout) ---
+        function initializeWorld() {
+            staticRenderables.length = 0; workers.length = 0; officeTasks.length = 0;
+            deskSpots.length = 0; loungeSpots.length = 0; cafeSpots.length = 0;
+            bathroomSpotsM.length = 0; bathroomSpotsF.length = 0;
+            workerIdCounter = 0;
+
+            // Chão
+            staticRenderables.push({ geometryType: 'plane', position: [WORLD_WIDTH_UNITS * GRID_UNIT / 2, -0.05, WORLD_DEPTH_UNITS * GRID_UNIT / 2], scale: [WORLD_WIDTH_UNITS * GRID_UNIT, WORLD_DEPTH_UNITS * GRID_UNIT, 1], rotation: [-Math.PI/2, 0, 0], color: COLORS_RGB.floor, shininess: 10 });
+
+            // 1. Processar Layout para Itens Visuais
+             for (let z = 0; z < WORLD_DEPTH_UNITS; z++) {
+                for (let x = 0; x < WORLD_WIDTH_UNITS; x++) {
+                    const tileType = officeLayout[z]?.[x];
+                    if (tileType === undefined || tileType === 1 || tileType === 10 || tileType === 0 || tileType === 11 || tileType === 12) continue;
+                    const [worldX, _, worldZ] = gridToWorld(x, z);
+                    const shelfColor = COLORS_RGB.bookshelf;
+                    const shelfShininess = 18;
+
+                    switch(tileType) {
+                         case 2: // Mesa (com Gaveteiro e Cadeira)
+                            const deskHeight = GRID_UNIT * 0.7; const deskTopThickness = 0.1; const legHeight = deskHeight - deskTopThickness; const legShininess = 64; const deskTopShininess = 20;
+                            staticRenderables.push({ geometryType:'cube', position:[worldX, deskHeight - deskTopThickness/2, worldZ], scale:[GRID_UNIT*0.9, deskTopThickness, GRID_UNIT*0.5], color: COLORS_RGB.desk_top, shininess: deskTopShininess });
+                            staticRenderables.push({ geometryType:'cube', position:[worldX - GRID_UNIT*0.4, legHeight/2, worldZ], scale:[0.1, legHeight, 0.1], color: COLORS_RGB.desk_leg, shininess: legShininess });
+                            const drawerWidth = GRID_UNIT * 0.3; const drawerHeight = legHeight * 0.9;
+                            staticRenderables.push({ geometryType:'cube', position:[worldX + GRID_UNIT*0.4 - drawerWidth/2, drawerHeight/2, worldZ], scale:[drawerWidth, drawerHeight, GRID_UNIT*0.45], color: COLORS_RGB.desk_drawer || COLORS_RGB.desk_leg, shininess: legShininess * 0.8 });
+                            // Cadeira posicionada um pouco à frente da mesa para visualização
+                            const chairSeatHeight = GRID_UNIT * 0.4;
+                            const chairVisualZOffset = GRID_UNIT * 0.4; // Afastamento visual da cadeira
+                            const chairWorldX = worldX; const chairWorldZ = worldZ + chairVisualZOffset;
+                            staticRenderables.push({ geometryType:'cube', position:[chairWorldX, chairSeatHeight/2 - 0.05, chairWorldZ], scale:[0.3,0.3,0.3], color: COLORS_RGB.chair_base, shininess: 40 }); staticRenderables.push({ geometryType:'cube', position:[chairWorldX, chairSeatHeight - 0.05, chairWorldZ], scale:[GRID_UNIT*0.4,0.1,GRID_UNIT*0.4], color: COLORS_RGB.chair_seat, shininess: 15 }); staticRenderables.push({ geometryType:'cube', position:[chairWorldX, chairSeatHeight + 0.2, chairWorldZ + 0.15], scale:[GRID_UNIT*0.4,0.4,0.08], color: COLORS_RGB.chair_back, shininess: 15 });
+                            // Computador
+                            const monitorHeight=0.5, monitorWidth=0.7, monitorDepth=0.05; staticRenderables.push({ geometryType:'cube', position:[worldX, deskHeight + monitorHeight/2, worldZ - GRID_UNIT*0.15], scale:[monitorWidth,monitorHeight,monitorDepth], color: COLORS_RGB.computer_monitor, shininess: 80 }); staticRenderables.push({ geometryType:'cube', position:[worldX, deskHeight + 0.05, worldZ - GRID_UNIT*0.18], scale:[0.1,0.1,0.1], color: COLORS_RGB.computer_base, shininess: 50 });
+                            break; // DeskSpot é adicionado depois
+                        case 3: // Maquina Cafe
+                            staticRenderables.push({ geometryType: 'cube', position: [worldX, GRID_UNIT*0.5, worldZ], scale: [GRID_UNIT*0.4, GRID_UNIT, GRID_UNIT*0.4], color: COLORS_RGB.coffee_machine, shininess: 70 });
+                            break; // CafeSpot é adicionado depois
+                        case 4: // Biblioteca (com livros)
+                            const shelfTotalHeight = GRID_UNIT * 2; const shelfWidth = GRID_UNIT * 0.8; const shelfDepth = GRID_UNIT * 0.3; const panelThickness = 0.06; const numShelves = 4;
+                            staticRenderables.push({ geometryType: 'cube', position: [worldX - shelfWidth/2 + panelThickness/2, shelfTotalHeight/2, worldZ], scale: [panelThickness, shelfTotalHeight, shelfDepth], color: shelfColor, shininess: shelfShininess });
+                            staticRenderables.push({ geometryType: 'cube', position: [worldX + shelfWidth/2 - panelThickness/2, shelfTotalHeight/2, worldZ], scale: [panelThickness, shelfTotalHeight, shelfDepth], color: shelfColor, shininess: shelfShininess });
+                            for (let i = 0; i <= numShelves; i++) {
+                                const shelfY = (shelfTotalHeight / numShelves) * i + (i == 0 ? panelThickness/2 : -panelThickness/2); // Ajusta Y
+                                const currentShelfY = shelfY - panelThickness/2; // Y do topo da prateleira
+                                staticRenderables.push({ geometryType: 'cube', position: [worldX, currentShelfY, worldZ], scale: [shelfWidth - panelThickness*2, panelThickness, shelfDepth * 0.95], color: shelfColor, shininess: shelfShininess * 0.9 });
+                                // Adicionar Livros (exceto na base e topo)
+                                if (i > 0 && i < numShelves) {
+                                    const bookSpaceWidth = shelfWidth - panelThickness * 2 - 0.2; // Espaço útil
+                                    let currentBookX = worldX - bookSpaceWidth / 2;
+                                    const bookY = currentShelfY + panelThickness / 2; // Base do livro sobre a prateleira
+                                    for (let b = 0; b < 8; b++) { // Número de "livros" ou grupos
+                                        const bookWidth = (0.05 + Math.random() * 0.15) * GRID_UNIT;
+                                        const bookHeight = (0.2 + Math.random() * 0.15) * GRID_UNIT;
+                                        const bookDepth = (shelfDepth * 0.9) * (0.8 + Math.random() * 0.2);
+                                        const bookColor = COLORS_RGB.book_colors[Math.floor(Math.random() * COLORS_RGB.book_colors.length)];
+                                        if (currentBookX + bookWidth / 2 < worldX + bookSpaceWidth / 2) {
+                                            staticRenderables.push({
+                                                geometryType: 'cube',
+                                                position: [currentBookX + bookWidth / 2, bookY + bookHeight / 2, worldZ],
+                                                scale: [bookWidth, bookHeight, bookDepth],
+                                                color: bookColor,
+                                                shininess: 5 + Math.random() * 10
+                                            });
+                                            currentBookX += bookWidth + (0.02 + Math.random() * 0.05) * GRID_UNIT; // Espaçamento
+                                        } else break; // Sem espaço
+                                    }
+                                }
+                            }
+                            staticRenderables.push({ geometryType: 'cube', position: [worldX, shelfTotalHeight/2, worldZ - shelfDepth/2 + panelThickness/2], scale: [shelfWidth - panelThickness*2, shelfTotalHeight-panelThickness*2, panelThickness], color: shelfColor, shininess: shelfShininess });
+                            break;
+                        case 5: // Sofa
+                             staticRenderables.push({ geometryType: 'cube', position: [worldX, GRID_UNIT*0.3, worldZ], scale: [GRID_UNIT*1.2, GRID_UNIT*0.6, GRID_UNIT*0.5], color: COLORS_RGB.sofa, shininess: 12 });
+                             break; // LoungeSpot adicionado depois
+                        case 6: // Planta (com variação)
+                             const potScaleFactor = 0.9 + Math.random() * 0.2; const leavesScaleFactor = 0.8 + Math.random() * 0.4; const potHeight = GRID_UNIT*0.4 * potScaleFactor; const potSize = GRID_UNIT*0.3 * potScaleFactor; const leavesHeight = GRID_UNIT*0.4 * leavesScaleFactor; const leavesSize = GRID_UNIT*0.4 * leavesScaleFactor;
+                             staticRenderables.push({ geometryType: 'cube', position: [worldX, potHeight*0.5 -GRID_UNIT*0.05, worldZ], scale: [potSize,potHeight,potSize], color: COLORS_RGB.plant_pot, shininess: 25 });
+                             staticRenderables.push({ geometryType: 'cube', position: [worldX, potHeight + leavesHeight*0.5 -GRID_UNIT*0.05, worldZ], scale: [leavesSize, leavesHeight, leavesSize], color: COLORS_RGB.plant_leaves, shininess: 8 }); break;
+                        case 7: // Pufe
+                             staticRenderables.push({ geometryType: 'cube', position: [worldX, GRID_UNIT*0.2, worldZ], scale: [GRID_UNIT*0.6,GRID_UNIT*0.4,GRID_UNIT*0.6], color: COLORS_RGB.beanbag, shininess: 15 });
+                             break; // LoungeSpot adicionado depois
+                        case 8: // Balcao Cafe
+                             staticRenderables.push({ geometryType: 'cube', position: [worldX, GRID_UNIT*0.4, worldZ], scale: [GRID_UNIT, GRID_UNIT*0.8, GRID_UNIT*0.4], color: COLORS_RGB.coffee_counter, shininess: 30 });
+                             break; // CafeSpot adicionado depois
+                        case 'T': // TV
+                             staticRenderables.push({ geometryType:'cube', position:[worldX, GRID_UNIT*1.2, worldZ + GRID_UNIT*0.45], scale:[GRID_UNIT*1.5, GRID_UNIT*0.8, 0.1], color: COLORS_RGB.tv_bezel, shininess: 50 });
+                             staticRenderables.push({ geometryType:'cube', position:[worldX, GRID_UNIT*1.2, worldZ + GRID_UNIT*0.4], scale:[GRID_UNIT*1.4, GRID_UNIT*0.7, 0.05], color: COLORS_RGB.tv_screen, shininess: 5 });
+                             break; // LoungeSpot adicionado depois
+                    }
+                 }
+             }
+
+            // 2. Identificar Pontos de Interesse (Baseado no Novo Layout)
+            for (let z = 0; z < WORLD_DEPTH_UNITS; z++) {
+                for (let x = 0; x < WORLD_WIDTH_UNITS; x++) {
+                    const tileType = officeLayout[z]?.[x];
+                     const [worldX, _, worldZ] = gridToWorld(x, z);
+
+                    // Pontos de Trabalho (Mesas) -> O worker vai para o grid em frente à mesa
+                    if (tileType === 2) {
+                        const targetGridZ = z + 1; // Assumindo que a cadeira está sempre abaixo da mesa no layout
+                        if (isWalkable(x, targetGridZ)) { // Verifica se o local da cadeira é caminhável
+                             const [targetWorldX, _, targetWorldZ] = gridToWorld(x, targetGridZ);
+                            deskSpots.push({
+                                pos: [targetWorldX, 0, targetWorldZ], // Posição física onde o worker para
+                                gridX: x,          // Grid X da *mesa*
+                                gridZ: targetGridZ, // Grid Z onde o worker para (em frente à mesa)
+                                deskGridActual: [x, z], // Grid da própria mesa (referência)
+                                workerId: null
+                            });
+                        } else {
+                            console.warn(`Cannot place desk spot at (${x}, ${targetGridZ}) for desk at (${x}, ${z}) as it's unwalkable.`);
+                        }
+                    }
+                    // Pontos de Descanso (Sofá, Pufe, perto da TV)
+                    else if (tileType === 5 || tileType === 7 || tileType === 'T') {
+                         // Adiciona pontos caminháveis *ao redor* do objeto
+                         const checkNeighbors = [{dx:0,dz:1},{dx:0,dz:-1},{dx:1,dz:0},{dx:-1,dz:0}];
+                         for(const n of checkNeighbors) {
+                            const nx = x + n.dx;
+                            const nz = z + n.dz;
+                            if(isWalkable(nx, nz) && !loungeSpots.some(p => p.gridX === nx && p.gridZ === nz)) {
+                                loungeSpots.push({gridX: nx, gridZ: nz});
+                            }
+                         }
+                    }
+                    // Pontos de Café (Máquina, Balcão)
+                    else if (tileType === 3 || tileType === 8) {
+                         // Adiciona pontos caminháveis *ao redor* do objeto
+                         const checkNeighbors = [{dx:0,dz:1},{dx:0,dz:-1},{dx:1,dz:0},{dx:-1,dz:0}];
+                         for(const n of checkNeighbors) {
+                            const nx = x + n.dx;
+                            const nz = z + n.dz;
+                             if(isWalkable(nx, nz) && !cafeSpots.some(p => p.gridX === nx && p.gridZ === nz)) {
+                                cafeSpots.push({gridX: nx, gridZ: nz});
+                            }
+                         }
+                    }
+                     // Portas dos Banheiros
+                     else if (tileType === 11) { bathroomSpotsM.push({gridX: x, gridZ: z}); }
+                     else if (tileType === 12) { bathroomSpotsF.push({gridX: x, gridZ: z}); }
+                }
+            }
+
+             // Remover duplicados dos spots de lounge/cafe (caso objetos estejam adjacentes)
+             const uniqueLounge = Array.from(new Map(loungeSpots.map(item => [`${item.gridX},${item.gridZ}`, item])).values());
+             const uniqueCafe = Array.from(new Map(cafeSpots.map(item => [`${item.gridX},${item.gridZ}`, item])).values());
+             loungeSpots.length = 0; loungeSpots.push(...uniqueLounge);
+             cafeSpots.length = 0; cafeSpots.push(...uniqueCafe);
+
+
+            // 3. Processar Layout para Paredes E Portas (como v7.4 - deve funcionar com novo layout)
+            const wallSegments = new Set();
+            for (let z = 0; z < WORLD_DEPTH_UNITS; z++) {
+                for (let x = 0; x < WORLD_WIDTH_UNITS; x++) { /* ... lógica parede/porta inalterada ... */ const currentTileType = officeLayout[z]?.[x]; if (currentTileType !== 1 && currentTileType !== 10) continue; const isExternalWall = currentTileType === 1; const wallHeight = (isExternalWall ? EXT_WALL_HEIGHT_FACTOR : WALL_HEIGHT_FACTOR) * GRID_UNIT; const wallColor = isExternalWall ? COLORS_RGB.wall : COLORS_RGB.wall_internal; const wallShininess = 8; const doorHeight = DOOR_HEIGHT_FACTOR * GRID_UNIT; const doorShininess = 22; const neighbors = [ { dx: 0, dz: -1, orientation: 'h', edgeZOffset: 0 }, { dx: 0, dz: 1,  orientation: 'h', edgeZOffset: 1 }, { dx: -1, dz: 0, orientation: 'v', edgeXOffset: 0 }, { dx: 1,  dz: 0, orientation: 'v', edgeXOffset: 1 } ]; for (const neighbor of neighbors) { const nx = x + neighbor.dx; const nz = z + neighbor.dz; const neighborTileType = (nz >= 0 && nz < WORLD_DEPTH_UNITS && nx >= 0 && nx < WORLD_WIDTH_UNITS) ? officeLayout[nz][nx] : undefined; if (neighborTileType === 1 || neighborTileType === 10) continue; let segmentData = null; let segmentKey = ''; if (neighbor.orientation === 'h') { const segmentX = x * GRID_UNIT + GRID_UNIT / 2; const segmentZ = (z + neighbor.edgeZOffset) * GRID_UNIT; segmentKey = `${x},${z + neighbor.edgeZOffset},h`; if (!wallSegments.has(segmentKey)) { if (neighborTileType === 11) { segmentData = { geometryType: 'cube', position: [segmentX, doorHeight / 2, segmentZ], scale: [GRID_UNIT * DOOR_WIDTH_FACTOR, doorHeight, WALL_THICKNESS], color: COLORS_RGB.door_m, shininess: doorShininess }; } else if (neighborTileType === 12) { segmentData = { geometryType: 'cube', position: [segmentX, doorHeight / 2, segmentZ], scale: [GRID_UNIT * DOOR_WIDTH_FACTOR, doorHeight, WALL_THICKNESS], color: COLORS_RGB.door_f, shininess: doorShininess }; } else if ((neighborTileType !== undefined && neighborTileType !== 0) || isExternalWall || officeLayout[z]?.[x] === 10 ) { segmentData = { geometryType: 'cube', position: [segmentX, wallHeight / 2, segmentZ], scale: [GRID_UNIT, wallHeight, WALL_THICKNESS], color: wallColor, shininess: wallShininess }; } } } else { const segmentX = (x + neighbor.edgeXOffset) * GRID_UNIT; const segmentZ = z * GRID_UNIT + GRID_UNIT / 2; segmentKey = `${x + neighbor.edgeXOffset},${z},v`; if (!wallSegments.has(segmentKey)) { if (neighborTileType === 11) { segmentData = { geometryType: 'cube', position: [segmentX, doorHeight / 2, segmentZ], scale: [WALL_THICKNESS, doorHeight, GRID_UNIT * DOOR_WIDTH_FACTOR], color: COLORS_RGB.door_m, shininess: doorShininess }; } else if (neighborTileType === 12) { segmentData = { geometryType: 'cube', position: [segmentX, doorHeight / 2, segmentZ], scale: [WALL_THICKNESS, doorHeight, GRID_UNIT * DOOR_WIDTH_FACTOR], color: COLORS_RGB.door_f, shininess: doorShininess }; } else if ((neighborTileType !== undefined && neighborTileType !== 0) || isExternalWall || officeLayout[z]?.[x] === 10 ) { segmentData = { geometryType: 'cube', position: [segmentX, wallHeight / 2, segmentZ], scale: [WALL_THICKNESS, wallHeight, GRID_UNIT], color: wallColor, shininess: wallShininess }; } } } if (segmentData) { staticRenderables.push(segmentData); wallSegments.add(segmentKey); } } }
+            }
+
+
+            // 4. Criar Workers
+             const availableDeskSpots = [...deskSpots];
+             if(availableDeskSpots.length === 0) { console.error("NENHUM deskSpot encontrado! Verifique o layout e a lógica de identificação."); return; }
+
+             for (let i = 0; i < NUM_WORKERS; i++) {
+                  if (availableDeskSpots.length === 0) { console.warn(`Mesas (${deskSpots.length}) insuficientes para ${NUM_WORKERS} workers. Criando ${workers.length} workers.`); break; }
+                 const deskIndex = Math.floor(Math.random() * availableDeskSpots.length);
+                 const assignedDeskSpot = availableDeskSpots.splice(deskIndex, 1)[0];
+                 assignedDeskSpot.workerId = workerIdCounter;
+                 const startPos = assignedDeskSpot.pos; // Posição inicial é onde ele "senta"
+                 const startGrid = [assignedDeskSpot.gridX, assignedDeskSpot.gridZ]; // Grid inicial é onde ele "senta"
+
+                 const headHeight = NPC_TOTAL_HEIGHT * NPC_HEAD_RATIO; const torsoHeight = NPC_TOTAL_HEIGHT * (1.0 - NPC_HEAD_RATIO); const headScale = [headHeight * 0.8, headHeight, headHeight * 0.8]; const torsoScale = [torsoHeight * 0.5, torsoHeight, torsoHeight * 0.3]; const shirtColor = COLORS_RGB.worker_shirt_colors[i % COLORS_RGB.worker_shirt_colors.length];
+                 workers.push({
+                    id: workerIdCounter++, pos: [...startPos], targetPos: [...startPos],
+                    currentGrid: [...startGrid], targetGrid: [...startGrid],
+                    deskGrid: assignedDeskSpot.deskGridActual, // *** Referência ao grid da MESA ***
+                    deskSpotGrid: startGrid, // *** O grid onde ele para para trabalhar ***
+                    speed: 0.8 + Math.random() * 0.4, state: 'idle', stateTimer: 500 + Math.random() * 8000,
+                    needs: { bathroom: Math.random()*0.5, break: Math.random()*0.5 }, timeSinceBreak: Math.random() * WORK_TIME_BEFORE_BREAK_CHANCE, timeSinceBathroom: Math.random() * WORK_TIME_BEFORE_BATHROOM_CHANCE,
+                    currentTask: null, taskProgress: 0, currentPath: null, pathIndex: 0,
+                    headScale: headScale, torsoScale: torsoScale, headColor: COLORS_RGB.worker_skin, torsoColor: shirtColor,
+                    shininessBody: 10, shininessHead: 15, isInsideBathroom: false
+                });
+             }
+            generateTasks(MAX_TASKS / 2);
+            console.log(`Initialized with ${workers.length} workers.`);
+            console.log(`Interest Points: Desks(${deskSpots.length}), Lounge(${loungeSpots.length}), Cafe(${cafeSpots.length}), BathM(${bathroomSpotsM.length}), BathF(${bathroomSpotsF.length})`);
+            if(loungeSpots.length === 0) console.warn("Nenhum loungeSpot encontrado!");
+            if(cafeSpots.length === 0) console.warn("Nenhum cafeSpot encontrado!");
+            if(bathroomSpotsM.length === 0) console.warn("Nenhum bathroomSpotM encontrado!");
+            if(bathroomSpotsF.length === 0) console.warn("Nenhum bathroomSpotF encontrado!");
+        }
+
+        // --- Sistema de Tarefas (como antes) ---
+        function assignTask(worker) { if(worker.currentTask)return true;const idx=officeTasks.findIndex(t=>t.status==='pending');if(idx!==-1){const task=officeTasks[idx];task.assignedWorkerId=worker.id;task.status='assigned';worker.currentTask=task;worker.taskProgress=task.duration;return true;}return false;}
+
+         // --- Lógica dos Workers (Atualizada para Novo Layout e Correções) ---
+         function updateWorkers(deltaTimeSeconds) {
+             const dtMs = deltaTimeSeconds * 1000;
+             if (officeTasks.filter(t=>t.status==='pending').length<workers.length/4&&officeTasks.filter(t=>t.status!=='completed').length<MAX_TASKS*0.8){generateTasks(workers.length/2);}
+
+             workers.forEach(worker => {
+                 // Lógica do banheiro (com fallback de correção)
+                 if (worker.isInsideBathroom) {
+                     worker.stateTimer -= dtMs;
+                     if (worker.state === 'using_bathroom' && worker.stateTimer <= 0) {
+                         worker.isInsideBathroom = false; // Tenta sair
+                         const destinationGrid = worker.deskSpotGrid; // *** Volta para o PONTO da mesa ***
+                         worker.state = 'moving_to_desk';
+                         // Garante que currentGrid está na porta antes de pathfind
+                         const doorGrid = worldToGrid(worker.pos[0], worker.pos[2]);
+                         if(!isWalkable(doorGrid[0], doorGrid[1]) && (officeLayout[doorGrid[1]]?.[doorGrid[0]] === 11 || officeLayout[doorGrid[1]]?.[doorGrid[0]] === 12)) {
+                              worker.currentGrid = [...doorGrid]; // Atualiza se estava ligeiramente fora
+                         } else {
+                            // Se não estava na porta, pode ter sido corrigido, tenta do grid atual
+                         }
+
+                         const path = findPath(worker.currentGrid[0], worker.currentGrid[1], destinationGrid[0], destinationGrid[1]);
+                         if (path && path.length > 1) {
+                             worker.currentPath = path; worker.pathIndex = 1;
+                             const [targetWorldX, _, targetWorldZ] = gridToWorld(path[1][0], path[1][1]);
+                             worker.targetPos = [targetWorldX, 0, targetWorldZ];
+                         } else {
+                             console.warn(`Worker ${worker.id} no path from bathroom ${worker.currentGrid} to desk spot ${destinationGrid}. Reverting to idle.`);
+                             // A função correctStuckWorkers deve pegá-lo se ele ficar preso na porta
+                             worker.state = 'idle';
+                             worker.stateTimer = 1000 + Math.random() * 1000; // Espera um pouco antes de tentar de novo
+                             worker.currentPath = null; worker.pathIndex = 0;
+                         }
+                     }
+                     return; // Pula o resto se está (ou acabou de sair) do banheiro
+                 }
+
+                 // Update normal
+                 worker.stateTimer -= dtMs;
+                 worker.currentGrid = worldToGrid(worker.pos[0], worker.pos[2]);
+                 // *** Verifica se está no PONTO da mesa (deskSpotGrid) ***
+                 const isAtDeskSpot = worker.currentGrid[0] === worker.deskSpotGrid[0] && worker.currentGrid[1] === worker.deskSpotGrid[1];
+
+                 // Acumular necessidades
+                 if (worker.state === 'working' || (worker.state === 'idle' && isAtDeskSpot )) { /* ... (inalterado) ... */ worker.timeSinceBreak+=dtMs;worker.timeSinceBathroom+=dtMs;if(worker.timeSinceBreak>WORK_TIME_BEFORE_BREAK_CHANCE)worker.needs.break+=Math.random()*0.00015*dtMs*(worker.timeSinceBreak/WORK_TIME_BEFORE_BREAK_CHANCE);if(worker.timeSinceBathroom>WORK_TIME_BEFORE_BATHROOM_CHANCE)worker.needs.bathroom+=Math.random()*0.00012*dtMs*(worker.timeSinceBathroom/WORK_TIME_BEFORE_BATHROOM_CHANCE);worker.needs.break=Math.min(worker.needs.break,1.0);worker.needs.bathroom=Math.min(worker.needs.bathroom,1.0); }
+                 // Progresso da tarefa
+                 if (worker.state === 'working' && worker.currentTask) { worker.taskProgress -= dtMs; worker.stateTimer = worker.taskProgress; }
+
+                 // Lógica de Movimento (como v7.4)
+                 if (worker.state.startsWith('moving_')) { if (!worker.currentPath || worker.pathIndex >= worker.currentPath.length) { if (worker.currentPath && worker.pathIndex >= worker.currentPath.length) { const finalGrid = worker.currentPath[worker.currentPath.length - 1]; const finalWorldPos = gridToWorld(finalGrid[0], finalGrid[1]); worker.pos[0] = finalWorldPos[0]; worker.pos[2] = finalWorldPos[2]; worker.currentGrid = [...finalGrid]; } worker.currentPath = null; worker.pathIndex = 0; if (worker.state === 'moving_to_desk') { worker.state = 'idle'; worker.stateTimer = 500 + Math.random()*1500; } else if (worker.state === 'moving_to_break') { worker.state = 'on_break'; worker.stateTimer = BREAK_DURATION_MIN + Math.random()*(BREAK_DURATION_MAX-BREAK_DURATION_MIN); } else if (worker.state === 'moving_to_bathroom') { worker.isInsideBathroom = true; worker.state = 'using_bathroom'; worker.stateTimer = BATHROOM_DURATION_MIN + Math.random()*(BATHROOM_DURATION_MAX-BATHROOM_DURATION_MIN); } else if (worker.state === 'moving_to_desk_for_work') { worker.state = 'working'; worker.stateTimer = worker.currentTask ? worker.taskProgress : 500; } else { worker.state = 'idle'; worker.stateTimer = 500; } } else { const targetGrid = worker.currentPath[worker.pathIndex]; const [targetWorldX, _, targetWorldZ] = gridToWorld(targetGrid[0], targetGrid[1]); worker.targetPos = [targetWorldX, 0, targetWorldZ]; const dx = worker.targetPos[0] - worker.pos[0]; const dz = worker.targetPos[2] - worker.pos[2]; const dist = Math.sqrt(dx * dx + dz * dz); const moveAmount = worker.speed * GRID_UNIT * deltaTimeSeconds; if (dist < moveAmount || dist < 0.1) { worker.pos[0] = targetWorldX; worker.pos[2] = targetWorldZ; worker.pathIndex++; if (worker.pathIndex < worker.currentPath.length) { const nextTargetGrid = worker.currentPath[worker.pathIndex]; const [nextTargetWorldX, _, nextTargetWorldZ] = gridToWorld(nextTargetGrid[0], nextTargetGrid[1]); worker.targetPos = [nextTargetWorldX, 0, nextTargetWorldZ]; } } else { worker.pos[0] += (dx / dist) * moveAmount; worker.pos[2] += (dz / dist) * moveAmount; } } }
+                 // Lógica de Decisão (como v7.4, mas usando deskSpotGrid)
+                 else if (worker.stateTimer <= 0 || worker.state === 'idle') {
+                     let needsPath = false; let destinationGrid = null; let nextState = worker.state; let decidedAction = false;
+
+                     if (worker.state === 'idle') {
+                          if (!decidedAction && worker.needs.bathroom > NEED_THRESHOLD && Math.random() < CHANCE_TO_ACT_ON_NEED) {
+                              const targetBathroomPool = Math.random() > 0.5 ? bathroomSpotsF : bathroomSpotsM;
+                              if (targetBathroomPool.length > 0) { const targetSpot = targetBathroomPool[Math.floor(Math.random() * targetBathroomPool.length)]; destinationGrid = [targetSpot.gridX, targetSpot.gridZ]; nextState = 'moving_to_bathroom'; needsPath = true; worker.needs.bathroom = 0; worker.timeSinceBathroom = 0; decidedAction = true; }
+                          }
+                          if (!decidedAction && worker.needs.break > NEED_THRESHOLD && Math.random() < CHANCE_TO_ACT_ON_NEED) {
+                              const breakPool = [...loungeSpots, ...cafeSpots]; // Combina lounge e cafe para pausas
+                              if (breakPool.length > 0) { const targetSpot = breakPool[Math.floor(Math.random() * breakPool.length)]; destinationGrid = [targetSpot.gridX, targetSpot.gridZ]; nextState = 'moving_to_break'; needsPath = true; worker.needs.break = 0; worker.timeSinceBreak = 0; decidedAction = true; }
+                               else { if(loungeSpots.length === 0 && cafeSpots.length === 0) console.warn("No break spots (lounge or cafe) available!"); worker.stateTimer = 1500 + Math.random()*2000; } // Espera se não houver locais
+                          }
+                          if (!decidedAction && worker.currentTask && worker.state !== 'working') {
+                              if (!isAtDeskSpot) { // *** Precisa ir para o PONTO da mesa ***
+                                  destinationGrid = worker.deskSpotGrid; nextState = 'moving_to_desk_for_work'; needsPath = true; decidedAction = true;
+                              } else { worker.state = 'working'; worker.stateTimer = worker.currentTask.duration; decidedAction = true; needsPath = false; }
+                          }
+                          if (!decidedAction && !worker.currentTask && assignTask(worker)) {
+                              if (!isAtDeskSpot) { // *** Precisa ir para o PONTO da mesa ***
+                                   destinationGrid = worker.deskSpotGrid; nextState = 'moving_to_desk_for_work'; needsPath = true;
+                               } else { worker.state = 'working'; worker.stateTimer = worker.currentTask.duration; needsPath = false; }
+                               decidedAction = true;
+                          }
+                          if (!decidedAction && worker.state === 'idle') { worker.stateTimer = 1000 + Math.random()*1500; }
+
+                     } else if (worker.stateTimer <= 0) {
+                         switch (worker.state) {
+                             case 'working': if (worker.currentTask) { worker.currentTask.status = 'completed'; worker.currentTask = null; } worker.taskProgress = 0; worker.state = 'idle'; worker.stateTimer = 500 + Math.random()*1000; decidedAction = true; needsPath = false; break;
+                             case 'on_break': destinationGrid = worker.deskSpotGrid; nextState = 'moving_to_desk'; needsPath = true; decidedAction = true; break; // *** Volta para o PONTO da mesa ***
+                         }
+                     }
+
+                     // Iniciar Pathfinding
+                     if (needsPath && destinationGrid) {
+                         const path = findPath(worker.currentGrid[0], worker.currentGrid[1], destinationGrid[0], destinationGrid[1]);
+                         if (path && path.length > 1) { worker.currentPath = path; worker.pathIndex = 1; worker.state = nextState; const [targetWorldX, _, targetWorldZ] = gridToWorld(path[1][0], path[1][1]); worker.targetPos = [targetWorldX, 0, targetWorldZ]; }
+                         else { console.warn(`Worker ${worker.id} no path from ${worker.currentGrid} to ${destinationGrid} for state ${nextState}. Reverting to idle.`); worker.state = 'idle'; worker.stateTimer = 3000 + Math.random() * 2000; if(nextState === 'moving_to_bathroom') worker.needs.bathroom = NEED_THRESHOLD; if(nextState === 'moving_to_break') worker.needs.break = NEED_THRESHOLD; if(nextState === 'moving_to_desk_for_work' && worker.currentTask) { worker.currentTask.status = 'pending'; worker.currentTask.assignedWorkerId = null; worker.currentTask = null; } }
+                     } else if (needsPath && !destinationGrid) { console.error(`Worker ${worker.id} needs path but destinationGrid is null! State: ${worker.state} -> ${nextState}`); worker.state = 'idle'; worker.stateTimer = 1000; }
+                 }
+             }); // Fim do forEach worker
+         } // Fim do updateWorkers
+
+
+        // --- Controle da Câmera (como antes) ---
+        let isDragging = false; let lastMouseX = 0; let lastMouseY = 0; /* ... listeners ... */ canvas.addEventListener('mousedown', (e) => { isDragging = true; lastMouseX = e.clientX; lastMouseY = e.clientY; canvas.style.cursor = 'grabbing'; }); canvas.addEventListener('mouseup', () => { isDragging = false; canvas.style.cursor = 'grab'; }); canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'grab'; }); canvas.addEventListener('mousemove', (e) => { if (!isDragging) return; const dx = e.clientX - lastMouseX; const dy = e.clientY - lastMouseY; camera.angleY -= dx * 0.005; camera.angleX -= dy * 0.005; camera.angleX = Math.max(0.01, Math.min(Math.PI / 2 - 0.01, camera.angleX)); lastMouseX = e.clientX; lastMouseY = e.clientY; }); canvas.addEventListener('wheel', (e) => { e.preventDefault(); const zoomAmount = e.deltaY * 0.1; camera.distance += zoomAmount; camera.distance = Math.max(camera.minDistance, Math.min(camera.maxDistance, camera.distance)); }); function updateCameraPosition() { const camX=camera.target[0]+camera.distance*Math.sin(camera.angleY)*Math.cos(camera.angleX); const camY=camera.target[1]+camera.distance*Math.sin(camera.angleX); const camZ=camera.target[2]+camera.distance*Math.cos(camera.angleY)*Math.cos(camera.angleX); camera.position[0]=camX; camera.position[1]=camY; camera.position[2]=camZ; }
+
+
+        // --- Loop Principal de Renderização WebGL ---
+        let lastTime = 0;
+        const projectionMatrix = mat4.create(); const viewMatrix = mat4.create(); const modelMatrix = mat4.create();
+        const normalMatrix = mat3.create(); const mvpMatrix = mat4.create();
+        const lightDirection = vec3.normalize([], [-0.5, -0.8, -0.3]);
+        const ambientColor = [0.3, 0.3, 0.35];
+        const directionalColor = [0.7, 0.7, 0.65];
+        const globalSpecularColor = [0.9, 0.9, 0.9];
+        const defaultShininess = 32;
+        const taskInfoDiv = document.getElementById('taskInfo');
+
+        function renderLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            const deltaTimeSeconds = deltaTime * 0.001 || 0;
+            lastTime = timestamp;
+
+            // --- Atualizações ---
+            updateWorkers(deltaTimeSeconds);
+            updateCameraPosition();
+
+             // --- Verificação Periódica de Stuck ---
+             stuckCheckTimer -= deltaTime;
+             if (stuckCheckTimer <= 0) {
+                 correctStuckWorkers();
+                 stuckCheckTimer = STUCK_CHECK_INTERVAL; // Reseta timer
+             }
+
+            // --- UI Update ---
+            const pendingTasks = officeTasks.filter(t=>t.status==='pending').length; const activeTasks = officeTasks.filter(t=>t.status==='assigned').length; taskInfoDiv.textContent = `Tarefas Pendentes: ${pendingTasks} / Ativas: ${activeTasks}`;
+
+            // --- Renderização ---
+            gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
+            gl.clearColor(0.18, 0.19, 0.21, 1.0);
+            gl.clearDepth(1.0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+            mat4.perspective(projectionMatrix, camera.fovDegrees*Math.PI/180, aspect, camera.near, camera.far);
+            mat4.lookAt(viewMatrix, camera.position, camera.target, camera.up);
+
+            gl.useProgram(program);
+            gl.uniform3fv(lightDirectionUniformLocation, lightDirection);
+            gl.uniform3fv(ambientColorUniformLocation, ambientColor);
+            gl.uniform3fv(directionalColorUniformLocation, directionalColor);
+            gl.uniform3fv(viewPositionUniformLocation, camera.position);
+
+            // Renderables Dinâmicos (NPCs)
+            const dynamicRenderables = [];
+            workers.forEach(w => {
+                if (!w.isInsideBathroom) { const torsoY = w.torsoScale[1] / 2; const headY = w.torsoScale[1] + w.headScale[1] / 2; dynamicRenderables.push({ geometryType: 'cube', position: [w.pos[0], headY, w.pos[2]], scale: w.headScale, color: w.headColor, shininess: w.shininessHead }); dynamicRenderables.push({ geometryType: 'cube', position: [w.pos[0], torsoY, w.pos[2]], scale: w.torsoScale, color: w.torsoColor, shininess: w.shininessBody }); }
+            });
+
+            // Renderizar tudo
+            const allRenderables = [...staticRenderables, ...dynamicRenderables];
+            allRenderables.forEach(obj => {
+                const geometry = geometries[obj.geometryType]; if (!geometry) { /*console.log("Missing geom:", obj.geometryType);*/ return; } // DEBUG
+                gl.bindBuffer(gl.ARRAY_BUFFER, geometry.positionBuffer); gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(positionAttribLocation);
+                gl.bindBuffer(gl.ARRAY_BUFFER, geometry.normalBuffer); gl.vertexAttribPointer(normalAttribLocation, 3, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(normalAttribLocation);
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geometry.indexBuffer);
+                mat4.identity(modelMatrix); mat4.translate(modelMatrix, modelMatrix, obj.position); if(obj.rotation) { if (obj.rotation[0]!==0) mat4.multiply(modelMatrix,modelMatrix,mat4.fromXRotation(mat4.create(),obj.rotation[0])); if (obj.rotation[1]!==0) mat4.multiply(modelMatrix,modelMatrix,mat4.fromYRotation(mat4.create(),obj.rotation[1])); if (obj.rotation[2]!==0) mat4.multiply(modelMatrix,modelMatrix,mat4.fromZRotation(mat4.create(),obj.rotation[2])); } mat4.scale(modelMatrix, modelMatrix, obj.scale); mat4.multiply(mvpMatrix, viewMatrix, modelMatrix); mat4.multiply(mvpMatrix, projectionMatrix, mvpMatrix); mat3.normalFromMat4(normalMatrix, modelMatrix);
+                gl.uniformMatrix4fv(mvpMatrixUniformLocation, false, mvpMatrix); gl.uniformMatrix4fv(modelMatrixUniformLocation, false, modelMatrix); gl.uniformMatrix3fv(normalMatrixUniformLocation, false, normalMatrix); gl.uniform3fv(colorUniformLocation, obj.color); gl.uniform1f(shininessUniformLocation, obj.shininess !== undefined ? obj.shininess : defaultShininess); gl.uniform3fv(specularColorUniformLocation, obj.specularColor || globalSpecularColor);
+                gl.drawElements(gl.TRIANGLES, geometry.vertexCount, gl.UNSIGNED_SHORT, 0);
+            });
+
+            gl.disableVertexAttribArray(positionAttribLocation);
+            gl.disableVertexAttribArray(normalAttribLocation);
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        // --- Iniciar ---
+        initializeWorld();
+        requestAnimationFrame(renderLoop);
+    </script>
+</body>
+</html>

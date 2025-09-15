@@ -1,0 +1,2615 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jogo de Pouso de Foguete - IA Persistente & Seeding (v3.1 - Fitness Ajustado)</title>
+    <style>
+        /* Estilos CSS (sem alterações visuais significativas) */
+        body {
+            margin: 0;
+            background-color: #87CEEB;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+
+        canvas {
+            background-color: #87CEEB;
+            border: 1px solid black;
+        }
+
+        .infoPanel {
+            position: absolute;
+            color: black;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+            padding: 5px;
+            font-size: 11px;
+            border: 1px solid #ccc;
+            box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.2);
+            z-index: 10;
+        }
+
+        #fuelDisplay {
+            top: 10px;
+            left: 10px;
+        }
+
+        #speedDisplay {
+            top: 35px;
+            left: 10px;
+        }
+
+        #positionDisplay {
+            top: 60px;
+            left: 10px;
+        }
+
+        #angleDisplay {
+            top: 85px;
+            left: 10px;
+        }
+
+        #fuelBar {
+            position: absolute;
+            top: 110px;
+            left: 10px;
+            width: 100px;
+            height: 15px;
+            background-color: white;
+            border-radius: 5px;
+            padding: 2px;
+            border: 1px solid black;
+            z-index: 10;
+        }
+
+        #fuelBarPercent {
+            height: 100%;
+            width: 0%;
+            background-color: red;
+            transition: width 0.1s;
+            border-radius: 3px;
+        }
+
+        #score {
+            top: 10px;
+            right: 10px;
+        }
+
+        #windInfo {
+            top: 10px;
+            right: 10px;
+        }
+
+        #aiStatus {
+            top: 35px;
+            right: 10px;
+            background-color: rgba(255, 223, 186, 0.9);
+        }
+
+        #nnVisualizerContainer {
+            position: absolute;
+            top: 85px;
+            right: 10px;
+            width: 250px;
+            height: 170px;
+            background-color: rgba(200, 200, 200, 0.7);
+            border: 1px solid black;
+            border-radius: 5px;
+            z-index: 10;
+        }
+
+        #nnCanvas {
+            display: block;
+        }
+
+        #trainingPanel {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(200, 230, 255, 0.9);
+            border: 1px solid #aaa;
+            padding: 8px;
+            border-radius: 5px;
+            font-size: 12px;
+            color: black;
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+        }
+
+        #trainingPanel button {
+            margin: 2px 1px;
+            padding: 3px 6px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        #trainingPanel button:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        #trainingOptions {
+            margin-top: 5px;
+            font-size: 11px;
+        }
+
+        #trainingInfo {
+            margin-top: 5px;
+            line-height: 1.3;
+        }
+
+        #controlsContainer {
+            margin-top: 10px;
+            padding: 5px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 5px;
+            color: black;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        #storageStatus {
+            font-size: 10px;
+            margin-top: 4px;
+            font-style: italic;
+            color: #333;
+        }
+
+        .button-group {
+            margin-top: 4px;
+            border-top: 1px solid #ccc;
+            padding-top: 4px;
+        }
+
+        .button-group button {
+            margin: 2px 1px;
+        }
+
+        #clearSavedAIBtn {
+            background-color: #ffdddd;
+            border-color: #ffaaaa;
+        }
+
+        /* Estilo para botão de limpar */
+    </style>
+</head>
+
+<body>
+    <!-- Elementos de UI -->
+    <div id="fuelDisplay" class="infoPanel">Combustível: ...</div>
+    <div id="positionDisplay" class="infoPanel">Posição: ...</div>
+    <div id="speedDisplay" class="infoPanel">Velocidade: ...</div>
+    <div id="angleDisplay" class="infoPanel">Angulo: ...</div>
+    <div id="windInfo" class="infoPanel">Vento: ...</div>
+
+    <div id="fuelBar">
+        <div id="fuelBarPercent"></div>
+    </div>
+    <div id="aiStatus" class="infoPanel">Controle: Humano (C)</div>
+    <div id="nnVisualizerContainer">
+        <canvas id="nnCanvas" width="250" height="170"></canvas>
+    </div>
+    <div id="trainingPanel">
+        <div>
+            <strong>Treinamento IA Paralelo (GA + Workers)</strong>
+        </div>
+        <button id="startTrainingBtn" title="Atalho: T">Iniciar Treino</button>
+        <button id="stopTrainingBtn" disabled title="Atalho: T">Parar Treino</button>
+        <button id="useBestAIBtn" disabled>Usar Melhor IA</button>
+        <div class="button-group">
+            <strong>Gerenciar Melhor IA:</strong>
+            <br>
+            <button id="saveBestAIBtn" disabled title="Salva a melhor IA no armazenamento local do navegador">Salvar</button>
+            <button id="loadSavedAIBtn" title="Carrega a IA salva localmente (se existir)">Carregar Salva</button>
+            <button id="exportBestAIBtn" disabled title="Exporta a melhor IA atual para um arquivo .json">Exportar</button>
+            <button id="importAIBtn" title="Importa uma IA de um arquivo .json">Importar</button>
+            <button id="clearSavedAIBtn" disabled title="Remove a IA salva localmente">Limpar Salvo</button>
+            <input type="file" id="importFileInput" accept=".json" style="display: none;">
+        </div>
+        <div id="storageStatus">IA local: Nenhuma</div>
+        <div id="trainingInfo">Geração: 0 | Melhor Fitness: N/A <br> Avaliando: N/A | Workers: 0 </div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="controlsContainer">Setas: Controlar | C: Trocar Humano/IA | R: Reset | T: Treinar</div>
+
+    <script>
+
+        // --- Configurações Globais ---
+        const INPUT_NODES = 7;
+        const HIDDEN_NODES = 8;
+        const OUTPUT_NODES = 3;
+        const POPULATION_SIZE = 500;
+        const MUTATION_RATE = 0.6;
+        const SIMULATION_TIMEOUT_FRAMES = 1200;
+        const NUM_WORKERS = Math.max(1, (navigator.hardwareConcurrency || 4) - 1);
+        const LOCALSTORAGE_KEY_NN = 'bestRocketNN_v3'; // Mantido v3, mas com fitness ajustado
+        const SEED_COUNT_ON_START = 5; // Quantas cópias/mutações da bestNN usar para semear
+
+        // --- Estado Global (Main Thread) ---
+        let canvas, ctx, nnCanvas, nnCtx;
+        let fuelDisplay, speedDisplay, angleDisplay, fuelBarPercent, positionDisplay, windInfoDisplay, aiStatusDisplay, trainingInfoDisplay, startTrainingBtn, stopTrainingBtn, useBestAIBtn, saveBestAIBtn, loadSavedAIBtn, exportBestAIBtn, importAIBtn, importFileInput, storageStatusDisplay, clearSavedAIBtn; // Adicionado clearSavedAIBtn
+        let population = [];
+        let bestNN = null;
+        let bestFitnessEver = -Infinity;
+        let currentGeneration = 0;
+        let isTraining = false;
+        let aiControlled = false;
+        let activeAI = null;
+        let lastOutputs = [0, 0, 0];
+        let gameIsOverState = false;
+        let frameCount = 0;
+
+        // Estado do foguete na Main Thread
+        const rocket = {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 80,
+            fuel: 0,
+            speedX: 0,
+            speedY: 0,
+            angle: Math.PI,
+            isThrusting: false,
+            thrustingLeft: false,
+            thrustingRight: false
+        };
+
+        const landingPad = {
+            x: 0,
+            y: 0,
+            width: 70,
+            height: 10
+        };
+
+        let windStrength = 0;
+        let windDirection = 0;
+        let clouds = [];
+        let cloudsHeight = 0;
+        const fuelMax = 200;
+        const gravity = -0.05;
+        const thrust = 0.15;
+        const sideThrust = 0.015;
+        const maxSpeedX = 5;
+        const maxSpeedY = 10;
+
+        // Estado do Treinamento Paralelo
+        let workers = [];
+        let tasksQueue = [];
+        let resultsReceivedCount = 0;
+        let populationFitness = {};
+        let workersBusy = [];
+
+        // --- Classe NeuralNetwork (sem alterações desde v3) ---
+        class NeuralNetwork {
+            constructor(inputNodes, hiddenNodes, outputNodes, id = null) {
+                this.id = id === null ? Math.random().toString(36).substring(2, 9) : id;
+                this.inputNodes = inputNodes;
+                this.hiddenNodes = hiddenNodes;
+                this.outputNodes = outputNodes;
+                this.weights_ih = this.createMatrix(this.hiddenNodes, this.inputNodes);
+                this.weights_ho = this.createMatrix(this.outputNodes, this.hiddenNodes);
+                this.bias_h = this.createMatrix(this.hiddenNodes, 1);
+                this.bias_o = this.createMatrix(this.outputNodes, 1);
+                this.fitness = -Infinity;
+            }
+            createMatrix(rows, cols) {
+                let m = [];
+                for (let i = 0; i < rows; i++) {
+                    m[i] = new Array(cols).fill(0);
+                }
+                return m;
+            }
+            randomizeMatrix(matrix) {
+                for (let i = 0; i < matrix.length; i++) {
+                    for (let j = 0; j < matrix[0].length; j++) {
+                        matrix[i][j] = Math.random() * 2 - 1;
+                    }
+                }
+            }
+            map(matrix, func) {
+                let r = this.createMatrix(matrix.length, matrix[0].length);
+                for (let i = 0; i < matrix.length; i++) {
+                    for (let j = 0; j < matrix[0].length; j++) {
+                        r[i][j] = func(matrix[i][j]);
+                    }
+                }
+                return r;
+            }
+            copyMatrix(matrix) {
+                let nM = this.createMatrix(matrix.length, matrix[0].length);
+                for (let i = 0; i < matrix.length; i++) {
+                    for (let j = 0; j < matrix[0].length; j++) {
+                        nM[i][j] = matrix[i][j];
+                    }
+                }
+                return nM;
+            }
+            mapMatrices(matrixA, matrixB, func) {
+                let r = this.createMatrix(matrixA.length, matrixA[0].length);
+                for (let i = 0; i < matrixA.length; i++) {
+                    for (let j = 0; j < matrixA[0].length; j++) {
+                        r[i][j] = func(matrixA[i][j], matrixB[i][j]);
+                    }
+                }
+                return r;
+            }
+            getSerializableData() {
+                return {
+                    id: this.id,
+                    inputNodes: this.inputNodes,
+                    hiddenNodes: this.hiddenNodes,
+                    outputNodes: this.outputNodes,
+                    weights_ih: this.weights_ih,
+                    weights_ho: this.weights_ho,
+                    bias_h: this.bias_h,
+                    bias_o: this.bias_o,
+                    fitness: this.fitness
+                };
+            }
+            copy() {
+                const newNN = new NeuralNetwork(this.inputNodes, this.hiddenNodes, this.outputNodes, this.id + '-c');
+                newNN.weights_ih = this.copyMatrix(this.weights_ih);
+                newNN.weights_ho = this.copyMatrix(this.weights_ho);
+                newNN.bias_h = this.copyMatrix(this.bias_h);
+                newNN.bias_o = this.copyMatrix(this.bias_o);
+                newNN.fitness = this.fitness;
+                return newNN;
+            }
+            mutate(mutationRate) {
+                const mutateValue = (val) => {
+                    if (Math.random() < mutationRate) {
+                        // Usar distribuição normal (Box-Muller) para mutações mais centradas
+                        let u = 0, v = 0;
+                        while (u === 0) u = Math.random(); //Evita log(0)
+                        while (v === 0) v = Math.random();
+                        let num = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+                        // Ajustar a força da mutação (desvio padrão)
+                        let offset = num * 0.15; // Reduzido um pouco a força padrão
+                        return val + offset;
+                    }
+                    return val;
+                };
+                this.weights_ih = this.map(this.weights_ih, mutateValue);
+                this.weights_ho = this.map(this.weights_ho, mutateValue);
+                this.bias_h = this.map(this.bias_h, mutateValue);
+                this.bias_o = this.map(this.bias_o, mutateValue);
+            }
+            crossover(partner) {
+                const child = new NeuralNetwork(this.inputNodes, this.hiddenNodes, this.outputNodes, this.id.split('-')[0] + '-x' + Math.random().toString(36).substring(2, 5));
+                // Crossover uniforme simples
+                const crossoverValue = (valA, valB) => (Math.random() < 0.5 ? valA : valB);
+
+                // Crossover por média ponderada (exemplo, pode ser mais complexo)
+                // const crossoverValue = (valA, valB) => {
+                //     const weight = Math.random();
+                //     return valA * weight + valB * (1 - weight);
+                // };
+
+                child.weights_ih = this.mapMatrices(this.weights_ih, partner.weights_ih, crossoverValue);
+                child.weights_ho = this.mapMatrices(this.weights_ho, partner.weights_ho, crossoverValue);
+                child.bias_h = this.mapMatrices(this.bias_h, partner.bias_h, crossoverValue);
+                child.bias_o = this.mapMatrices(this.bias_o, partner.bias_o, crossoverValue);
+                return child;
+            }
+            predict(inputArray) {
+                // Funções internas otimizadas para performance (sem validação excessiva)
+                const activation = x => 1 / (1 + Math.exp(-x)); // Sigmoid
+                // const activation = x => Math.tanh(x); // Tanh (alternativa)
+                // const activation = x => Math.max(0, x); // ReLU (alternativa)
+
+                const createMatrix = (r, c) => {
+                    let m = [];
+                    for (let i = 0; i < r; i++) m[i] = new Array(c).fill(0);
+                    return m;
+                };
+                const arrayToMatrix = (arr) => {
+                    let m = createMatrix(arr.length, 1);
+                    for (let i = 0; i < arr.length; i++) m[i][0] = arr[i];
+                    return m;
+                };
+                const matrixToArray = (m) => {
+                    let a = [];
+                    for (let i = 0; i < m.length; i++) a.push(m[i][0]);
+                    return a;
+                };
+                const multiply = (mA, mB) => {
+                    const rA = mA.length, cA = mA[0].length, cB = mB[0].length;
+                    let res = createMatrix(rA, cB);
+                    for (let i = 0; i < rA; i++) {
+                        for (let j = 0; j < cB; j++) {
+                            let s = 0;
+                            for (let k = 0; k < cA; k++) {
+                                s += mA[i][k] * mB[k][j]; // Otimizado para j=0 no caso de vetor
+                            }
+                            res[i][j] = s;
+                        }
+                    }
+                    return res;
+                };
+                const add = (mA, mB) => {
+                    let res = createMatrix(mA.length, mA[0].length);
+                    for (let i = 0; i < mA.length; i++)
+                        for (let j = 0; j < mA[0].length; j++) res[i][j] = mA[i][j] + mB[i][j];
+                    return res;
+                };
+                const map = (m, fn) => {
+                    let res = createMatrix(m.length, m[0].length);
+                    for (let i = 0; i < m.length; i++)
+                        for (let j = 0; j < m[0].length; j++) res[i][j] = fn(m[i][j]);
+                    return res;
+                };
+
+                // Processamento Feedforward
+                let inputs = arrayToMatrix(inputArray);
+                let hidden = multiply(this.weights_ih, inputs);
+                hidden = add(hidden, this.bias_h);
+                hidden = map(hidden, activation);
+
+                let output = multiply(this.weights_ho, hidden);
+                output = add(output, this.bias_o);
+                output = map(output, activation); // Usa a mesma ativação na saída
+
+                return matrixToArray(output);
+            }
+            static fromData(data) {
+                if (!data || !data.weights_ih || !data.bias_o || !data.inputNodes || !data.hiddenNodes || !data.outputNodes) {
+                    console.error("Dados incompletos ou inválidos para NeuralNetwork.fromData:", data);
+                    return null;
+                }
+                try {
+                    const nn = new NeuralNetwork(data.inputNodes, data.hiddenNodes, data.outputNodes, data.id || 'loaded-' + Math.random().toString(36).substring(2, 7));
+
+                    // Verificação básica de dimensões (adapte se necessário)
+                    if (data.weights_ih.length !== nn.hiddenNodes || data.weights_ih[0].length !== nn.inputNodes ||
+                        data.weights_ho.length !== nn.outputNodes || data.weights_ho[0].length !== nn.hiddenNodes ||
+                        data.bias_h.length !== nn.hiddenNodes || data.bias_h[0].length !== 1 ||
+                        data.bias_o.length !== nn.outputNodes || data.bias_o[0].length !== 1) {
+                        console.warn(`Incompatibilidade de dimensões ao carregar NN (ID: ${data.id}). Configuração atual: ${nn.inputNodes}-${nn.hiddenNodes}-${nn.outputNodes}. Dados: Configuração talvez diferente. Tentando carregar mesmo assim.`);
+                        // Poderia lançar um erro aqui se a incompatibilidade for crítica
+                    }
+
+                    nn.weights_ih = nn.copyMatrix(data.weights_ih);
+                    nn.weights_ho = nn.copyMatrix(data.weights_ho);
+                    nn.bias_h = nn.copyMatrix(data.bias_h);
+                    nn.bias_o = nn.copyMatrix(data.bias_o);
+                    nn.fitness = data.fitness !== undefined ? data.fitness : -Infinity;
+                    return nn;
+                } catch (error) {
+                    console.error("Erro ao reconstruir NN a partir dos dados:", error, data);
+                    return null;
+                }
+            }
+        }
+
+        // --- Código do Web Worker (string - FITNESS AJUSTADO) ---
+        // --- Código do Web Worker (string - COM PENALIDADE PARA POUSO PASSIVO) ---
+        const workerCode = `
+// --- Constantes (serão recebidas da main thread) ---
+let INPUT_NODES, HIDDEN_NODES, OUTPUT_NODES;
+let SIMULATION_TIMEOUT_FRAMES;
+let canvasWidth, canvasHeight; // Tamanho lógico do canvas
+let gravity, thrust, sideThrust, maxSpeedX, maxSpeedY, fuelMax;
+let landingPadWidth, landingPadHeight; // Dimensões do pad
+
+// --- Funções Utilitárias do Worker (idênticas) ---
+const activation = x => 1 / (1 + Math.exp(-x));
+const createMatrix = (rows, cols) => {
+    let m = [];
+    for (let i = 0; i < rows; i++) {
+        m[i] = new Array(cols).fill(0);
+    }
+    return m;
+};
+const arrayToMatrix = (arr) => {
+    let m = createMatrix(arr.length, 1);
+    for (let i = 0; i < arr.length; i++) {
+        m[i][0] = arr[i];
+    }
+    return m;
+};
+const matrixToArray = (matrix) => {
+    let arr = [];
+    for (let i = 0; i < matrix.length; i++) {
+        arr.push(matrix[i][0]);
+    }
+    return arr;
+};
+const multiply = (mA, mB) => {
+    const rA = mA.length, cA = mA[0].length, rB = mB.length, cB = mB[0].length;
+    if (cA !== rB) return null;
+    let res = createMatrix(rA, cB);
+    for (let i = 0; i < rA; i++) {
+        for (let j = 0; j < cB; j++) {
+            let s = 0;
+            for (let k = 0; k < cA; k++) {
+                s += mA[i][k] * (cB === 1 ? mB[k][0] : mB[k][j]);
+            }
+            res[i][j] = s;
+        }
+    }
+    return res;
+};
+const add = (mA, mB) => {
+    if (mA.length !== mB.length || mA[0].length !== mB[0].length) return null;
+    let res = createMatrix(mA.length, mA[0].length);
+    for (let i = 0; i < mA.length; i++)
+        for (let j = 0; j < mA[0].length; j++) res[i][j] = mA[i][j] + mB[i][j];
+    return res;
+};
+const map = (m, fn) => {
+    let res = createMatrix(m.length, m[0].length);
+    for (let i = 0; i < m.length; i++)
+        for (let j = 0; j < m[0].length; j++) res[i][j] = fn(m[i][j]);
+    return res;
+};
+
+// --- Lógica de Predição da Rede Neural (dentro do worker - idêntica) ---
+function predict(inputArray, nnData) {
+    let inputs = arrayToMatrix(inputArray);
+    let hidden = multiply(nnData.weights_ih, inputs);
+    hidden = add(hidden, nnData.bias_h);
+    hidden = map(hidden, activation);
+    let output = multiply(nnData.weights_ho, hidden);
+    output = add(output, nnData.bias_o);
+    output = map(output, activation);
+    return matrixToArray(output);
+}
+
+// --- Função Principal de Simulação no Worker (COM RASTREAMENTO DE PROPULSORES) ---
+function runSimulationForNN(nnData, simConfig) {
+    // Estado inicial da simulação específica
+    let r = {
+        x: simConfig.startX,
+        y: simConfig.startY,
+        width: 20,
+        height: 80,
+        fuel: fuelMax,
+        speedX: simConfig.startSpeedX,
+        speedY: simConfig.startSpeedY,
+        angle: simConfig.startAngle,
+        isThrusting: false,
+        thrustingLeft: false,
+        thrustingRight: false
+    };
+    const pad = {
+        x: simConfig.landingPadX,
+        y: 0, // Base do canvas é y=0
+        width: landingPadWidth,
+        height: landingPadHeight
+    };
+    const currentWindStrength = simConfig.windStrength;
+    const currentWindDirection = simConfig.windDirection;
+    let localFrameCount = 0;
+    let gameOver = false;
+    let success = false;
+    let reason = "";
+
+    // *** Rastreamento de uso dos propulsores ***
+    let usedMainThruster = false;
+    let usedSideThruster = false;
+    // ******************************************
+
+    // Loop de simulação
+    while (!gameOver && localFrameCount < SIMULATION_TIMEOUT_FRAMES) {
+        localFrameCount++;
+        // 1. Controle IA
+        if (r.fuel > 0) {
+            const normX = (r.x + r.width / 2) / canvasWidth;
+            const normY = Math.max(0, Math.min(1, r.y / canvasHeight));
+            const normVx = Math.max(-1, Math.min(1, r.speedX / maxSpeedX));
+            const normVy = Math.max(-1, Math.min(1, r.speedY / maxSpeedY));
+            let normAngle = (r.angle - Math.PI) / Math.PI;
+            if (normAngle > 1) normAngle -= 2;
+            if (normAngle < -1) normAngle += 2;
+            const normAng = Math.max(-1, Math.min(1, normAngle));
+            const targetCenterX = pad.x + pad.width / 2;
+            const distToTargetX = (targetCenterX - (r.x + r.width / 2)) / (canvasWidth / 2);
+            const normDistX = Math.max(-1, Math.min(1, distToTargetX));
+            const normWind = Math.max(-1, Math.min(1, currentWindStrength * currentWindDirection * 2));
+            const inputs = [normX, normY, normVx, normVy, normAng, normDistX, normWind];
+            const outputs = predict(inputs, nnData);
+            const threshold = 0.55;
+            r.isThrusting = outputs[0] > threshold;
+            r.thrustingLeft = outputs[1] > threshold;
+            r.thrustingRight = outputs[2] > threshold;
+            if (r.thrustingLeft && r.thrustingRight) {
+                if (outputs[1] > outputs[2]) r.thrustingRight = false;
+                else r.thrustingLeft = false;
+            }
+
+            // *** Atualiza flags de uso dos propulsores ***
+            if (r.isThrusting) usedMainThruster = true;
+            if (r.thrustingLeft || r.thrustingRight) usedSideThruster = true;
+            // ******************************************
+
+        } else {
+            r.isThrusting = false;
+            r.thrustingLeft = false;
+            r.thrustingRight = false;
+        }
+        // 2. Física (Idêntica)
+        r.speedY += gravity;
+        const windEffect = currentWindStrength * currentWindDirection * 0.015 * Math.max(0.1, r.y / canvasHeight);
+        r.speedX += windEffect;
+        if (r.isThrusting && r.fuel > 0) {
+            const angle = r.angle;
+            r.speedX += thrust * Math.sin(angle);
+            r.speedY += -thrust * Math.cos(angle);
+            r.fuel -= 0.35;
+        }
+        if (r.thrustingLeft && r.fuel > 0) {
+            r.angle += sideThrust;
+            r.fuel -= 0.08;
+        }
+        if (r.thrustingRight && r.fuel > 0) {
+            r.angle -= sideThrust;
+            r.fuel -= 0.08;
+        }
+        r.angle = (r.angle + 2 * Math.PI) % (2 * Math.PI);
+        r.speedX = Math.max(-maxSpeedX, Math.min(maxSpeedX, r.speedX));
+        r.speedY = Math.max(-maxSpeedY * 1.5, Math.min(maxSpeedY, r.speedY));
+        r.y += r.speedY;
+        r.x += r.speedX;
+
+        // 3. Fim de Jogo (Idêntico na lógica de colisão/pouso)
+        const rBY = r.y;
+        const safeLandSpeedY = 1.5;
+        const safeLandSpeedX = 1.0;
+        const angleTolerance = 15 * (Math.PI / 180);
+        const angleDiff = Math.abs(r.angle - Math.PI);
+        const isAngleSafe = (angleDiff <= angleTolerance || Math.abs(angleDiff - 2 * Math.PI) <= angleTolerance);
+
+        if (r.x <= 0 || r.x + r.width >= canvasWidth) {
+            gameOver = true;
+            success = false;
+            reason = "Colidiu Lateralmente";
+        } else if (rBY <= pad.height) {
+            if (r.x + r.width > pad.x && r.x < pad.x + pad.width) {
+                if (Math.abs(r.speedY) <= safeLandSpeedY && Math.abs(r.speedX) <= safeLandSpeedX && isAngleSafe) {
+                    gameOver = true;
+                    success = true; // Sucesso inicial pela física
+                    reason = "Pouso Suave!";
+                } else {
+                    let cr = "";
+                    if (Math.abs(r.speedY) > safeLandSpeedY) cr += 'VelY alta (' + (-r.speedY * 10).toFixed(1) + '). ';
+                    if (Math.abs(r.speedX) > safeLandSpeedX) cr += 'VelX alta (' + (r.speedX * 10).toFixed(1) + '). ';
+                    if (!isAngleSafe) {
+                        let deg = (r.angle * 180 / Math.PI) - 180;
+                        deg = (deg + 360) % 360; if (deg > 180) deg -= 360;
+                        cr += 'Ângulo ruim (' + Math.round(deg) + '°).';
+                    }
+                    gameOver = true;
+                    success = false;
+                    reason = "Crash Plataforma: " + cr;
+                }
+            } else {
+                gameOver = true;
+                success = false;
+                reason = "Caiu fora.";
+            }
+        }
+    } // Fim do loop while
+
+    if (!gameOver && localFrameCount >= SIMULATION_TIMEOUT_FRAMES) {
+        gameOver = true;
+        success = false;
+        reason = "Timeout";
+    }
+
+    // 4. Avaliação Final e Fitness
+
+    // **** Penalidade por Pouso Passivo ****
+    // Verifica APÓS o loop, se o pouso foi sucesso pela física, mas não houve manobra
+    if (success && (!usedMainThruster || !usedSideThruster)) {
+        //success = false; // Marca como falha
+        reason = "Falha: Pouso passivo sem manobra (Req: Principal E Lateral)";
+        // Opcional: Log específico no console do worker
+        // console.log(\`Simulação \${nnData.id} penalizada por pouso passivo.\`);
+    }
+    // *************************************
+
+    // Calcula o fitness baseado no status final (success pode ter sido modificado)
+    const fitness = calculateFitnessWorker(success, reason, r, pad);
+    return {
+        fitness: fitness,
+        success: success, // Retorna o status final de sucesso/falha
+        reason: reason
+    };
+}
+
+
+// --- Cálculo de Fitness (Usando a versão ajustada v3.1) ---
+function calculateFitnessWorker(landedSuccess, reason, rocketState, padState) {
+    let fitness = 0;
+
+    const targetCenterX = padState.x + padState.width / 2;
+    const distToPadCenter = Math.abs((rocketState.x + rocketState.width / 2) - targetCenterX);
+    const finalSpeedYAbs = Math.abs(rocketState.speedY);
+    const finalSpeedXAbs = Math.abs(rocketState.speedX);
+    const angleDiff = Math.abs(rocketState.angle - Math.PI);
+    const angleError = Math.min(angleDiff, Math.abs(angleDiff - 2 * Math.PI)); // Erro absoluto do ângulo ideal (0)
+
+    if (landedSuccess) {
+        // Pouso bem-sucedido E com manobra (verificação feita antes)
+        fitness = 8000; // Bônus base
+        fitness += 6000 / (1 + distToPadCenter * 0.4); // Bônus precisão X (alto)
+        fitness += 2000 / (1 + finalSpeedYAbs * 10);  // Bônus vel Y baixa
+        fitness += 1500 / (1 + finalSpeedXAbs * 15); // Bônus vel X baixa
+        //fitness -= angleError * 500; // Penalidade ângulo imperfeito
+        fitness += Math.max(0, rocketState.fuel) * 0.5; // Bônus combustível (baixo)
+
+        if (reason.includes("Pouso passivo")) fitness -= 8000; // Penalidade extra específica
+
+    } else {
+        // Falha (crash, caiu fora, timeout OU pouso passivo)
+        fitness -= 500; // Penalidade base por falha
+        fitness -= 100 * distToPadCenter; // Penalidade distância
+        fitness -= finalSpeedYAbs * 15; // Penalidade vel Y alta
+        fitness -= finalSpeedXAbs * 10; // Penalidade vel X alta
+
+        if (reason.includes("Timeout")) fitness -= 600;
+        if (reason.includes("Lateral")) fitness -= 400;
+        if (reason.includes("Pouso passivo")) fitness -= 2000; // Penalidade extra específica
+
+        fitness -= angleError * 20; // Penalidade forte por ângulo ruim
+        fitness -= (fuelMax - Math.max(0, rocketState.fuel)) * 0.5; // Penalidade gastar combustível e falhar
+        fitness = Math.max(-8000, fitness); // Limite inferior
+    }
+
+    return isNaN(fitness) ? -Infinity : fitness;
+}
+
+
+// --- Handler de Mensagens do Worker (idêntico) ---
+self.onmessage = function(e) {
+    const message = e.data;
+    if (message.type === 'init') {
+        INPUT_NODES = message.config.INPUT_NODES;
+        HIDDEN_NODES = message.config.HIDDEN_NODES;
+        OUTPUT_NODES = message.config.OUTPUT_NODES;
+        SIMULATION_TIMEOUT_FRAMES = message.config.SIMULATION_TIMEOUT_FRAMES;
+        canvasWidth = message.config.canvasWidth;
+        canvasHeight = message.config.canvasHeight;
+        gravity = message.config.gravity;
+        thrust = message.config.thrust;
+        sideThrust = message.config.sideThrust;
+        maxSpeedX = message.config.maxSpeedX;
+        maxSpeedY = message.config.maxSpeedY;
+        fuelMax = message.config.fuelMax;
+        landingPadWidth = message.config.landingPadWidth;
+        landingPadHeight = message.config.landingPadHeight;
+    } else if (message.type === 'evaluate') {
+        const task = message.task;
+        try {
+            const result = runSimulationForNN(task.nnData, task.simConfig);
+            self.postMessage({
+                type: 'result',
+                id: task.nnData.id,
+                fitness: result.fitness,
+                success: result.success,
+                reason: result.reason
+            });
+        } catch (simError) {
+            console.error('Erro runSimulationForNN worker:', simError, 'NN ID:', task.nnData.id);
+            self.postMessage({
+                type: 'result',
+                id: task.nnData.id,
+                fitness: -Infinity,
+                success: false,
+                reason: 'Worker Simulation Error'
+            });
+        }
+    }
+};
+        `; // Fim da string workerCode
+
+        // Cole esta nova string 'workerCode' no lugar da antiga no seu arquivo HTML.
+
+        // --- Funções de Desenho (Main Thread - sem alterações) ---
+        function drawNeuralNetwork(ctx, nn, inputs, outputs) {
+            if (!nn || !ctx) {
+                if (ctx) ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                return;
+            }
+            const layerSpacing = 60;
+            const nodeRadius = 8;
+            const startX = 55;
+            const startY = 25;
+            const canvasWidth = ctx.canvas.width;
+            const canvasHeight = ctx.canvas.height;
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+            ctx.font = "10px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            // Função para determinar a cor do nó baseado na ativação (-1 a 1 ou 0 a 1)
+            function activationColor(value, isInput = false) {
+                // Normaliza para 0 a 1
+                let normalized = isInput ? (value + 1) / 2 : value; // Assume inputs são -1 a 1, outputs 0 a 1
+                normalized = Math.max(0, Math.min(1, normalized || 0));
+                // Interpola entre vermelho (baixo/negativo) e verde (alto/positivo) via branco
+                let r, g, b;
+                if (normalized < 0.5) {
+                    // De vermelho para branco
+                    g = Math.floor(255 * (normalized * 2));
+                    r = 255;
+                    b = g;
+                } else {
+                    // De branco para verde
+                    r = Math.floor(255 * (1 - (normalized - 0.5) * 2));
+                    g = 255;
+                    b = r;
+                }
+                return `rgb(${r}, ${g}, ${b})`;
+            }
+
+
+            const inputLabels = ["Pos X", "Pos Y", "Vel X", "Vel Y", "Ângulo", "Dist Pad", "Vento"];
+            const inputYSpacing = nn.inputNodes > 1 ? (canvasHeight - 2 * startY) / (nn.inputNodes - 1) : canvasHeight / 2;
+            for (let i = 0; i < nn.inputNodes; i++) {
+                const x = startX;
+                const y = nn.inputNodes > 1 ? startY + i * inputYSpacing : startY;
+                const color = activationColor(inputs[i] !== undefined ? inputs[i] : 0, true);
+                ctx.fillStyle = 'black';
+                ctx.textAlign = "right";
+                ctx.fillText(inputLabels[i] || `In ${i + 1}`, x - nodeRadius - 5, y);
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'black';
+                ctx.stroke();
+            }
+
+            const hiddenX = startX + layerSpacing;
+            const hiddenYSpacing = nn.hiddenNodes > 1 ? (canvasHeight - 2 * startY) / (nn.hiddenNodes - 1) : canvasHeight / 2;
+            // Para visualizar ativações ocultas, precisaríamos rodar o predict passo a passo
+            for (let i = 0; i < nn.hiddenNodes; i++) {
+                const y = nn.hiddenNodes > 1 ? startY + i * hiddenYSpacing : startY;
+                ctx.fillStyle = 'rgb(180, 180, 180)'; // Cinza padrão para ocultos
+                ctx.beginPath();
+                ctx.arc(hiddenX, y, nodeRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'black';
+                ctx.stroke();
+            }
+
+            const outputX = hiddenX + layerSpacing;
+            const outputYSpacing = nn.outputNodes > 1 ? (canvasHeight - 2 * startY) / (nn.outputNodes - 1) : canvasHeight / 2;
+            const outputLabels = ["Empuxo", "Girar Esq", "Girar Dir"];
+            for (let i = 0; i < nn.outputNodes; i++) {
+                const y = nn.outputNodes > 1 ? startY + i * outputYSpacing : startY;
+                const color = activationColor(outputs[i], false); // Saídas são 0 a 1
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(outputX, y, nodeRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'black';
+                ctx.stroke();
+                ctx.fillStyle = 'black';
+                ctx.textAlign = "left";
+                ctx.fillText(outputLabels[i] || `Out ${i + 1}`, outputX + nodeRadius + 5, y - 5);
+                ctx.fillText((outputs[i] || 0).toFixed(2), outputX + nodeRadius + 5, y + 7);
+            }
+
+            // Desenhar conexões (pesos) - Opcional e pesado
+            // Poderia colorir/espessurar baseado no valor do peso
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.15)'; // Mais claro
+            ctx.lineWidth = 0.5;
+            // Input -> Hidden
+            for (let i = 0; i < nn.inputNodes; i++) {
+                const inputY = nn.inputNodes > 1 ? startY + i * inputYSpacing : startY;
+                for (let j = 0; j < nn.hiddenNodes; j++) {
+                    const hiddenY = nn.hiddenNodes > 1 ? startY + j * hiddenYSpacing : startY;
+                    // Poderia buscar o peso nn.weights_ih[j][i] e ajustar a linha
+                    ctx.beginPath();
+                    ctx.moveTo(startX + nodeRadius, inputY);
+                    ctx.lineTo(hiddenX - nodeRadius, hiddenY);
+                    ctx.stroke();
+                }
+            }
+            // Hidden -> Output
+            for (let i = 0; i < nn.hiddenNodes; i++) {
+                const hiddenY = nn.hiddenNodes > 1 ? startY + i * hiddenYSpacing : startY;
+                for (let j = 0; j < nn.outputNodes; j++) {
+                    const outputY = nn.outputNodes > 1 ? startY + j * outputYSpacing : startY;
+                    // Poderia buscar o peso nn.weights_ho[j][i] e ajustar a linha
+                    ctx.beginPath();
+                    ctx.moveTo(hiddenX + nodeRadius, hiddenY);
+                    ctx.lineTo(outputX - nodeRadius, outputY);
+                    ctx.stroke();
+                }
+            }
+
+            ctx.lineWidth = 1;
+            ctx.textAlign = "center";
+        }
+
+        function generateClouds() {
+            if (!canvas) return;
+            const n = 8;
+            clouds = [];
+            cloudsHeight = canvas.height * 0.5; // Altura base das nuvens
+            for (let i = 0; i < n; i++) {
+                const cW = Math.random() * 80 + 40; // Largura da base
+                const cH = Math.random() * 30 + 20; // Altura da base
+                const cX = Math.random() * canvas.width; // Posição X
+                // Pos Y acima da metade, até uns 80% da tela
+                const cY = cloudsHeight + Math.random() * (canvas.height * 0.8 - cloudsHeight);
+                // Parte principal da nuvem
+                clouds.push({
+                    x: cX,
+                    y: cY,
+                    width: cW,
+                    height: cH,
+                    isBase: true
+                });
+                // Adiciona partes menores e sobrepostas para forma irregular
+                const nE = Math.floor(Math.random() * 3) + 2; // 2 a 4 elipses extras
+                for (let j = 0; j < nE; j++) {
+                    const oX = (Math.random() - 0.5) * cW * 0.6; // Offset X
+                    const oY = (Math.random() - 0.5) * cH * 0.6; // Offset Y
+                    const eW = cW * (Math.random() * 0.4 + 0.4); // Largura da elipse extra
+                    const eH = cH * (Math.random() * 0.4 + 0.4); // Altura da elipse extra
+                    clouds.push({
+                        x: cX + oX,
+                        y: cY + oY,
+                        width: eW,
+                        height: eH,
+                        isBase: false
+                    });
+                }
+            }
+        }
+
+        function drawClouds() {
+            if (!ctx) return;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.75)'; // Levemente menos transparente
+            clouds.forEach(c => {
+                // Movimento horizontal pelo vento (velocidade baixa)
+                c.x += windStrength * windDirection * 0.03;
+                // Wrap around horizontal
+                if (c.x > canvas.width + c.width / 2) c.x = -c.width / 2;
+                else if (c.x < -c.width / 2) c.x = canvas.width + c.width / 2;
+                // Desenha a elipse
+                ctx.beginPath();
+                ctx.ellipse(c.x, c.y, c.width / 2, c.height / 2, 0, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawFlag() {
+            if (!ctx) return;
+            const mX = canvas.width - 30; // Posição X do mastro
+            const mY = 0; // Base do mastro (no nível do chão do canvas transladado)
+            const mH = 40; // Altura do mastro
+            // Desenha mastro
+            ctx.fillStyle = 'gray';
+            ctx.fillRect(mX, mY, 5, mH);
+            // Desenha bandeira
+            const fW = 25; // Largura base da bandeira
+            const fH = 15; // Altura da bandeira
+            const fBY = mH - fH; // Y da base da bandeira no mastro
+            // Oscilação horizontal pelo vento
+            const fTXO = windDirection * windStrength * 30 * (0.8 + Math.random() * 0.4); // Adiciona pequena variação
+            // Cor baseada na direção do vento
+            ctx.fillStyle = windStrength === 0 ? 'darkgray' : (windDirection > 0 ? '#4CAF50' : '#F44336'); // Verde/Vermelho
+            // Forma triangular simples
+            ctx.beginPath();
+            ctx.moveTo(mX + 5, fBY); // Canto inferior no mastro
+            ctx.lineTo(mX + 5, mH);  // Canto superior no mastro
+            // Ponto da ponta da bandeira (oscilante)
+            ctx.lineTo(mX + 5 + fW + fTXO, mH - fH / 2);
+            ctx.closePath();
+            ctx.fill();
+            // Contorno (opcional)
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+            ctx.lineWidth = 1; // Resetar
+        }
+
+        function drawRocket() {
+            if (!ctx) return;
+            ctx.save(); // Salva o estado atual do contexto (transformações, cores, etc.)
+            // Ponto central do foguete para rotação
+            const cX = rocket.x + rocket.width / 2;
+            const cY = rocket.y + rocket.height / 2;
+            // Translada a origem para o centro do foguete
+            ctx.translate(cX, cY);
+            // Rotaciona pelo ângulo do foguete (Math.PI é reto para cima)
+            ctx.rotate(rocket.angle - Math.PI);
+            // Translada de volta para a posição original
+            ctx.translate(-cX, -cY);
+
+            // --- Desenho do Corpo ---
+            ctx.fillStyle = "#555555"; // Cinza escuro para o corpo
+            ctx.fillRect(rocket.x, rocket.y, rocket.width, rocket.height);
+
+            // --- Desenho do Bico (Cone) ---
+            ctx.fillStyle = "#A0A0A0"; // Cinza claro para o bico
+            ctx.beginPath();
+            ctx.moveTo(rocket.x, rocket.y + rocket.height); // Canto superior esquerdo
+            ctx.lineTo(rocket.x + rocket.width / 2, rocket.y + rocket.height + 25); // Ponta do cone
+            ctx.lineTo(rocket.x + rocket.width, rocket.y + rocket.height); // Canto superior direito
+            ctx.closePath();
+            ctx.fill();
+
+            // --- Desenho das Aletas (Fins) ---
+            ctx.fillStyle = "#333333"; // Cinza bem escuro para as aletas
+            ctx.beginPath();
+            // Aleta esquerda
+            ctx.moveTo(rocket.x, rocket.y + 10); // Ponto superior na fuselagem
+            ctx.lineTo(rocket.x - 10, rocket.y - 5); // Ponta externa inferior
+            ctx.lineTo(rocket.x, rocket.y); // Ponto inferior na fuselagem
+            // Aleta direita
+            ctx.moveTo(rocket.x + rocket.width, rocket.y + 10); // Ponto superior na fuselagem
+            ctx.lineTo(rocket.x + rocket.width + 10, rocket.y - 5); // Ponta externa inferior
+            ctx.lineTo(rocket.x + rocket.width, rocket.y); // Ponto inferior na fuselagem
+            ctx.closePath(); // Fecha os caminhos (embora fill() faça isso implicitamente)
+            ctx.fill();
+
+            // --- Desenho das Chamas (se acionadas e com combustível) ---
+            const flH = 25; // Altura máxima da chama principal
+            const flWV = 8; // Variação lateral da chama principal
+
+            // Chama Principal
+            if (rocket.isThrusting && rocket.fuel > 0) {
+                // Chama externa (Laranja)
+                ctx.fillStyle = "rgba(255, 165, 0, 0.8)"; // Laranja com transparência
+                ctx.beginPath();
+                ctx.moveTo(rocket.x + rocket.width * 0.3, rocket.y); // Base esquerda
+                ctx.lineTo(rocket.x + rocket.width * 0.7, rocket.y); // Base direita
+                // Ponta tremulante
+                ctx.lineTo(rocket.x + rocket.width / 2 + (Math.random() - 0.5) * flWV, rocket.y - flH * (0.7 + Math.random() * 0.6));
+                ctx.closePath();
+                ctx.fill();
+
+                // Chama interna (Amarela)
+                ctx.fillStyle = "rgba(255, 255, 0, 0.9)"; // Amarelo quase opaco
+                ctx.beginPath();
+                ctx.moveTo(rocket.x + rocket.width * 0.4, rocket.y); // Base interna esquerda
+                ctx.lineTo(rocket.x + rocket.width * 0.6, rocket.y); // Base interna direita
+                // Ponta tremulante menor
+                ctx.lineTo(rocket.x + rocket.width / 2 + (Math.random() - 0.5) * flWV / 2, rocket.y - flH * (0.4 + Math.random() * 0.3));
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Chamas Laterais (Manobra)
+            const sFlH = 15; // Altura/Comprimento da chama lateral
+            const sFlO = 5;  // Offset base da chama
+
+            // Chama Lateral Direita (para girar horário)
+            if (rocket.thrustingRight && rocket.fuel > 0) {
+                ctx.fillStyle = "rgba(255, 165, 0, 0.7)"; // Laranja
+                ctx.beginPath();
+                // Base da chama no lado ESQUERDO do foguete (empurra para a direita -> gira horário)
+                ctx.moveTo(rocket.x, rocket.y + rocket.height * 0.7);
+                ctx.lineTo(rocket.x, rocket.y + rocket.height * 0.8);
+                // Ponta tremulante para a ESQUERDA
+                ctx.lineTo(rocket.x - sFlO - (Math.random() * sFlH), rocket.y + rocket.height * 0.75);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Chama Lateral Esquerda (para girar anti-horário)
+            if (rocket.thrustingLeft && rocket.fuel > 0) {
+                ctx.fillStyle = "rgba(255, 165, 0, 0.7)"; // Laranja
+                ctx.beginPath();
+                // Base da chama no lado DIREITO do foguete (empurra para a esquerda -> gira anti-horário)
+                ctx.moveTo(rocket.x + rocket.width, rocket.y + rocket.height * 0.7);
+                ctx.lineTo(rocket.x + rocket.width, rocket.y + rocket.height * 0.8);
+                // Ponta tremulante para a DIREITA
+                ctx.lineTo(rocket.x + rocket.width + sFlO + (Math.random() * sFlH), rocket.y + rocket.height * 0.75);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            ctx.restore(); // Restaura o estado do contexto (remove a translação/rotação)
+        }
+
+        function drawLandingPad() {
+            if (!ctx) return;
+            // Base da plataforma
+            ctx.fillStyle = "#228B22"; // Verde escuro
+            ctx.fillRect(landingPad.x, landingPad.y, landingPad.width, landingPad.height);
+            // Detalhe (ex: torre, suporte) - opcional
+            ctx.fillStyle = "#A9A9A9"; // Cinza
+            ctx.fillRect(landingPad.x + landingPad.width * 0.4, landingPad.y, landingPad.width * 0.2, landingPad.height + 5); // Pequena estrutura central
+            // Faixa de pouso (indicador visual)
+            ctx.fillStyle = "yellow";
+            ctx.fillRect(landingPad.x, landingPad.y + landingPad.height - 2, landingPad.width, 2); // Faixa amarela na borda superior
+            // Contorno (opcional)
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(landingPad.x, landingPad.y, landingPad.width, landingPad.height);
+            ctx.lineWidth = 1; // Resetar
+        }
+
+        function drawSea() {
+            if (!ctx) return;
+            // Gradiente para simular profundidade/reflexo
+            // O gradiente vai de y=0 (chão transladado) até y=-50 (acima do chão)
+            const grad = ctx.createLinearGradient(0, 0, 0, -50);
+            grad.addColorStop(0, "#00008B"); // Azul escuro na base (y=0)
+            grad.addColorStop(1, "#1E90FF"); // Azul mais claro acima (y=-50)
+            ctx.fillStyle = grad;
+            // Desenha um retângulo na parte inferior (lembre-se que Y está invertido)
+            ctx.fillRect(0, 0, canvas.width, -30); // Cobre a base do canvas transladado
+        }
+
+        // --- Funções de Atualização da UI (Modificada) ---
+        function updateUI() {
+            if (!fuelDisplay) return; // Evita erros se elementos não carregaram
+
+            // Displays básicos
+            fuelDisplay.innerText = `Combustível: ${Math.max(0, Math.round(rocket.fuel))}`;
+            const fuelPercent = Math.max(0, rocket.fuel / fuelMax) * 100;
+            fuelBarPercent.style.width = `${fuelPercent}%`;
+            if (fuelPercent < 10) fuelBarPercent.style.backgroundColor = '#e74c3c'; // Vermelho
+            else if (fuelPercent < 30) fuelBarPercent.style.backgroundColor = '#f39c12'; // Laranja
+            else fuelBarPercent.style.backgroundColor = '#2ecc71'; // Verde
+            // Velocidades com sinal e unidade (aproximada)
+            speedDisplay.innerText = `Vel: Y ${(-rocket.speedY * 3.6).toFixed(1)} km/h, X ${(rocket.speedX * 3.6).toFixed(1)} km/h`; // Convertido para km/h (aprox)
+            positionDisplay.innerText = `Pos: X ${Math.round(rocket.x)}, Y ${Math.round(rocket.y)}`;
+            // Ângulo em graus, 0° = reto para cima
+            let deg = (rocket.angle * 180 / Math.PI) - 180;
+            deg = (deg + 360) % 360;
+            if (deg > 180) deg -= 360; // Mostrar como -180 a 180
+            angleDisplay.innerText = `Ângulo: ${Math.round(deg)}°`;
+            updateWindInfo();
+
+            // Desenho NN
+            const nnToDraw = activeAI || bestNN; // Usa a IA ativa ou a melhor global se nenhuma estiver ativa
+            let inputsForNN = [];
+            let outputsForNN = lastOutputs; // Usa as últimas saídas por padrão
+            if (nnToDraw) {
+                inputsForNN = getCurrentNNInputs(rocket, landingPad, windStrength, windDirection);
+                // Se a IA não estiver controlando ativamente, faz uma predição "fantasma" para visualização
+                if (!aiControlled && !isTraining) {
+                    try {
+                        outputsForNN = nnToDraw.predict(inputsForNN) || [0, 0, 0];
+                    } catch (e) {
+                        // console.warn("Erro na predição para visualização:", e);
+                        outputsForNN = [0, 0, 0];
+                    }
+                }
+                drawNeuralNetwork(nnCtx, nnToDraw, inputsForNN, outputsForNN);
+            } else {
+                drawNeuralNetwork(nnCtx, null, [], []); // Limpa visualizador se não há NN
+            }
+
+            updateTrainingInfo();
+            updateStorageStatus();
+            updateButtonStates(); // Centraliza atualização de botões
+        }
+
+        function updateStorageStatus() {
+            if (!storageStatusDisplay) return;
+            const savedNNData = localStorage.getItem(LOCALSTORAGE_KEY_NN);
+            if (savedNNData) {
+                try {
+                    const data = JSON.parse(savedNNData);
+                    // Tenta obter o fitness, formata se disponível
+                    const fitness = data.fitness !== undefined && data.fitness !== null && data.fitness !== -Infinity
+                        ? data.fitness.toFixed(3)
+                        : 'N/A';
+                    const nnId = data.id ? ` (ID: ${data.id.substring(0, 8)})` : ''; // Mostra parte do ID
+                    storageStatusDisplay.innerText = `IA local: Sim (Fit: ${fitness})${nnId}`;
+                    storageStatusDisplay.style.color = '#006400'; // Verde escuro
+                } catch (e) {
+                    storageStatusDisplay.innerText = `IA local: Erro ao ler dados`;
+                    storageStatusDisplay.style.color = '#8B0000'; // Vermelho escuro
+                    console.warn("Erro ao ler IA salva do localStorage:", e);
+                    // Considerar limpar localStorage se corrompido?
+                    // localStorage.removeItem(LOCALSTORAGE_KEY_NN);
+                }
+            } else {
+                storageStatusDisplay.innerText = `IA local: Nenhuma`;
+                storageStatusDisplay.style.color = '#333'; // Cinza padrão
+            }
+        }
+
+        function updateButtonStates() {
+            if (!startTrainingBtn) return; // Safety check
+
+            const hasBestNN = bestNN !== null;
+            const hasSavedNN = localStorage.getItem(LOCALSTORAGE_KEY_NN) !== null;
+
+            // Botões de Treinamento
+            startTrainingBtn.disabled = isTraining;
+            stopTrainingBtn.disabled = !isTraining;
+            useBestAIBtn.disabled = !hasBestNN || isTraining || aiControlled; // Desabilita se já usando IA
+
+            // Botões de Gerenciamento
+            saveBestAIBtn.disabled = !hasBestNN; // Só pode salvar se houver uma bestNN
+            loadSavedAIBtn.disabled = !hasSavedNN || isTraining; // Só pode carregar se houver salva e não treinando
+            exportBestAIBtn.disabled = !hasBestNN; // Só pode exportar se houver bestNN
+            importAIBtn.disabled = isTraining; // Não pode importar durante treino
+            clearSavedAIBtn.disabled = !hasSavedNN || isTraining; // Só pode limpar se houver salva e não treinando
+        }
+
+        function updateTrainingInfo() {
+            if (!trainingInfoDisplay) return;
+
+            let busyCount = workersBusy.filter(b => b).length;
+            let queueSize = tasksQueue.length;
+            let evaluatedThisGen = resultsReceivedCount % POPULATION_SIZE; // Quantos avaliados na geração atual
+
+            let sTxt = `<strong>Geração:</strong> ${currentGeneration}`;
+            if (isTraining) {
+                // Formata a barra de progresso da geração
+                const progressPercent = POPULATION_SIZE > 0 ? (evaluatedThisGen / POPULATION_SIZE * 100).toFixed(1) : 0;
+                sTxt += ` (${progressPercent}%)`;
+                sTxt += ` | <strong>Avaliados:</strong> ${evaluatedThisGen}/${POPULATION_SIZE}`;
+                sTxt += ` | <strong>Fila:</strong> ${queueSize}`;
+                sTxt += ` | <strong>Workers:</strong> ${busyCount}/${NUM_WORKERS}`;
+            } else {
+                sTxt += ` | Treino Parado.`;
+                sTxt += ` | <strong>Workers:</strong> ${NUM_WORKERS}`;
+            }
+
+            // Informação do Melhor Fitness
+            sTxt += `<br><strong>Melhor Fitness Global:</strong> `;
+            if (bestFitnessEver === -Infinity) {
+                sTxt += 'N/A';
+            } else {
+                sTxt += `${bestFitnessEver.toFixed(3)}`;
+                if (bestNN) {
+                    sTxt += ` (ID: ${bestNN.id})`; // Mostra ID da melhor rede
+                }
+            }
+
+            trainingInfoDisplay.innerHTML = sTxt; // Usa innerHTML para o <br> e <strong>
+        }
+
+
+        function updateWindInfo() {
+            if (!windInfoDisplay) return;
+            const dirTxt = windDirection === 1 ? 'Direita' : (windDirection === -1 ? 'Esquerda' : 'Calmo');
+            let strTxt = "Nenhuma";
+            const strengthPercent = Math.round(windStrength * 100);
+
+            if (windStrength > 0.8) strTxt = "Forte";
+            else if (windStrength > 0.4) strTxt = "Moderado";
+            else if (windStrength > 0) strTxt = "Leve";
+
+            windInfoDisplay.textContent = `Vento: ${dirTxt} (${strTxt} ${strengthPercent}%)`;
+        }
+
+        function resetWind() {
+            // Chance maior de ter algum vento
+            if (Math.random() < 0.15) { // 15% chance de sem vento
+                windStrength = 0;
+                windDirection = 0;
+            } else {
+                // Distribuição mais provável para ventos leves/moderados
+                windStrength = Math.random() * Math.random() * 0.9 + 0.1; // Varia de 0.1 a 1.0, com bias para valores menores
+                windDirection = Math.random() < 0.5 ? -1 : 1; // 50/50 Direita/Esquerda
+            }
+            // console.log(`Vento resetado: Força=${windStrength.toFixed(2)}, Direção=${windDirection}`);
+        }
+
+        // --- Lógica do Jogo (Main Thread - sem alterações) ---
+        function updateGameLogic() {
+            // Não atualiza se o jogo acabou ou está treinando
+            if (gameIsOverState || isTraining) return;
+
+            frameCount++;
+
+            // Aplica gravidade
+            rocket.speedY += gravity;
+
+            // Aplica efeito do vento (dependente da altura)
+            const windEffect = windStrength * windDirection * 0.015 * Math.max(0.1, rocket.y / canvas.height);
+            rocket.speedX += windEffect;
+
+            // Aplica propulsão principal se ativa e com combustível
+            if (rocket.isThrusting && rocket.fuel > 0) {
+                const angle = rocket.angle; // Ângulo em radianos (0 = direita, PI/2 = cima, PI = esquerda, etc.)
+                // Decompõe o empuxo nas componentes X e Y baseado no ângulo
+                rocket.speedX += thrust * Math.sin(angle);
+                rocket.speedY += -thrust * Math.cos(angle); // Cosseno negativo porque Y aumenta para baixo
+                rocket.fuel -= 0.35; // Consome combustível
+                rocket.fuel = Math.max(0, rocket.fuel); // Garante que não fique negativo
+            }
+
+            // Aplica propulsão lateral esquerda (gira anti-horário)
+            if (rocket.thrustingLeft && rocket.fuel > 0) {
+                rocket.angle += sideThrust; // Aumenta o ângulo
+                rocket.fuel -= 0.08; // Consome menos combustível
+                rocket.fuel = Math.max(0, rocket.fuel);
+            }
+
+            // Aplica propulsão lateral direita (gira horário)
+            if (rocket.thrustingRight && rocket.fuel > 0) {
+                rocket.angle -= sideThrust; // Diminui o ângulo
+                rocket.fuel -= 0.08;
+                rocket.fuel = Math.max(0, rocket.fuel);
+            }
+
+            // Mantém o ângulo dentro de 0 a 2*PI
+            rocket.angle = (rocket.angle + 2 * Math.PI) % (2 * Math.PI);
+
+            // Limita as velocidades máximas
+            rocket.speedX = Math.max(-maxSpeedX, Math.min(maxSpeedX, rocket.speedX));
+            rocket.speedY = Math.max(-maxSpeedY * 1.5, Math.min(maxSpeedY, rocket.speedY)); // Permite cair um pouco mais rápido
+
+            // Atualiza a posição do foguete
+            rocket.y += rocket.speedY;
+            rocket.x += rocket.speedX;
+
+            // Verifica condições de fim de jogo
+            checkGameOverConditions();
+        }
+
+        function checkGameOverConditions() {
+            // Só verifica se o jogo está rodando e não treinando
+            if (gameIsOverState || isTraining) return;
+
+            const rBY = rocket.y; // Posição Y da base do foguete (aproximado)
+            const safeLandSpeedY = 1.5; // Velocidade vertical máxima segura para pouso
+            const safeLandSpeedX = 1.0; // Velocidade horizontal máxima segura para pouso
+            const angleTolerance = 15 * (Math.PI / 180); // Tolerância angular (15 graus)
+
+            // Calcula a diferença absoluta do ângulo atual para o ângulo ideal (PI = reto para cima)
+            const angleDiff = Math.abs(rocket.angle - Math.PI);
+            // Verifica se o ângulo está dentro da tolerância, considerando a volta (360 graus)
+            const isAngleSafe = angleDiff <= angleTolerance || Math.abs(angleDiff - 2 * Math.PI) <= angleTolerance;
+
+            let landedSafely = false;
+            let crashReason = "";
+
+            // 1. Colisão com as bordas laterais do canvas
+            if (rocket.x <= 0 || rocket.x + rocket.width >= canvas.width) {
+                endSimulation(false, "Colidiu Lateralmente");
+                return; // Fim de jogo
+            }
+
+            // 2. Colisão com o chão (y <= altura do pad)
+            // A coordenada Y 0 é a base do canvas transladado, então checar <= pad.height
+            if (rBY <= landingPad.height) {
+                // Verifica se a colisão ocorreu horizontalmente sobre a plataforma
+                if (rocket.x + rocket.width > landingPad.x && rocket.x < landingPad.x + landingPad.width) {
+                    // Pousou na plataforma. Verificar segurança:
+                    if (Math.abs(rocket.speedY) <= safeLandSpeedY &&
+                        Math.abs(rocket.speedX) <= safeLandSpeedX &&
+                        isAngleSafe) {
+                        // Pouso seguro!
+                        landedSafely = true;
+                    } else {
+                        // Pouso ruim (crash) na plataforma. Montar a razão:
+                        if (Math.abs(rocket.speedY) > safeLandSpeedY) {
+                            crashReason += `VelY alta (${(-rocket.speedY * 3.6).toFixed(1)} km/h). `;
+                        }
+                        if (Math.abs(rocket.speedX) > safeLandSpeedX) {
+                            crashReason += `VelX alta (${(rocket.speedX * 3.6).toFixed(1)} km/h). `;
+                        }
+                        if (!isAngleSafe) {
+                            let deg = (rocket.angle * 180 / Math.PI) - 180;
+                            deg = (deg + 360) % 360;
+                            if (deg > 180) deg -= 360;
+                            crashReason += `Ângulo ruim (${Math.round(deg)}°).`;
+                        }
+                        crashReason = "Crash Plataforma: " + crashReason;
+                    }
+                    // Fim de jogo (pouso ou crash na plataforma)
+                    endSimulation(landedSafely, landedSafely ? "Pouso Suave!" : crashReason);
+                } else {
+                    // Caiu no chão fora da plataforma
+                    endSimulation(false, "Caiu fora da plataforma.");
+                }
+            }
+            // Se nenhuma condição de fim foi atingida, o jogo continua
+        }
+
+        function endSimulation(success, message) {
+            // Só encerra uma vez e se não estiver treinando
+            if (gameIsOverState || isTraining) return;
+
+            gameIsOverState = true;
+            // Desliga motores visualmente
+            rocket.isThrusting = false;
+            rocket.thrustingLeft = false;
+            rocket.thrustingRight = false;
+
+            // Exibe a mensagem após um pequeno delay para o último frame renderizar
+            setTimeout(() => {
+                alert(message + `\n(Pressione R para reiniciar)`);
+                // Não reseta automaticamente, espera o usuário pressionar R
+                // resetGame();
+            }, 150);
+        }
+
+        function getCurrentNNInputs(rocketState, padState, currentWindStrength, currentWindDirection) {
+            // Normaliza as entradas para a rede neural (geralmente entre -1 e 1 ou 0 e 1)
+
+            // Posição X normalizada (0 a 1)
+            const normX = (rocketState.x + rocketState.width / 2) / canvas.width;
+
+            // Posição Y normalizada (0 a 1+, clampado em 0 e 1 talvez?)
+            // Clampado entre 0 e 1.1 para dar uma margem acima da tela
+            const normY = Math.max(0, Math.min(1.1, rocketState.y / canvas.height));
+
+            // Velocidade X normalizada (-1 a 1)
+            const normVx = Math.max(-1, Math.min(1, rocketState.speedX / maxSpeedX));
+
+            // Velocidade Y normalizada (-1 a 1)
+            const normVy = Math.max(-1, Math.min(1, rocketState.speedY / maxSpeedY));
+
+            // Ângulo normalizado (-1 a 1), onde 0 rad = PI (reto pra cima)
+            let normAngle = (rocketState.angle - Math.PI) / Math.PI;
+            // Ajusta o wrap around para manter em [-1, 1]
+            if (normAngle > 1) normAngle -= 2;
+            if (normAngle < -1) normAngle += 2;
+            const normAng = Math.max(-1, Math.min(1, normAngle));
+
+            // Distância horizontal normalizada do centro do foguete ao centro do pad (-1 a 1)
+            const targetCenterX = padState.x + padState.width / 2;
+            const rocketCenterX = rocketState.x + rocketState.width / 2;
+            // Distância relativa à metade da largura da tela (para escala)
+            const distToTargetX = (targetCenterX - rocketCenterX) / (canvas.width / 2);
+            const normDistX = Math.max(-1, Math.min(1, distToTargetX));
+
+            // Força e direção do vento combinadas e normalizadas (-1 a 1)
+            // Multiplicar por 2 ajuda a usar a faixa -1 a 1 mais efetivamente se windStrength for 0 a 1
+            const normWind = Math.max(-1, Math.min(1, currentWindStrength * currentWindDirection * 2));
+
+            return [normX, normY, normVx, normVy, normAng, normDistX, normWind];
+        }
+
+
+        function controlRocketWithAI() {
+            // Só controla se a IA está ativa, tem combustível, jogo rodando e não treinando
+            if (!aiControlled || !activeAI || rocket.fuel <= 0 || gameIsOverState || isTraining) {
+                // Garante que os motores estejam desligados se a IA não puder controlar
+                if (!isTraining) { // Só desliga se não estiver treinando (no treino não há controle ativo)
+                    rocket.isThrusting = false;
+                    rocket.thrustingLeft = false;
+                    rocket.thrustingRight = false;
+                }
+                lastOutputs = [0, 0, 0]; // Reseta as últimas saídas
+                return;
+            }
+
+            try {
+                // 1. Obter as entradas normalizadas para a rede neural
+                const inputs = getCurrentNNInputs(rocket, landingPad, windStrength, windDirection);
+
+                // 2. Fazer a predição usando a rede neural ativa
+                const outputs = activeAI.predict(inputs);
+                lastOutputs = outputs; // Armazena as saídas para visualização
+
+                // 3. Interpretar as saídas da rede neural para controlar os motores
+                const threshold = 0.55; // Limiar de ativação (ajustável)
+
+                rocket.isThrusting = outputs[0] > threshold;
+                rocket.thrustingLeft = outputs[1] > threshold;
+                rocket.thrustingRight = outputs[2] > threshold;
+
+                // Lógica para evitar acionar ambos os motores laterais simultaneamente
+                // Se ambos estiverem acima do limiar, ativa apenas o que tiver maior saída
+                if (rocket.thrustingLeft && rocket.thrustingRight) {
+                    if (outputs[1] > outputs[2]) {
+                        rocket.thrustingRight = false;
+                    } else {
+                        rocket.thrustingLeft = false;
+                    }
+                }
+            } catch (error) {
+                console.error("Erro ao controlar foguete com IA:", error, activeAI);
+                // Desativa a IA em caso de erro para evitar loop de falhas
+                aiControlled = false;
+                activeAI = null;
+                aiStatusDisplay.innerText = `Controle: Humano (Erro IA)`;
+                rocket.isThrusting = false;
+                rocket.thrustingLeft = false;
+                rocket.thrustingRight = false;
+            }
+        }
+
+        // --- Lógica do Algoritmo Genético (nextGeneration - sem alterações desde v3) ---
+        function nextGeneration() {
+            currentGeneration++;
+            console.log(`%c--- Processando Geração ${currentGeneration - 1} para ${currentGeneration} ---`, 'color: blue; font-weight: bold');
+
+            // 1. Atribuir Fitness e Validar
+            let foundValidFitness = false;
+            let minFitness = Infinity;
+            let maxFitness = -Infinity;
+            population.forEach(nn => {
+                const fitness = populationFitness[nn.id];
+                // Atribui fitness, tratando NaN ou undefined como -Infinity
+                nn.fitness = (fitness !== undefined && fitness !== null && !isNaN(fitness)) ? fitness : -Infinity;
+
+                if (nn.fitness > -Infinity) {
+                    foundValidFitness = true;
+                    if (nn.fitness < minFitness) minFitness = nn.fitness;
+                    if (nn.fitness > maxFitness) maxFitness = nn.fitness;
+                }
+            });
+
+            // Se nenhum indivíduo teve fitness válido, é um erro grave
+            if (!foundValidFitness) {
+                console.error(`ERRO CRÍTICO: Nenhum fitness válido encontrado para G ${currentGeneration - 1}. Parando o treinamento.`);
+                stopTraining();
+                alert("Erro crítico no cálculo de fitness. Treinamento interrompido.");
+                return;
+            }
+            console.log(`G ${currentGeneration - 1} Fitness Range: ${minFitness.toFixed(3)} a ${maxFitness.toFixed(3)}`);
+
+            // 2. Ordenar por Fitness (Decrescente)
+            population.sort((a, b) => b.fitness - a.fitness);
+
+            // 3. Atualizar Melhor Global (Elitismo Global)
+            if (population[0].fitness > bestFitnessEver) {
+                bestFitnessEver = population[0].fitness;
+                bestNN = population[0].copy(); // Copia o melhor da geração atual
+                bestNN.id = `best-G${currentGeneration - 1}`; // Renomeia para indicar a origem
+                console.log(`%cNovo Melhor Fitness Global (G${currentGeneration - 1}): ${bestFitnessEver.toFixed(3)} por ${population[0].id}`, 'color: green; font-weight: bold;');
+                updateButtonStates(); // Habilita salvar/exportar etc.
+            } else if (bestNN) {
+                // Log para acompanhar o melhor da geração vs o melhor global
+                console.log(`Melhor Fitness G ${currentGeneration - 1}: ${population[0].fitness.toFixed(3)} (ID: ${population[0].id}). Melhor global ainda é ${bestFitnessEver.toFixed(3)} (ID: ${bestNN.id})`);
+            } else {
+                // Caso raro: primeira geração ou bestNN foi resetado
+                bestFitnessEver = population[0].fitness;
+                bestNN = population[0].copy();
+                bestNN.id = `best-G${currentGeneration - 1}`;
+                console.log(`%cDefinido Primeiro Melhor Fitness Global (G${currentGeneration - 1}): ${bestFitnessEver.toFixed(3)} por ${population[0].id}`, 'color: green; font-weight: bold;');
+                updateButtonStates();
+            }
+
+
+            // 4. Seleção e Criação da Nova Geração
+            const newPopulation = [];
+
+            // 4.1 Elitismo Local: Mantém os melhores da geração atual diretamente
+            const eliteCount = Math.max(1, Math.floor(POPULATION_SIZE * 0.05)); // 5% de elite
+            for (let i = 0; i < eliteCount && i < population.length; i++) {
+                let eliteCopy = population[i].copy();
+                eliteCopy.id = `G${currentGeneration}-elite-${i}`; // Novo ID para a nova geração
+                newPopulation.push(eliteCopy);
+            }
+
+            // 4.2 Seleção por Roleta (ou Torneio) e Crossover
+            const selectionPool = [];
+            // Normaliza fitness para seleção por roleta (evita fitness negativo)
+            // Adiciona 1 para garantir que mesmo o pior tenha uma pequena chance se minFitness for 0
+            const fitnessOffset = minFitness <= 0 ? Math.abs(minFitness) + 1 : 0;
+            let totalNormalizedFitness = 0;
+            population.forEach(nn => {
+                if (nn.fitness > -Infinity) { // Considera apenas os que têm fitness válido
+                    totalNormalizedFitness += (nn.fitness + fitnessOffset);
+                }
+            });
+
+
+            if (totalNormalizedFitness > 0) {
+                // Cria o pool de seleção baseado no fitness normalizado (Roleta)
+                // Cada indivíduo entra N vezes proporcionalmente ao seu fitness
+                population.forEach(nn => {
+                    if (nn.fitness > -Infinity) {
+                        const normalizedFitness = nn.fitness + fitnessOffset;
+                        const numCopies = Math.ceil((normalizedFitness / totalNormalizedFitness) * POPULATION_SIZE * 1.2); // Fator 1.2 para inflar um pouco o pool
+                        for (let j = 0; j < numCopies && selectionPool.length < POPULATION_SIZE * 5; j++) { // Limita tamanho do pool
+                            selectionPool.push(nn);
+                        }
+                    }
+                });
+            }
+
+            // Fallback: Se a roleta falhar (fitness muito baixo ou homogêneo), usa seleção por torneio ou ranking
+            if (selectionPool.length < 2) {
+                console.warn("Pool de seleção por roleta muito pequeno ou vazio. Usando os melhores 50% como pool.");
+                const halfSize = Math.max(2, Math.ceil(population.length / 2));
+                for (let i = 0; i < halfSize; i++) {
+                    selectionPool.push(population[i]);
+                    selectionPool.push(population[i]); // Adiciona duas vezes para aumentar chance
+                }
+            }
+            if (selectionPool.length < 2 && population.length >= 2) {
+                console.error("Falha crítica na seleção. Usando população antiga como pool.");
+                selectionPool.push(...population); // Último recurso
+            }
+
+
+            // 4.3 Gerar Filhos por Crossover e Mutação
+            while (newPopulation.length < POPULATION_SIZE && selectionPool.length > 1) {
+                // Seleciona dois pais aleatoriamente do pool
+                let parentA = selectionPool[Math.floor(Math.random() * selectionPool.length)];
+                let parentB = selectionPool[Math.floor(Math.random() * selectionPool.length)];
+                let attempts = 0;
+                // Tenta garantir que os pais sejam diferentes (se possível)
+                while (parentA === parentB && selectionPool.length > 1 && attempts < 10) {
+                    parentB = selectionPool[Math.floor(Math.random() * selectionPool.length)];
+                    attempts++;
+                }
+
+                // Gera o filho através do crossover
+                let child = parentA.crossover(parentB);
+                child.id = `G${currentGeneration}-child-${newPopulation.length}`; // Novo ID
+
+                // Aplica mutação no filho
+                child.mutate(MUTATION_RATE);
+
+                newPopulation.push(child);
+            }
+
+            // 4.4 Preenchimento (se necessário)
+            // Se faltarem indivíduos, preenche com mutações da elite ou aleatórios
+            if (newPopulation.length < POPULATION_SIZE && newPopulation.length > 0) {
+                const missing = POPULATION_SIZE - newPopulation.length;
+                console.warn(`Preenchendo ${missing} indivíduos faltantes com mutações da elite.`);
+                for (let i = 0; i < missing; i++) {
+                    let eliteParent = newPopulation[Math.floor(Math.random() * Math.min(eliteCount, newPopulation.length))]; // Pega um da elite já na nova população
+                    let fillerChild = eliteParent.copy();
+                    fillerChild.id = `G${currentGeneration}-filler-${newPopulation.length}`;
+                    fillerChild.mutate(MUTATION_RATE * 1.5); // Mutação um pouco mais forte para diversificar
+                    newPopulation.push(fillerChild);
+                }
+            } else if (newPopulation.length === 0) {
+                console.error("ERRO CRÍTICO: Nova população ficou vazia após seleção/crossover. Parando.");
+                stopTraining();
+                alert("Erro crítico: Nova população vazia. Treinamento interrompido.");
+                return;
+            }
+
+
+            // 5. Atualizar a População e Resetar Estado da Geração
+            population = newPopulation;
+            populationFitness = {}; // Limpa os fitness antigos
+            resultsReceivedCount = 0; // Zera a contagem de resultados recebidos
+
+            console.log(`Nova População G${currentGeneration} criada. Tamanho: ${population.length}`);
+        }
+
+        // --- Gerenciamento dos Workers e Treinamento (sem alterações desde v3) ---
+        function createWorkers() {
+            console.log(`Criando ${NUM_WORKERS} workers...`);
+            let workerUrl = '';
+            try {
+                // Cria um Blob com o código do worker
+                const workerBlob = new Blob([workerCode], {
+                    type: 'application/javascript'
+                });
+                // Cria uma URL para o Blob
+                workerUrl = URL.createObjectURL(workerBlob);
+            } catch (e) {
+                console.error("Falha ao criar Blob/URL para o worker:", e);
+                alert("Erro ao preparar o código do worker. Verifique o console.");
+                return false; // Indica falha
+            }
+
+            workers = []; // Array para armazenar as instâncias dos workers
+            workersBusy = []; // Array para rastrear se cada worker está ocupado
+            // Mensagem de inicialização com as configurações do jogo/simulação
+            const configMessage = {
+                type: 'init',
+                config: {
+                    INPUT_NODES, HIDDEN_NODES, OUTPUT_NODES,
+                    SIMULATION_TIMEOUT_FRAMES,
+                    canvasWidth: canvas.width, canvasHeight: canvas.height,
+                    gravity, thrust, sideThrust, maxSpeedX, maxSpeedY, fuelMax,
+                    landingPadWidth: landingPad.width, landingPadHeight: landingPad.height
+                }
+            };
+
+            // Cria cada worker
+            for (let i = 0; i < NUM_WORKERS; i++) {
+                try {
+                    const worker = new Worker(workerUrl);
+
+                    // Handler para erros no worker
+                    worker.onerror = (error) => {
+                        console.error(`Erro no Worker ${i}:`, error.message, error);
+                        // Marca como não ocupado e tenta designar nova tarefa se houver
+                        workersBusy[i] = false;
+                        assignTaskToWorker(i);
+                        checkForGenerationCompletion(); // Verifica se a geração acabou por causa do erro
+                    };
+
+                    // Handler para mensagens recebidas do worker
+                    worker.onmessage = (event) => handleWorkerMessage(i, event.data);
+
+                    // Envia a mensagem de configuração inicial para o worker
+                    worker.postMessage(configMessage);
+
+                    workers.push(worker);
+                    workersBusy.push(false); // Inicialmente, nenhum worker está ocupado
+                } catch (e) {
+                    console.error(`Falha ao criar worker ${i}:`, e);
+                    // Pode acontecer se houver limites de workers ou outros problemas
+                }
+            }
+
+            console.log(`${workers.length} de ${NUM_WORKERS} workers criados com sucesso.`);
+            // Revoga a URL do Blob após criar os workers (não é mais necessária)
+            URL.revokeObjectURL(workerUrl);
+
+            // Verifica se algum worker foi realmente criado
+            if (workers.length === 0 && NUM_WORKERS > 0) {
+                alert("Falha crítica: Nenhum Web Worker pôde ser criado. O treinamento paralelo não funcionará.");
+                return false; // Indica falha
+            }
+            return true; // Indica sucesso
+        }
+
+        function terminateWorkers() {
+            console.log("Terminando workers...");
+            workers.forEach((worker, index) => {
+                try {
+                    worker.terminate(); // Encerra o worker
+                } catch (e) {
+                    console.warn(`Erro ao terminar worker ${index}:`, e);
+                }
+            });
+            // Limpa os arrays de workers
+            workers = [];
+            workersBusy = [];
+            console.log("Workers terminados.");
+        }
+
+        function handleWorkerMessage(workerIndex, message) {
+            // Ignora mensagens se o treinamento não estiver ativo
+            if (!isTraining) return;
+
+            if (message.type === 'result') {
+                // Encontra a NN correspondente na população atual pelo ID
+                // Nota: Se a geração mudou enquanto a tarefa estava rodando, a NN pode não ser encontrada
+                const correspondingNN = population.find(nn => nn.id === message.id);
+
+                if (!correspondingNN) {
+                    // console.warn(`Resultado recebido para NN ${message.id} não encontrada na pop atual (G${currentGeneration}). Ignorando.`);
+                    // Mesmo que não encontre, libera o worker
+                    workersBusy[workerIndex] = false;
+                    assignTaskToWorker(workerIndex); // Tenta dar nova tarefa
+                    return; // Sai sem processar o resultado
+                }
+
+                // Verifica se o fitness é válido antes de incrementar a contagem
+                if (message.fitness !== undefined && message.fitness !== null && !isNaN(message.fitness)) {
+                    resultsReceivedCount++;
+                    populationFitness[message.id] = message.fitness;
+
+                    // Atualiza o melhor fitness global *imediatamente* se um resultado melhor chegar
+                    if (message.fitness > bestFitnessEver) {
+                        bestFitnessEver = message.fitness;
+                        // Encontra a NN na população para copiar (pode ser diferente da correspondingNN se a pop mudou?)
+                        // É mais seguro buscar novamente
+                        const currentNN = population.find(n => n.id === message.id);
+                        if (currentNN) {
+                            bestNN = currentNN.copy(); // Cria uma cópia para evitar alterações posteriores
+                            bestNN.fitness = message.fitness; // Garante que o fitness copiado está correto
+                            bestNN.id = `best-G${currentGeneration}`; // Atualiza ID para refletir a geração
+                            console.log(`%cNovo Melhor Global (intra-geração G${currentGeneration}): ${bestFitnessEver.toFixed(3)} por ${message.id}`, 'color: purple; font-weight: bold;');
+                            updateButtonStates(); // Atualiza botões (salvar/exportar pode ficar disponível)
+                        }
+                    }
+                } else {
+                    console.warn(`Fitness inválido recebido do worker ${workerIndex} para NN ${message.id}:`, message.fitness);
+                    // Atribui fitness muito baixo para penalizar
+                    populationFitness[message.id] = -Infinity;
+                    // Incrementa a contagem mesmo assim para a geração poder terminar
+                    resultsReceivedCount++;
+                }
+
+
+                // Libera o worker
+                workersBusy[workerIndex] = false;
+                // Tenta atribuir uma nova tarefa ao worker liberado
+                assignTaskToWorker(workerIndex);
+                // Verifica se a geração terminou
+                checkForGenerationCompletion();
+
+            } else {
+                console.log(`Mensagem inesperada recebida do Worker ${workerIndex}:`, message.type, message);
+            }
+        }
+
+        function assignTaskToWorker(workerIndex) {
+            // Não atribui se: não está treinando, worker está ocupado, não há tarefas na fila, ou índice inválido
+            if (!isTraining || workersBusy[workerIndex] || tasksQueue.length === 0 || workerIndex >= workers.length) {
+                return;
+            }
+
+            // Pega a próxima tarefa da fila (FIFO)
+            const taskData = tasksQueue.shift();
+            // Marca o worker como ocupado
+            workersBusy[workerIndex] = true;
+
+            // Gera configuração de simulação aleatória para esta avaliação
+            const simConfig = {
+                // Posição inicial com variação
+                startX: canvas.width / 2 + (Math.random() - 0.5) * (canvas.width * 0.7), // Aumenta um pouco a variação X
+                startY: canvas.height * 0.8 + (Math.random() - 0.5) * 200, // Aumenta variação Y
+                // Velocidade inicial com variação
+                startSpeedX: (Math.random() - 0.5) * 5, // Aumenta variação Vel X
+                startSpeedY: (Math.random() - 0.5) * 4, // Aumenta variação Vel Y
+                // Ângulo inicial com variação (em torno de PI = reto para cima)
+                startAngle: Math.PI + (Math.random() - 0.5) * (Math.PI / 2.5), // Aumenta variação angular (até +/- 36 graus)
+                // Posição do Landing Pad aleatória
+                landingPadX: Math.random() * (canvas.width - landingPad.width * 1.5) + landingPad.width * 0.25, // Pad não muito perto das bordas
+                // Vento aleatório (com chance de ser zero)
+                windStrength: Math.random() < 0.15 ? 0 : Math.random() * Math.random() * 1.0, // Bias para ventos mais fracos
+                windDirection: Math.random() < 0.5 ? -1 : 1
+            };
+
+            // Tenta enviar a tarefa para o worker
+            try {
+                workers[workerIndex].postMessage({
+                    type: 'evaluate',
+                    task: {
+                        nnData: taskData.nnData, // Envia os dados serializados da NN
+                        simConfig: simConfig      // Envia a configuração da simulação
+                    }
+                });
+            } catch (postError) {
+                // Se falhar ao enviar (worker pode ter morrido), marca como livre e devolve a tarefa para a fila
+                console.error(`Erro ao enviar postMessage para Worker ${workerIndex} (NN ID: ${taskData.id}):`, postError);
+                workersBusy[workerIndex] = false; // Libera o worker
+                tasksQueue.unshift(taskData); // Devolve a tarefa ao início da fila
+                // Poderia tentar reiniciar o worker aqui se erros forem frequentes
+            }
+        }
+
+        function checkForGenerationCompletion() {
+            // Verifica se está treinando e se todos os resultados da população atual foram recebidos
+            if (isTraining && resultsReceivedCount >= POPULATION_SIZE) {
+                console.log(`%cGeração ${currentGeneration} concluída (${resultsReceivedCount} resultados recebidos). Processando...`, 'color: #888');
+                // Usa setTimeout para permitir que a UI atualize antes do processamento pesado da próxima geração
+                setTimeout(processGenerationResults, 50); // Delay pequeno (50ms)
+            }
+            // Atualiza a UI para mostrar o progresso mesmo que a geração não tenha terminado
+            updateTrainingInfo();
+            updateButtonStates();
+        }
+
+        function processGenerationResults() {
+            // Confirma novamente que está treinando e que todos os resultados chegaram
+            // (pode ter sido parado enquanto o setTimeout esperava)
+            if (!isTraining || resultsReceivedCount < POPULATION_SIZE) return;
+
+            // 1. Calcula a próxima geração (seleção, crossover, mutação)
+            nextGeneration();
+
+            // Se 'nextGeneration' parou o treino (por erro), não continua
+            if (!isTraining) return;
+
+            // 2. Prepara a fila de tarefas para a nova geração
+            tasksQueue = population.map(nn => ({
+                id: nn.id,
+                nnData: nn.getSerializableData() // Serializa cada NN da nova população
+            }));
+
+            // Verifica se a fila foi criada corretamente
+            if (tasksQueue.length !== POPULATION_SIZE) {
+                console.error(`Erro crítico: Fila de tarefas para G${currentGeneration} tem tamanho incorreto (${tasksQueue.length}/${POPULATION_SIZE}). Parando.`);
+                stopTraining();
+                alert("Erro crítico ao preparar tarefas para a nova geração. Treinamento interrompido.");
+                return;
+            }
+
+            console.log(`Iniciando avaliação da Geração ${currentGeneration} (${tasksQueue.length} indivíduos).`);
+
+            // 3. Reinicia o estado dos workers e distribui as primeiras tarefas
+            workersBusy.fill(false); // Marca todos os workers como livres
+            for (let i = 0; i < workers.length; i++) {
+                assignTaskToWorker(i); // Atribui tarefas aos workers disponíveis
+            }
+
+            // Atualiza a UI imediatamente após iniciar a nova geração
+            updateTrainingInfo();
+            updateButtonStates();
+        }
+
+        // --- Funções de Controle de Treinamento (MODIFICADO startTraining) ---
+        function startTraining() {
+            if (isTraining) return;
+            console.log("Iniciando Treinamento (com seeding)...");
+            isTraining = true;
+            aiControlled = false; // Garante que o controle manual/IA ativa seja desligado
+            activeAI = null;
+            aiStatusDisplay.innerText = "Treinando IA (Workers)...";
+            aiStatusDisplay.style.backgroundColor = 'rgba(255, 165, 0, 0.8)'; // Laranja durante treino
+
+            // --- LÓGICA DE INICIALIZAÇÃO/SEEDING DA POPULAÇÃO ---
+            // Cria uma nova população se for o início ou se a população atual não tiver o tamanho certo
+            if (population.length !== POPULATION_SIZE || currentGeneration === 0) {
+                console.log("Criando/Resetando população inicial...");
+                population = []; // Limpa população antiga
+                currentGeneration = 0; // Reseta contador de geração
+
+                // 1. Adiciona cópias/mutações da bestNN (se existir e SEED_COUNT > 0)
+                let seededCount = 0;
+                if (bestNN && SEED_COUNT_ON_START > 0) {
+                    console.log(`%cSemeando população com ${SEED_COUNT_ON_START} cópias/mutações de ${bestNN.id} (Fit: ${bestNN.fitness.toFixed(3)})`, 'color: #2980b9; font-weight: bold');
+
+                    // Adiciona a cópia exata da melhor NN
+                    let bestCopy = bestNN.copy();
+                    bestCopy.id = `G0-seed-0`; // ID indica que é da semeadura inicial
+                    population.push(bestCopy);
+                    seededCount++;
+
+                    // Adiciona cópias mutadas
+                    for (let i = 1; i < SEED_COUNT_ON_START && population.length < POPULATION_SIZE; i++) {
+                        let mutatedCopy = bestNN.copy();
+                        mutatedCopy.id = `G0-seed-${i}`;
+                        // Aplica uma mutação um pouco maior para diversificar os seeds iniciais
+                        mutatedCopy.mutate(MUTATION_RATE * 1.5); // Mutação 50% mais forte
+                        population.push(mutatedCopy);
+                        seededCount++;
+                    }
+                    console.log(`${seededCount} indivíduos semeados a partir da melhor IA.`);
+                } else if (bestNN) {
+                    console.log("SEED_COUNT_ON_START é 0 ou bestNN não é válida, não semeando.");
+                } else {
+                    console.log("Nenhuma bestNN encontrada para semear a população inicial.");
+                }
+
+                // 2. Preenche o resto com indivíduos aleatórios
+                const randomCount = POPULATION_SIZE - population.length;
+                if (randomCount > 0) {
+                    console.log(`Preenchendo com ${randomCount} indivíduos aleatórios.`);
+                    for (let i = 0; i < randomCount; i++) {
+                        let nn = new NeuralNetwork(INPUT_NODES, HIDDEN_NODES, OUTPUT_NODES, `G0-rand-${i}`);
+                        // Inicializa os pesos e biases aleatoriamente
+                        nn.randomizeMatrix(nn.weights_ih);
+                        nn.randomizeMatrix(nn.weights_ho);
+                        nn.randomizeMatrix(nn.bias_h);
+                        nn.randomizeMatrix(nn.bias_o);
+                        population.push(nn);
+                    }
+                }
+            } else {
+                // Se continuar treino (sem recarregar página), mantém a população anterior mas reseta fitness
+                console.log(`Continuando treino a partir da Geração ${currentGeneration} (população existente). Resetando fitness.`);
+                population.forEach(nn => nn.fitness = -Infinity); // Fitness precisa ser recalculado
+                // Poderia opcionalmente reiniciar currentGeneration para 0 aqui se desejado
+                // currentGeneration = 0;
+                // Poderia também introduzir a bestNN na população atual se ela não estiver lá
+                // if (bestNN && !population.some(nn => nn.id === bestNN.id)) {
+                //    population[population.length - 1] = bestNN.copy(); // Substitui o pior
+                // }
+            }
+            // --- FIM DA LÓGICA DE INICIALIZAÇÃO ---
+
+            resultsReceivedCount = 0; // Zera contagem de resultados para a nova geração/treino
+            populationFitness = {};   // Limpa mapa de fitness
+
+            // Prepara a fila de tarefas com a população inicial (ou continuada)
+            tasksQueue = population.map(nn => ({
+                id: nn.id,
+                nnData: nn.getSerializableData() // Serializa cada NN para enviar aos workers
+            }));
+
+            // Cria os workers e inicia a distribuição de tarefas
+            if (createWorkers()) {
+                console.log(`Distribuindo tarefas iniciais para Geração ${currentGeneration}...`);
+                const initialTasks = Math.min(tasksQueue.length, workers.length);
+                for (let i = 0; i < initialTasks; i++) {
+                    assignTaskToWorker(i); // Envia as primeiras tarefas
+                }
+            } else {
+                // Se a criação de workers falhar, interrompe o início do treinamento
+                console.error("Falha ao criar workers. Abortando início do treinamento.")
+                isTraining = false; // Reverte o estado de treinamento
+                aiStatusDisplay.innerText = `Controle: Humano (Erro Workers)`;
+                aiStatusDisplay.style.backgroundColor = 'rgba(255, 223, 186, 0.9)'; // Cor normal
+                updateButtonStates();
+                return;
+            }
+
+            resetGame(); // Reseta o estado do jogo visual na thread principal
+            updateUI(); // Atualiza a UI para refletir o início do treino
+        }
+
+        function stopTraining() {
+            // Só para se estiver treinando
+            if (!isTraining) return;
+
+            console.log("Parando Treinamento...");
+            isTraining = false; // Define o estado como não treinando
+
+            // Encerra os workers
+            terminateWorkers();
+
+            // Limpa a fila de tarefas pendentes
+            tasksQueue = [];
+
+            // Restaura o controle para humano e limpa IA ativa
+            aiControlled = false;
+            activeAI = null;
+            aiStatusDisplay.innerText = `Controle: Humano (C)`;
+            aiStatusDisplay.style.backgroundColor = 'rgba(255, 223, 186, 0.9)'; // Cor normal
+
+            resetGame(); // Reseta o estado do jogo visual
+            updateUI();  // Atualiza a UI para refletir o fim do treino
+            console.log("Treinamento parado.");
+        }
+
+        // --- Funções de Gerenciamento da IA (Modificado e Adicionado) ---
+        function saveBestNN() {
+            if (!bestNN) {
+                alert("Nenhuma 'Melhor IA' foi encontrada ou treinada para salvar.");
+                return;
+            }
+
+            try {
+                // Obtém os dados serializáveis da melhor rede neural
+                const dataToSave = bestNN.getSerializableData();
+                // Converte para string JSON
+                const jsonString = JSON.stringify(dataToSave);
+                // Salva no localStorage usando a chave definida
+                localStorage.setItem(LOCALSTORAGE_KEY_NN, jsonString);
+
+                console.log(`Melhor IA (ID: ${bestNN.id}, Fit: ${bestNN.fitness.toFixed(3)}) salva no localStorage.`);
+                alert(`Melhor IA salva com sucesso!\nFitness: ${bestNN.fitness.toFixed(3)}\nID: ${bestNN.id}`);
+
+                // Atualiza o status na UI e os botões
+                updateStorageStatus();
+                updateButtonStates();
+
+            } catch (error) {
+                console.error("Erro ao salvar a Melhor IA no localStorage:", error);
+                alert("Falha ao salvar a Melhor IA. Verifique o console para detalhes.");
+                // Verifica se o erro é de cota excedida (localStorage cheio)
+                if (error.name === 'QuotaExceededError') {
+                    alert("Erro: O armazenamento local está cheio. Não foi possível salvar a IA.");
+                }
+            }
+        }
+
+        function loadBestNN() {
+            // Não carrega se estiver treinando
+            if (isTraining) {
+                alert("Pare o treinamento antes de carregar uma IA salva.");
+                return;
+            }
+
+            // Obtém os dados salvos do localStorage
+            const jsonString = localStorage.getItem(LOCALSTORAGE_KEY_NN);
+            if (!jsonString) {
+                alert("Nenhuma IA salva encontrada no armazenamento local.");
+                updateStorageStatus(); // Atualiza UI caso não exista mais
+                updateButtonStates();
+                return;
+            }
+
+            try {
+                // Faz o parse da string JSON para um objeto
+                const loadedData = JSON.parse(jsonString);
+
+                // Tenta reconstruir a rede neural a partir dos dados carregados
+                const loadedNN = NeuralNetwork.fromData(loadedData);
+
+                if (loadedNN) {
+                    // Se a reconstrução foi bem-sucedida, define como a 'bestNN' atual
+                    bestNN = loadedNN;
+                    // Atualiza o melhor fitness conhecido com o valor carregado
+                    bestFitnessEver = loadedNN.fitness;
+
+                    console.log(`IA carregada do localStorage (ID: ${bestNN.id}, Fit: ${bestFitnessEver.toFixed(3)}).`);
+                    alert(`IA carregada com sucesso!\nFitness: ${bestFitnessEver.toFixed(3)}\nID: ${bestNN.id}`);
+
+                    // Reseta o estado do jogo e da UI
+                    aiControlled = false; // Volta para controle humano por padrão após carregar
+                    activeAI = null;
+                    aiStatusDisplay.innerText = `Controle: Humano (C)`;
+                    aiStatusDisplay.style.backgroundColor = 'rgba(255, 223, 186, 0.9)';
+
+                    resetGame(); // Reseta o jogo com a nova 'bestNN' disponível
+                    updateStorageStatus();
+                    updateButtonStates();
+
+                } else {
+                    // Se fromData retornou null
+                    alert("Falha ao reconstruir a IA a partir dos dados salvos. Os dados podem estar corrompidos ou em formato incompatível.");
+                    // Considerar remover os dados inválidos?
+                    // localStorage.removeItem(LOCALSTORAGE_KEY_NN);
+                    // updateStorageStatus();
+                }
+            } catch (error) {
+                console.error("Erro ao carregar ou parsear a IA do localStorage:", error);
+                alert("Falha ao carregar a IA. Os dados salvos podem estar corrompidos ou em formato inválido. Verifique o console.");
+                updateStorageStatus(); // Atualiza status (pode mostrar erro)
+            }
+        }
+
+        function exportBestNN() {
+            if (!bestNN) {
+                alert("Nenhuma 'Melhor IA' para exportar.");
+                return;
+            }
+
+            try {
+                // Obtém os dados serializáveis da melhor rede
+                const dataToExport = bestNN.getSerializableData();
+                // Converte para JSON formatado (com indentação para legibilidade)
+                const jsonString = JSON.stringify(dataToExport, null, 2); // null, 2 para indentação
+                // Cria um Blob (Binary Large Object) com o JSON
+                const blob = new Blob([jsonString], { type: "application/json" });
+                // Cria uma URL temporária para o Blob
+                const url = URL.createObjectURL(blob);
+
+                // Cria um link (<a>) invisível para iniciar o download
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                // Define o nome do arquivo para download
+                const fitnessStr = bestNN.fitness !== -Infinity ? Math.round(bestNN.fitness) : 'na';
+                a.download = `rocket_ai_fit_${fitnessStr}_id_${bestNN.id.substring(0, 8)}.json`; // Nome sugestivo
+
+                // Adiciona o link ao corpo do documento, clica nele e remove
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+
+                // Libera a URL do Blob (importante para liberar memória)
+                URL.revokeObjectURL(url);
+
+                console.log(`Melhor IA (ID: ${bestNN.id}) exportada para arquivo JSON.`);
+                alert("Arquivo da Melhor IA preparado para download.");
+
+            } catch (error) {
+                console.error("Erro ao exportar a Melhor IA:", error);
+                alert("Falha ao exportar a Melhor IA. Verifique o console para detalhes.");
+            }
+        }
+
+        function importNN() {
+            // Não importa durante o treino
+            if (isTraining) {
+                alert("Pare o treinamento antes de importar uma IA.");
+                return;
+            }
+            // Dispara o clique no input de arquivo oculto
+            importFileInput.click();
+        }
+
+        function handleFileImport(event) {
+            const file = event.target.files[0]; // Pega o primeiro arquivo selecionado
+            if (!file) {
+                console.log("Nenhum arquivo selecionado para importação.");
+                return; // Sai se nenhum arquivo foi escolhido
+            }
+
+            // Verifica se o tipo de arquivo é JSON (embora o 'accept' já filtre)
+            if (file.type !== "application/json") {
+                alert(`Tipo de arquivo inválido: ${file.type}. Por favor, selecione um arquivo .json.`);
+                event.target.value = null; // Limpa o input
+                return;
+            }
+
+
+            const reader = new FileReader();
+
+            // Callback para quando a leitura do arquivo for concluída
+            reader.onload = function (e) {
+                try {
+                    const jsonString = e.target.result; // Conteúdo do arquivo como string
+                    const importedData = JSON.parse(jsonString); // Tenta fazer o parse do JSON
+
+                    // Validação básica da estrutura dos dados importados
+                    if (!importedData || typeof importedData !== 'object' || !importedData.weights_ih || typeof importedData.fitness === 'undefined' || !importedData.inputNodes || !importedData.hiddenNodes || !importedData.outputNodes) {
+                        throw new Error("Arquivo JSON não contém os dados esperados de uma Rede Neural (pesos, biases, fitness, configuração de nós).");
+                    }
+
+                    // Tenta reconstruir a NN a partir dos dados importados
+                    const importedNN = NeuralNetwork.fromData(importedData);
+
+                    if (importedNN) {
+                        // Sucesso! Define a NN importada como a 'bestNN' atual
+                        bestNN = importedNN;
+                        bestFitnessEver = importedNN.fitness; // Atualiza o melhor fitness conhecido
+
+                        console.log(`IA importada do arquivo "${file.name}" (ID: ${bestNN.id}, Fit: ${bestFitnessEver.toFixed(3)}).`);
+                        alert(`IA importada com sucesso!\nFitness: ${bestFitnessEver.toFixed(3)}\nID: ${bestNN.id}`);
+
+                        // Reseta o estado do jogo/UI
+                        aiControlled = false; // Volta para controle humano
+                        activeAI = null;
+                        aiStatusDisplay.innerText = `Controle: Humano (C)`;
+                        aiStatusDisplay.style.backgroundColor = 'rgba(255, 223, 186, 0.9)';
+
+                        resetGame(); // Reseta o jogo com a nova 'bestNN'
+                        updateStorageStatus(); // Atualiza se a importada é a mesma que a salva
+                        updateButtonStates();
+
+                    } else {
+                        // fromData retornou null
+                        alert("Falha ao reconstruir a IA a partir do arquivo JSON. O formato pode ser incompatível ou corrompido.");
+                    }
+                } catch (error) {
+                    console.error("Erro ao importar ou processar o arquivo JSON:", error);
+                    alert(`Falha ao importar a IA: ${error.message}. Verifique o console.`);
+                } finally {
+                    // Limpa o valor do input de arquivo para permitir importar o mesmo arquivo novamente
+                    event.target.value = null;
+                }
+            };
+
+            // Callback para erros durante a leitura do arquivo
+            reader.onerror = function (e) {
+                console.error("Erro ao ler o arquivo:", e);
+                alert("Ocorreu um erro ao tentar ler o arquivo selecionado.");
+                event.target.value = null; // Limpa o input
+            };
+
+            // Inicia a leitura do arquivo como texto
+            reader.readAsText(file);
+        }
+
+        // --- NOVA FUNÇÃO ---
+        function clearSavedNN() {
+            // Não permite limpar se estiver treinando
+            if (isTraining) {
+                alert("Pare o treinamento antes de limpar a IA salva.");
+                return;
+            }
+
+            // Confirmação do usuário
+            if (confirm("Tem certeza que deseja remover permanentemente a IA salva no armazenamento local do navegador? Esta ação não pode ser desfeita.")) {
+                try {
+                    // Remove o item do localStorage
+                    localStorage.removeItem(LOCALSTORAGE_KEY_NN);
+                    console.log("IA salva removida do localStorage.");
+                    alert("IA salva removida com sucesso!");
+
+                    // Atualiza a UI
+                    updateStorageStatus();
+                    updateButtonStates();
+
+                    // Opcional: Se a IA removida era a 'bestNN' atual, reseta ela também
+                    // Para isso, precisaríamos comparar a 'bestNN' com os dados antes de remover,
+                    // ou simplesmente assumir que se limpou, o usuário pode querer resetar a bestNN.
+                    // Exemplo simples: Perguntar se quer resetar a bestNN atual também.
+                    // if (bestNN && confirm("A IA em memória ('Melhor IA' atual) parece ser a que foi removida. Deseja resetar a 'Melhor IA' em memória também?")) {
+                    //    bestNN = null;
+                    //    bestFitnessEver = -Infinity;
+                    //    activeAI = null;
+                    //    aiControlled = false;
+                    //    aiStatusDisplay.innerText = `Controle: Humano (C)`;
+                    //    resetGame(); // Resetar o jogo visualmente
+                    //    console.log("Melhor IA em memória resetada.");
+                    // }
+
+                } catch (error) {
+                    console.error("Erro ao remover a IA do localStorage:", error);
+                    alert("Falha ao remover a IA salva. Verifique o console.");
+                }
+            }
+        }
+
+        // --- Reset e Inicialização do Jogo (sem alterações desde v3) ---
+        function resetGameState() {
+            // Posição inicial centralizada horizontalmente, na parte superior
+            rocket.x = canvas.width / 2 - rocket.width / 2; // Centraliza o foguete
+            rocket.y = canvas.height * 0.8; // Começa a 80% da altura
+
+            // Zera velocidades
+            rocket.speedX = 0;
+            rocket.speedY = 0;
+
+            // Reseta combustível e ângulo inicial (reto para cima)
+            rocket.fuel = fuelMax;
+            rocket.angle = Math.PI; // PI radianos = 180 graus
+
+            // Desliga motores
+            rocket.isThrusting = false;
+            rocket.thrustingLeft = false;
+            rocket.thrustingRight = false;
+
+            // Reposiciona o Landing Pad aleatoriamente (evitando cantos)
+            const minPadX = landingPad.width * 0.25;
+            const maxPadX = canvas.width - landingPad.width * 1.25;
+            landingPad.x = Math.random() * (maxPadX - minPadX) + minPadX;
+            // landingPad.y é sempre 0 (base do canvas transladado)
+
+            // Reseta o vento
+            resetWind();
+
+            // Gera nuvens se for a primeira vez ou se necessário
+            if (!clouds.length && canvas) generateClouds();
+
+            // Reseta o estado de fim de jogo e contadores
+            gameIsOverState = false;
+            frameCount = 0;
+            lastOutputs = [0, 0, 0]; // Reseta as últimas saídas da IA
+            // console.log("Estado do jogo resetado.");
+        }
+
+        function resetGame() {
+            resetGameState(); // Reseta a física e posições
+
+            // Lógica específica dependendo se está treinando ou não
+            if (!isTraining) {
+                // Se não está treinando, verifica se a IA deve controlar
+                if (aiControlled && bestNN) {
+                    // Se IA está ligada e existe uma bestNN, ativa-a
+                    activeAI = bestNN.copy(); // Usa uma cópia da melhor IA
+                    lastOutputs = [0, 0, 0];
+                    aiStatusDisplay.innerText = `Controle: Melhor IA (C)`;
+                    aiStatusDisplay.style.backgroundColor = 'rgba(144, 238, 144, 0.9)'; // Verde claro para IA ativa
+                } else {
+                    // Se IA está desligada ou não há bestNN
+                    activeAI = null; // Nenhuma IA ativa
+                    // Se estava tentando usar IA mas não tinha, volta pra Humano
+                    if (aiControlled && !bestNN) {
+                        aiControlled = false;
+                        aiStatusDisplay.innerText = `Controle: Humano (C)`;
+                        aiStatusDisplay.style.backgroundColor = 'rgba(255, 223, 186, 0.9)';
+                    } else if (!aiControlled) {
+                        // Se já estava como Humano, apenas confirma
+                        aiStatusDisplay.innerText = `Controle: Humano (C)`;
+                        aiStatusDisplay.style.backgroundColor = 'rgba(255, 223, 186, 0.9)';
+                    }
+                }
+            } else {
+                // Se está treinando, nenhuma IA controla o jogo principal
+                activeAI = null;
+                aiStatusDisplay.innerText = `Treinando IA (Workers)...`;
+                aiStatusDisplay.style.backgroundColor = 'rgba(255, 165, 0, 0.8)'; // Laranja
+            }
+            updateUI(); // Atualiza a UI após o reset
+        }
+
+        // --- Loop Principal (Main Thread - sem alterações desde v3) ---
+        function gameLoop() {
+            // Verificação inicial de segurança
+            if (!ctx || !canvas) {
+                console.error("Contexto Canvas principal (ctx) ou Canvas não encontrado. Interrompendo loop.");
+                return;
+            }
+
+            // Limpa o canvas inteiro antes de redesenhar
+            // Salva o estado atual (sem transformações), limpa, restaura
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // Reseta transformações temporariamente
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.restore(); // Volta para o estado com translação/escala Y
+
+            // Lógica principal do frame
+            if (isTraining) {
+                // Durante o treinamento, apenas desenha elementos estáticos ou
+                // talvez um foguete "fantasma" representando a melhor IA atual (opcional)
+                // Desenha cenário básico
+                drawSea();
+                if (clouds.length) drawClouds(); // Desenha nuvens se existirem
+                drawLandingPad();
+                drawFlag();
+                // Poderia desenhar um foguete parado ou a melhor IA rodando sem física real
+                // drawRocket(); // Desenha o foguete na posição resetada (ou controlada por bestNN sem física)
+                // Por simplicidade, pode não desenhar o foguete durante o treino pesado.
+
+            } else {
+                // Se não está treinando, executa a lógica normal do jogo
+
+                // 1. Controle (Humano ou IA)
+                if (aiControlled) {
+                    controlRocketWithAI(); // IA decide as ações
+                }
+                // Controles humanos são tratados por eventos de teclado (keydown/keyup)
+
+                // 2. Atualização da Física e Estado do Jogo
+                updateGameLogic(); // Move o foguete, aplica física, verifica colisões
+
+                // 3. Desenho dos Elementos do Jogo
+                drawSea();
+                drawClouds();
+                drawLandingPad();
+                drawFlag();
+                drawRocket(); // Desenha o foguete na sua posição atualizada
+            }
+
+            // 4. Atualização da Interface do Usuário (Informações, NN, etc.)
+            updateUI();
+
+            // 5. Solicita o próximo frame da animação
+            requestAnimationFrame(gameLoop);
+        }
+        // --- Inicialização (Modificada) ---
+        window.onload = () => {
+            console.log("Página carregada. Iniciando Jogo de Pouso de Foguete v3.1...");
+            // Referências DOM
+            canvas = document.getElementById('gameCanvas');
+            nnCanvas = document.getElementById('nnCanvas');
+            fuelDisplay = document.getElementById('fuelDisplay');
+            speedDisplay = document.getElementById('speedDisplay');
+            angleDisplay = document.getElementById('angleDisplay');
+            fuelBarPercent = document.getElementById('fuelBarPercent');
+            positionDisplay = document.getElementById('positionDisplay');
+            windInfoDisplay = document.getElementById('windInfo');
+            aiStatusDisplay = document.getElementById('aiStatus');
+            trainingInfoDisplay = document.getElementById('trainingInfo');
+            startTrainingBtn = document.getElementById('startTrainingBtn');
+            stopTrainingBtn = document.getElementById('stopTrainingBtn');
+            useBestAIBtn = document.getElementById('useBestAIBtn');
+            saveBestAIBtn = document.getElementById('saveBestAIBtn');
+            loadSavedAIBtn = document.getElementById('loadSavedAIBtn');
+            exportBestAIBtn = document.getElementById('exportBestAIBtn');
+            importAIBtn = document.getElementById('importAIBtn');
+            importFileInput = document.getElementById('importFileInput');
+            storageStatusDisplay = document.getElementById('storageStatus');
+            clearSavedAIBtn = document.getElementById('clearSavedAIBtn'); // <<< Referência novo botão
+
+            // Verificação robusta dos elementos essenciais
+            const requiredElements = { canvas, nnCanvas, fuelDisplay, speedDisplay, angleDisplay, fuelBarPercent, positionDisplay, windInfoDisplay, aiStatusDisplay, trainingInfoDisplay, startTrainingBtn, stopTrainingBtn, useBestAIBtn, saveBestAIBtn, loadSavedAIBtn, exportBestAIBtn, importAIBtn, importFileInput, storageStatusDisplay, clearSavedAIBtn };
+            let missingElement = false;
+            for (const key in requiredElements) {
+                if (!requiredElements[key]) {
+                    console.error(`Erro Crítico: Elemento da UI não encontrado: #${key}`);
+                    missingElement = true;
+                }
+            }
+            if (missingElement) {
+                alert("Erro: Elementos essenciais da página não foram encontrados. O jogo não pode iniciar. Verifique o console (F12).");
+                return;
+            }
+
+
+            // Config Canvas
+            try {
+                // Define tamanho do canvas baseado na janela, com limites
+                const maxWidth = 1200;
+                const maxHeight = 800;
+                canvas.width = Math.min(window.innerWidth * 0.8, maxWidth);
+                canvas.height = Math.min(window.innerHeight * 0.75, maxHeight);
+
+                ctx = canvas.getContext('2d');
+                if (!ctx) throw new Error("Falha ao obter contexto 2D principal (ctx).");
+
+                // Translada a origem para o canto inferior esquerdo e inverte o eixo Y
+                ctx.translate(0, canvas.height); // Move (0,0) para baixo
+                ctx.scale(1, -1); // Inverte Y (agora Y cresce para cima)
+
+                nnCtx = nnCanvas.getContext('2d');
+                if (!nnCtx) throw new Error("Falha ao obter contexto 2D do visualizador NN (nnCtx).");
+
+                cloudsHeight = canvas.height * 0.5; // Define altura base das nuvens
+                console.log(`Canvas principal inicializado: ${canvas.width}x${canvas.height}`);
+                console.log(`Canvas NN inicializado: ${nnCanvas.width}x${nnCanvas.height}`);
+
+            } catch (e) {
+                alert(`Erro durante a inicialização do Canvas: ${e.message}\nVerifique o console.`);
+                console.error("Erro na Inicialização do Canvas:", e);
+                return; // Não continua se o canvas falhar
+            }
+
+            // --- Event Listeners ---
+
+            // Teclado - Ações
+            document.addEventListener('keydown', (event) => {
+                // Ignora repetições de tecla pressionada
+                if (event.repeat) return;
+
+                // Controles do Foguete (apenas se não treinando e controle humano)
+                if (!isTraining && !aiControlled) {
+                    if (event.code === 'ArrowUp' || event.code === 'KeyW') rocket.isThrusting = true;
+                    if (event.code === 'ArrowLeft' || event.code === 'KeyA') rocket.thrustingLeft = true;
+                    if (event.code === 'ArrowRight' || event.code === 'KeyD') rocket.thrustingRight = true;
+                }
+
+                // Atalhos Globais
+                switch (event.code) {
+                    case 'KeyC': // Trocar Controle Humano/IA
+                        if (!isTraining) { // Só funciona se não estiver treinando
+                            aiControlled = !aiControlled; // Inverte o estado
+                            if (aiControlled) {
+                                if (bestNN) {
+                                    activeAI = bestNN.copy(); // Ativa a cópia da melhor IA
+                                    aiStatusDisplay.innerText = `Controle: Melhor IA (C)`;
+                                    aiStatusDisplay.style.backgroundColor = 'rgba(144, 238, 144, 0.9)';// Verde
+                                    resetGame(); // Reinicia o jogo com IA ativa
+                                } else {
+                                    aiControlled = false; // Volta pra humano se não tem IA
+                                    activeAI = null;
+                                    aiStatusDisplay.innerText = `Controle: Humano (Sem IA)`;
+                                    aiStatusDisplay.style.backgroundColor = 'rgba(255, 223, 186, 0.9)'; // Normal
+                                    alert("Nenhuma 'Melhor IA' treinada ou carregada para usar.");
+                                }
+                            } else {
+                                // Voltando para controle humano
+                                activeAI = null;
+                                aiStatusDisplay.innerText = `Controle: Humano (C)`;
+                                aiStatusDisplay.style.backgroundColor = 'rgba(255, 223, 186, 0.9)'; // Normal
+                                // Desliga motores ao trocar para humano
+                                rocket.isThrusting = false;
+                                rocket.thrustingLeft = false;
+                                rocket.thrustingRight = false;
+                                resetGame(); // Reinicia o jogo
+                            }
+                        } else {
+                            console.log("Não é possível trocar controle durante o treinamento.");
+                        }
+                        break;
+
+                    case 'KeyR': // Resetar Jogo
+                        // Permite resetar se não estiver treinando OU se o jogo acabou (mesmo treinando)
+                        if (!isTraining || gameIsOverState) {
+                            console.log("Resetando o jogo (tecla R)...");
+                            resetGame();
+                        } else {
+                            console.log("Reset bloqueado durante treinamento ativo.");
+                        }
+                        break;
+
+                    case 'KeyT': // Iniciar/Parar Treinamento
+                        if (isTraining) {
+                            if (!stopTrainingBtn.disabled) stopTraining(); // Usa o estado do botão como segurança extra
+                        } else {
+                            if (!startTrainingBtn.disabled) startTraining();
+                        }
+                        break;
+                }
+            });
+
+            // Teclado - Soltar Tecla
+            document.addEventListener('keyup', (event) => {
+                // Desliga motores correspondentes ao soltar tecla (se controle humano)
+                if (!isTraining && !aiControlled) {
+                    if (event.code === 'ArrowUp' || event.code === 'KeyW') rocket.isThrusting = false;
+                    if (event.code === 'ArrowLeft' || event.code === 'KeyA') rocket.thrustingLeft = false;
+                    if (event.code === 'ArrowRight' || event.code === 'KeyD') rocket.thrustingRight = false;
+                }
+            });
+
+            // Listeners dos Botões
+            startTrainingBtn.addEventListener('click', startTraining);
+            stopTrainingBtn.addEventListener('click', stopTraining);
+            useBestAIBtn.addEventListener('click', () => {
+                if (bestNN && !isTraining) {
+                    aiControlled = true; // Ativa controle por IA
+                    activeAI = bestNN.copy(); // Carrega a cópia da melhor IA
+                    aiStatusDisplay.innerText = `Controle: Melhor IA (C)`;
+                    aiStatusDisplay.style.backgroundColor = 'rgba(144, 238, 144, 0.9)'; // Verde
+                    resetGame(); // Reinicia o jogo com a IA ativa
+                    console.log("Usando a 'Melhor IA' para controle:", bestNN.id);
+                } else if (isTraining) {
+                    alert("Pare o treinamento antes de usar a 'Melhor IA'.");
+                } else {
+                    alert("Nenhuma 'Melhor IA' treinada ou carregada está disponível.");
+                }
+            });
+            saveBestAIBtn.addEventListener('click', saveBestNN);
+            loadSavedAIBtn.addEventListener('click', loadBestNN);
+            exportBestAIBtn.addEventListener('click', exportBestNN);
+            importAIBtn.addEventListener('click', importNN);
+            importFileInput.addEventListener('change', handleFileImport);
+            clearSavedAIBtn.addEventListener('click', clearSavedNN); // <<< Listener novo botão
+
+            // --- Inicialização Final do Jogo ---
+            console.log("Tentando carregar IA salva...");
+            loadBestNN(); // Tenta carregar IA salva do localStorage ao iniciar
+            console.log("Resetando estado inicial do jogo...");
+            resetGame(); // Configura o estado inicial do jogo (foguete, pad, etc.)
+            console.log("Jogo inicializado. Iniciando loop principal...");
+            gameLoop(); // Inicia o loop principal de jogo/renderização
+        };
+
+        // --- Handlers Globais de Erro ---
+        // Captura erros não tratados no escopo global
+        window.onerror = function (message, source, lineno, colno, error) {
+            console.error("Erro Global Não Capturado:", message, "em", source, `Linha: ${lineno}, Coluna: ${colno}`, error);
+            // Poderia enviar este erro para um serviço de logging
+            // alert("Ocorreu um erro inesperado. Verifique o console (F12)."); // Evitar alerts em produção
+        };
+        // Captura rejeições de Promises não tratadas
+        window.onunhandledrejection = function (event) {
+            console.error("Rejeição de Promise Não Tratada:", event.reason);
+            // alert("Ocorreu um erro assíncrono inesperado. Verifique o console (F12)."); // Evitar alerts em produção
+        };
+
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dominó Minimalista v6.5 - Cores da Mesa</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #e0e0e0;
+            /* Fundo canvas claro */
+            margin: 0;
+            padding: 10px;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+
+        canvas {
+            border: 1px solid #bdbdbd;
+            /* Borda cinza claro */
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.2);
+            /* Sombra mais suave */
+            display: block;
+            cursor: default;
+            max-width: 100%;
+            max-height: calc(100vh - 20px);
+            aspect-ratio: 20 / 11;
+            background-color: #f0f0f0;
+            /* Fundo interno do canvas um pouco diferente */
+            border-radius: 4px;
+        }
+
+        canvas.esperando {
+            cursor: wait;
+        }
+
+        canvas.clicavel {
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // --- Constantes ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const JOGADOR = 'jogador';
+        const IA = 'ia';
+        const PECA_LARGURA_BASE = 60;
+        const PECA_ALTURA_BASE = 30;
+        const DOT_RAIO_BASE = 3.2;
+        const CANTO_RAIO_BASE = 4;
+        const DELAY_IA = 750;
+        const ESPACO_ENTRE_PECAS_MESA_BASE = 5;
+        const ESPACO_ENTRE_PECAS_MAO_BASE = 7;
+        const MARGEM_BORDA_LATERAL_BASE = 25;
+        const MARGEM_BORDA_VERTICAL_BASE = 25;
+        const FATOR_LIMITE_COLISAO = 0.98; // Quão perto chega da borda antes de virar
+
+        // Cores Refinadas (Tema "Feltro Verde" Clássico/Claro)
+        const COR_FUNDO_CANVAS = '#e0e0e0';           // Cinza bem claro (quase branco)
+        const COR_FUNDO_AREA_IA = '#f5f5f5';          // Fundo das áreas quase branco
+        const COR_FUNDO_AREA_JOGADOR = '#f5f5f5';
+        const COR_FUNDO_AREA_MONTE = '#eeeeee';       // Monte ligeiramente diferente
+        const COR_BORDA_AREA = 'rgba(0, 0, 0, 0.15)'; // Borda escura sutil
+        const COR_PECA = '#fafafa';                   // Peça branca
+        const COR_PECA_VERSO = '#455a64';             // Verso Azul-acinzentado escuro
+        const COR_DOT = '#111111';                   // Dots pretos/cinza muito escuro
+        const COR_LINHA_PECA = '#bdbdbd';             // Linha divisória cinza médio
+        const COR_TEXTO_UI = '#424242';               // Texto UI cinza escuro
+        const COR_TEXTO_STATUS = '#212121';           // Texto status quase preto
+        const COR_DESTAQUE_SELECAO = '#ff8f00';       // Laranja Âmbar para seleção/highlight
+        const COR_DESTAQUE_JOGAVEL_FILL = 'rgba(255, 143, 0, 0.1)';  // Fill laranja bem transparente
+        const COR_DESTAQUE_JOGAVEL_STROKE = '#ff8f00'; // Stroke laranja
+        const COR_DESTAQUE_COMPRA_STROKE = '#f57c00'; // Laranja um pouco mais escuro para compra
+        const COR_BOTAO_PASSAR_FILL = '#9e9e9e';       // Botão cinza médio
+        const COR_BOTAO_PASSAR_TEXT = '#ffffff';       // Texto branco no botão
+        const COR_BOTAO_PASSAR_HOVER_FILL = '#757575'; // Botão mais escuro no hover
+        const COR_DESTAQUE_JOGAVEL_HAND = '#ff8f00';   // Destaque na mão laranja, consistente
+        const COR_OVERLAY_FIM = 'rgba(255, 255, 255, 0.85)'; // Overlay de fim claro/branco
+        const COR_TEXTO_FIM = '#000000';               // Texto fim preto
+
+        // --- NOVAS CORES DE FUNDO DA MESA ---
+        const COR_FUNDO_MESA_VERDE = '#00695c';        // Verde Feltro (Padrão)
+        const COR_FUNDO_MESA_AZUL = '#1565c0';         // Azul Clássico (Poker)
+        const COR_FUNDO_MESA_VINHO = '#880e4f';        // Vinho/Bordô
+        const COR_FUNDO_MESA_CINZA = '#424242';        // Cinza Escuro
+        // ------------------------------------
+
+        // --- Variáveis Globais ---
+        let CANVAS_LARGURA;
+        let CANVAS_ALTURA;
+        let CENTRO_X;
+        let CENTRO_Y;
+        let escalaDesenho = 1;
+        let tamanhoFonteBase;
+        let pecaLarguraH;
+        let pecaAlturaH;
+        let pecaLarguraV;
+        let pecaAlturaV;
+        let dotRaio;
+        let cantoRaio;
+        let espacoMesaEscalado;
+        let espacoMaoEscalado;
+        let margemLateralMesaEscalada;
+        let margemVerticalMesaEscalada;
+        let margemGeralInterface = 12;
+
+        // Áreas Retangulares Layout
+        let areaTotalRect = {};
+        let areaIARect = {};
+        let areaMesaRect = {};
+        let areaJogadorRect = {};
+        let areaMonteRect = {};
+        let areaStatusRect = {};
+        let areaBotaoPassarRect = {};
+
+        let centroMesaX;
+        let centroMesaY;
+        let limiteSuperiorMesa;
+        let limiteInferiorMesa;
+        let limiteEsquerdoMesa;
+        let limiteDireitoMesa;
+
+        let areaJogarEsquerda = { ativa: false };
+        let areaJogarDireita = { ativa: false };
+        let areaClicarMonte = {};
+
+        // Estado do Jogo
+        let todasAsPecas = [];
+        let maoJogador = [];
+        let maoIA = [];
+        let monte = [];
+        let mesa = [];
+        let pontas = { esquerda: null, direita: null };
+        let pecaSelecionada = null;
+        let mensagemStatus = "";
+        let mensagemFimJogo = "";
+        let jogoAcabou = false;
+        let turnoAtual = null;
+        let jogadorPodeInteragir = false;
+        let passesConsecutivos = 0;
+        let mostrarBotaoPassar = false;
+        let hoverBotaoPassar = false;
+        let direcaoLogicaEsquerda = 'esquerda'; // Não usado diretamente para desenho, mas pode ser útil
+        let direcaoLogicaDireita = 'direita';  // Não usado diretamente para desenho, mas pode ser útil
+        let jogadorQueIniciou = null;
+
+        // --- SELEÇÃO DA COR DA MESA ---
+        // Para mudar a cor, troque o valor desta variável por uma das constantes:
+        // COR_FUNDO_MESA_VERDE, COR_FUNDO_MESA_AZUL, COR_FUNDO_MESA_VINHO, COR_FUNDO_MESA_CINZA
+        let corFundoMesaAtual = COR_FUNDO_MESA_VERDE;
+        // -----------------------------
+
+        // --- Classe Peca ---
+        class Peca {
+            constructor(lado1, lado2) {
+                this.l1 = lado1;
+                this.l2 = lado2;
+                const vA = Math.min(lado1, lado2);
+                const vB = Math.max(lado1, lado2);
+                this.id = `${vA}-${vB}`;
+            }
+
+            desenharCorpo(x, y, w, h, bg, border, highlight = null) {
+                const r = cantoRaio;
+                ctx.fillStyle = bg;
+                ctx.strokeStyle = highlight ?? border;
+                ctx.lineWidth = (highlight) ? 2.5 * escalaDesenho : 1.5 * escalaDesenho;
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            desenharFrente(x, y, ladoAVisivel, ladoBVisivel, orientacao = 'horizontal', selecionada = false, jogavel = false) {
+                const ehHorizontal = (orientacao === 'horizontal');
+                const w = ehHorizontal ? pecaLarguraH : pecaLarguraV;
+                const h = ehHorizontal ? pecaAlturaH : pecaAlturaV;
+                let corDestaque = null;
+                if (selecionada) { corDestaque = COR_DESTAQUE_SELECAO; }
+                else if (jogavel) { corDestaque = COR_DESTAQUE_JOGAVEL_HAND; }
+                this.desenharCorpo(x, y, w, h, COR_PECA, COR_LINHA_PECA, corDestaque);
+                ctx.strokeStyle = COR_LINHA_PECA;
+                ctx.lineWidth = 1.5 * escalaDesenho;
+                ctx.beginPath();
+                if (ehHorizontal) {
+                    ctx.moveTo(x + w / 2, y + 3 * escalaDesenho);
+                    ctx.lineTo(x + w / 2, y + h - 3 * escalaDesenho);
+                }
+                else {
+                    ctx.moveTo(x + 3 * escalaDesenho, y + h / 2);
+                    ctx.lineTo(x + w - 3 * escalaDesenho, y + h / 2);
+                }
+                ctx.stroke();
+                this.desenharDots(ladoAVisivel, x, y, w, h, ehHorizontal ? 'esquerda' : 'cima', orientacao);
+                this.desenharDots(ladoBVisivel, x, y, w, h, ehHorizontal ? 'direita' : 'baixo', orientacao);
+            }
+
+            desenharVerso(x, y, orientacao = 'vertical') {
+                const ehHorizontal = (orientacao === 'horizontal');
+                const w = ehHorizontal ? pecaLarguraH : pecaLarguraV;
+                const h = ehHorizontal ? pecaAlturaH : pecaAlturaV;
+                this.desenharCorpo(x, y, w, h, COR_PECA_VERSO, '#607d8b'); // Borda um pouco mais clara no verso
+                ctx.fillStyle = '#78909c'; // Pino cinza azulado mais claro
+                ctx.beginPath();
+                ctx.arc(x + w / 2, y + h / 2, dotRaio * 1.1, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            desenharDots(numero, pecaX, pecaY, larguraPeca, alturaPeca, qualMetade, orientacaoPeca) {
+                if (numero < 0 || numero > 6) return;
+                let halfX, halfY, halfW, halfH;
+                const pecaEhHorizontal = (orientacaoPeca === 'horizontal');
+                if (pecaEhHorizontal) {
+                    if (qualMetade === 'esquerda') {
+                        halfX = pecaX; halfY = pecaY; halfW = larguraPeca / 2; halfH = alturaPeca;
+                    }
+                    else {
+                        halfX = pecaX + larguraPeca / 2; halfY = pecaY; halfW = larguraPeca / 2; halfH = alturaPeca;
+                    }
+                } else {
+                    if (qualMetade === 'cima') {
+                        halfX = pecaX; halfY = pecaY; halfW = larguraPeca; halfH = alturaPeca / 2;
+                    }
+                    else {
+                        halfX = pecaX; halfY = pecaY + alturaPeca / 2; halfW = larguraPeca; halfH = alturaPeca / 2;
+                    }
+                }
+                const centroX = halfX + halfW / 2;
+                const centroY = halfY + halfH / 2;
+                const paddingRelativo = 0.28; // Aumentar um pouco o padding (afastar mais das bordas)
+                const espacoXMax = (halfW / 2) * (1 - paddingRelativo);
+                const espacoYMax = (halfH / 2) * (1 - paddingRelativo);
+                const espacoXBase = halfW / 3.8;
+                const espacoYBase = halfH / 3.8; // Reduzir espaçamento base ligeiramente
+                const minEspacoAbs = dotRaio * 1.8; // Reduzir mínimo absoluto um pouco
+                const espacoX = Math.min(espacoXMax, Math.max(espacoXBase, minEspacoAbs));
+                const espacoY = Math.min(espacoYMax, Math.max(espacoYBase, minEspacoAbs));
+
+                const MULT_BORDA = 0.9; // Afastar mais ainda (era 0.85)
+                const MULT_MEDIO = 0.85;
+
+                const dotLayouts = [
+                    [], // 0
+                    [[0, 0]], // 1
+                    [[-MULT_BORDA, -MULT_BORDA], [MULT_BORDA, MULT_BORDA]], // 2
+                    [[-MULT_BORDA, -MULT_BORDA], [0, 0], [MULT_BORDA, MULT_BORDA]], // 3
+                    [[-MULT_BORDA, -MULT_BORDA], [MULT_BORDA, -MULT_BORDA], [-MULT_BORDA, MULT_BORDA], [MULT_BORDA, MULT_BORDA]], // 4
+                    [[-MULT_BORDA, -MULT_BORDA], [MULT_BORDA, -MULT_BORDA], [0, 0], [-MULT_BORDA, MULT_BORDA], [MULT_BORDA, MULT_BORDA]], // 5
+                ];
+                const layout6HorizontalDots = [
+                    [-MULT_BORDA, -MULT_MEDIO], [0, -MULT_MEDIO], [MULT_BORDA, -MULT_MEDIO],
+                    [-MULT_BORDA, MULT_MEDIO], [0, MULT_MEDIO], [MULT_BORDA, MULT_MEDIO]
+                ];
+                const layout6VerticalDots = [
+                    [-MULT_MEDIO, -MULT_BORDA], [MULT_MEDIO, -MULT_BORDA],
+                    [-MULT_MEDIO, 0], [MULT_MEDIO, 0],
+                    [-MULT_MEDIO, MULT_BORDA], [MULT_MEDIO, MULT_BORDA]
+                ];
+                let currentLayout = dotLayouts[numero] || [];
+                if (numero === 6) {
+                    currentLayout = pecaEhHorizontal ? layout6HorizontalDots : layout6VerticalDots;
+                }
+
+                ctx.fillStyle = COR_DOT;
+                currentLayout.forEach(([multX, multY]) => {
+                    const posX = centroX + multX * espacoX;
+                    const posY = centroY + multY * espacoY;
+                    ctx.beginPath();
+                    ctx.arc(posX, posY, dotRaio, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            contemPontoMao(clickX, clickY, pecaPosX, pecaPosY) {
+                return clickX >= pecaPosX && clickX <= pecaPosX + pecaLarguraV &&
+                    clickY >= pecaPosY && clickY <= pecaPosY + pecaAlturaV;
+            }
+            get valorTotal() {
+                return this.l1 + this.l2;
+            }
+            get ehDoble() {
+                return this.l1 === this.l2;
+            }
+        }
+
+        // --- Funções UI ---
+
+        function ajustarTamanhoPosicoes() {
+            CANVAS_LARGURA = canvas.width;
+            CANVAS_ALTURA = canvas.height;
+            areaTotalRect = { x: 0, y: 0, largura: CANVAS_LARGURA, altura: CANVAS_ALTURA };
+            CENTRO_X = CANVAS_LARGURA / 2;
+            CENTRO_Y = CANVAS_ALTURA / 2;
+            escalaDesenho = CANVAS_ALTURA / 720;
+            margemGeralInterface = 12 * escalaDesenho;
+            pecaLarguraH = PECA_LARGURA_BASE * escalaDesenho * 1.05;
+            pecaAlturaH = PECA_ALTURA_BASE * escalaDesenho * 1.05;
+            pecaLarguraV = pecaAlturaH;
+            pecaAlturaV = pecaLarguraH;
+            dotRaio = DOT_RAIO_BASE * escalaDesenho;
+            cantoRaio = CANTO_RAIO_BASE * escalaDesenho;
+            espacoMesaEscalado = ESPACO_ENTRE_PECAS_MESA_BASE * escalaDesenho;
+            espacoMaoEscalado = ESPACO_ENTRE_PECAS_MAO_BASE * escalaDesenho;
+            margemLateralMesaEscalada = MARGEM_BORDA_LATERAL_BASE * escalaDesenho;
+            margemVerticalMesaEscalada = MARGEM_BORDA_VERTICAL_BASE * escalaDesenho;
+            tamanhoFonteBase = 17 * escalaDesenho;
+
+            const alturaAreaStatus = 40 * escalaDesenho;
+            const alturaAreaIA = pecaAlturaV * 0.85 + 2 * margemGeralInterface;
+            const alturaAreaJogador = pecaAlturaV * 1.15 + 3 * margemGeralInterface;
+            const alturaAreaMesa = CANVAS_ALTURA - alturaAreaIA - alturaAreaJogador - alturaAreaStatus - (2 * margemGeralInterface);
+            areaIARect = { x: 0, y: 0, largura: CANVAS_LARGURA, altura: alturaAreaIA };
+            areaMesaRect = { x: 0, y: areaIARect.y + areaIARect.altura + margemGeralInterface, largura: CANVAS_LARGURA, altura: alturaAreaMesa };
+            areaJogadorRect = { x: 0, y: areaMesaRect.y + areaMesaRect.altura + margemGeralInterface, largura: CANVAS_LARGURA, altura: alturaAreaJogador };
+            areaStatusRect = { x: 0, y: areaJogadorRect.y + areaJogadorRect.altura, largura: CANVAS_LARGURA, altura: alturaAreaStatus };
+            const larguraAreaMonte = pecaLarguraV + 90 * escalaDesenho;
+            const alturaAreaMonte = pecaAlturaV + 25 * escalaDesenho;
+            areaMonteRect = { x: margemGeralInterface * 2.5, y: areaJogadorRect.y + (areaJogadorRect.altura - alturaAreaMonte) / 2, largura: larguraAreaMonte, altura: alturaAreaMonte };
+            const larguraBotaoPassar = 120 * escalaDesenho;
+            const alturaBotaoPassar = 45 * escalaDesenho;
+            const paddingBotaoY = 12 * escalaDesenho;
+            const paddingBotaoX = 15 * escalaDesenho;
+            areaBotaoPassarRect = { x: areaJogadorRect.largura - larguraBotaoPassar - paddingBotaoX - margemGeralInterface, y: areaJogadorRect.y + paddingBotaoY, largura: larguraBotaoPassar, altura: alturaBotaoPassar };
+
+            centroMesaX = areaMesaRect.x + areaMesaRect.largura / 2;
+            centroMesaY = areaMesaRect.y + areaMesaRect.altura / 2;
+            limiteSuperiorMesa = areaMesaRect.y + margemVerticalMesaEscalada;
+            limiteEsquerdoMesa = areaMesaRect.x + margemLateralMesaEscalada;
+            // Ajustar limites inferiores/direitos para considerar a posição da *próxima* peça
+            limiteInferiorMesa = areaMesaRect.y + areaMesaRect.altura - margemVerticalMesaEscalada - pecaAlturaH; // Onde a base da peça colidiria
+            limiteDireitoMesa = areaMesaRect.x + areaMesaRect.largura - margemLateralMesaEscalada - pecaLarguraH; // Onde a borda direita colidiria
+        }
+
+        function desenharFundosAreas() {
+            ctx.fillStyle = COR_FUNDO_CANVAS;
+            ctx.fillRect(areaTotalRect.x, areaTotalRect.y, areaTotalRect.largura, areaTotalRect.altura);
+            ctx.fillStyle = COR_FUNDO_AREA_IA;
+            ctx.fillRect(areaIARect.x, areaIARect.y, areaIARect.largura, areaIARect.altura);
+
+            // *** APLICA A COR SELECIONADA PARA A MESA ***
+            ctx.fillStyle = corFundoMesaAtual;
+            ctx.fillRect(areaMesaRect.x, areaMesaRect.y, areaMesaRect.largura, areaMesaRect.altura);
+            // ********************************************
+
+            ctx.fillStyle = COR_FUNDO_AREA_JOGADOR;
+            ctx.fillRect(areaJogadorRect.x, areaJogadorRect.y, areaJogadorRect.largura, areaJogadorRect.altura);
+            ctx.strokeStyle = COR_BORDA_AREA;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(areaIARect.x + 0.5, areaIARect.y + 0.5, areaIARect.largura - 1, areaIARect.altura - 1);
+            ctx.strokeRect(areaMesaRect.x + 0.5, areaMesaRect.y + 0.5, areaMesaRect.largura - 1, areaMesaRect.altura - 1);
+            ctx.strokeRect(areaJogadorRect.x + 0.5, areaJogadorRect.y + 0.5, areaJogadorRect.largura - 1, areaJogadorRect.altura - 1);
+        }
+
+        function desenharAreaIA() {
+            if (!areaIARect) return;
+            ctx.fillStyle = COR_TEXTO_UI;
+            ctx.font = `bold ${tamanhoFonteBase * 0.85}px 'Segoe UI', Tahoma, sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            const textoIA = `IA (${maoIA.length} peças)`;
+            const textoIAX = areaIARect.x + margemGeralInterface * 2.5;
+            const textoIAY = areaIARect.y + areaIARect.altura / 2;
+            ctx.fillText(textoIA, textoIAX, textoIAY);
+            let startXIA = textoIAX + ctx.measureText(textoIA).width + 2.5 * margemGeralInterface;
+            const pecaYIA = areaIARect.y + (areaIARect.altura - pecaAlturaV) / 2;
+            for (let i = 0; i < maoIA.length; i++) {
+                const pecaX = startXIA + i * (pecaLarguraV + espacoMaoEscalado);
+                if (pecaX + pecaLarguraV > areaIARect.x + areaIARect.largura - margemGeralInterface * 2.5) break;
+                if (jogoAcabou) {
+                    maoIA[i].desenharFrente(pecaX, pecaYIA, maoIA[i].l1, maoIA[i].l2, 'vertical');
+                } else {
+                    maoIA[i].desenharVerso(pecaX, pecaYIA, 'vertical');
+                }
+            }
+        }
+
+        function desenharAreaJogador() {
+            if (!areaJogadorRect || !areaMonteRect) return;
+            const larguraTotalMao = maoJogador.length * (pecaLarguraV + espacoMaoEscalado) - espacoMaoEscalado;
+            let startXJogador = areaJogadorRect.x + (areaJogadorRect.largura - larguraTotalMao) / 2;
+            startXJogador = Math.max(startXJogador, areaMonteRect.x + areaMonteRect.largura + margemGeralInterface * 1.5);
+            const limiteDireitoMao = areaJogadorRect.x + areaJogadorRect.largura - margemGeralInterface * 2;
+            const pecaYJogador = areaJogadorRect.y + (areaJogadorRect.altura - pecaAlturaV) / 2;
+            maoJogador.forEach((peca, i) => {
+                const pecaX = startXJogador + i * (pecaLarguraV + espacoMaoEscalado);
+                if (pecaX < limiteDireitoMao) {
+                    if (pecaX + pecaLarguraV <= limiteDireitoMao + 5) {
+                        const jogavel = isPecaJogavel(peca) && jogadorPodeInteragir && !jogoAcabou;
+                        const selecionada = (i === pecaSelecionada);
+                        peca.desenharFrente(pecaX, pecaYJogador, peca.l1, peca.l2, 'vertical', selecionada, jogavel);
+                    }
+                }
+            });
+        }
+
+        function desenharMonte() {
+            if (!areaMonteRect) return;
+            const r = 5 * escalaDesenho;
+            ctx.fillStyle = COR_FUNDO_AREA_MONTE;
+            ctx.strokeStyle = COR_BORDA_AREA;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(areaMonteRect.x, areaMonteRect.y, areaMonteRect.largura, areaMonteRect.altura, r);
+            } else {
+                ctx.rect(areaMonteRect.x, areaMonteRect.y, areaMonteRect.largura, areaMonteRect.altura);
+            }
+            ctx.fill();
+            ctx.stroke();
+            const paddingInterno = 12 * escalaDesenho;
+            const montePecaX = areaMonteRect.x + paddingInterno;
+            const montePecaY = areaMonteRect.y + (areaMonteRect.altura - pecaAlturaV) / 2;
+            areaClicarMonte = { x: montePecaX, y: montePecaY, largura: pecaLarguraV, altura: pecaAlturaV };
+            const textoMonteX = montePecaX + pecaLarguraV + paddingInterno * 0.8;
+            const textoMonteY = areaMonteRect.y + areaMonteRect.altura / 2;
+            ctx.fillStyle = COR_TEXTO_UI;
+            ctx.font = `${tamanhoFonteBase * 0.85}px 'Segoe UI', Tahoma, sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            if (monte.length > 0) {
+                (new Peca(0, 0)).desenharVerso(montePecaX, montePecaY, 'vertical');
+                ctx.fillText(`Monte: ${monte.length}`, textoMonteX, textoMonteY);
+                const jogadorDeveComprar = jogadorPodeInteragir && !podeJogarAlgumaPeca(maoJogador) && !jogoAcabou;
+                if (jogadorDeveComprar) {
+                    ctx.strokeStyle = COR_DESTAQUE_COMPRA_STROKE;
+                    ctx.lineWidth = 3 * escalaDesenho;
+                    (new Peca(0, 0)).desenharCorpo(montePecaX, montePecaY, pecaLarguraV, pecaAlturaV, 'transparent', COR_DESTAQUE_COMPRA_STROKE, COR_DESTAQUE_COMPRA_STROKE);
+                }
+            } else {
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+                ctx.lineWidth = 1.5 * escalaDesenho;
+                ctx.setLineDash([4 * escalaDesenho, 3 * escalaDesenho]);
+                (new Peca(0, 0)).desenharCorpo(montePecaX, montePecaY, pecaLarguraV, pecaAlturaV, 'transparent', ctx.strokeStyle, null);
+                ctx.setLineDash([]);
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                ctx.fillText("Vazio", textoMonteX, textoMonteY);
+            }
+        }
+
+        function desenharMesa() {
+            if (mesa.length === 0) {
+                areaJogarEsquerda = { ativa: false };
+                areaJogarDireita = { ativa: false };
+                return;
+            }
+            const indiceMeio = Math.floor(mesa.length / 2);
+            const { pecaVisual: pecaMeioVisual } = mesa[indiceMeio];
+            const xInicial = centroMesaX - pecaLarguraH / 2;
+            const yInicial = centroMesaY - pecaAlturaH / 2;
+            pecaMeioVisual.desenharFrente(xInicial, yInicial, pecaMeioVisual.l1, pecaMeioVisual.l2, 'horizontal');
+            let infoPontaEsquerda = { x: xInicial, y: yInicial, direcaoVisual: 'esquerda' };
+            let infoPontaDireita = { x: xInicial, y: yInicial, direcaoVisual: 'direita' };
+
+            // Desenhar Esquerda
+            let xAtualEsq = xInicial;
+            let yAtualEsq = yInicial;
+            let direcaoVisualEsq = 'esquerda';
+            for (let i = indiceMeio - 1; i >= 0; i--) {
+                const { pecaVisual: pecaAtualVisual } = mesa[i];
+                const largAnterior = pecaLarguraH;
+                const altAnterior = pecaAlturaH;
+                let { x: nextX, y: nextY } = calcularPosicaoProximaPecaHorizontal(xAtualEsq, yAtualEsq, largAnterior, altAnterior, direcaoVisualEsq);
+                let mudouDirecao = false;
+                // Verifica colisão com a borda *antes* de desenhar
+                if (direcaoVisualEsq === 'esquerda' && nextX < limiteEsquerdoMesa) {
+                    direcaoVisualEsq = (yAtualEsq < centroMesaY) ? 'baixo' : 'cima';
+                    mudouDirecao = true;
+                    // Recalcula posição após primeira virada para checar segunda colisão
+                    let { y: nextYTurn1 } = calcularPosicaoProximaPecaHorizontal(xAtualEsq, yAtualEsq, largAnterior, altAnterior, direcaoVisualEsq);
+                    if (direcaoVisualEsq === 'baixo' && nextYTurn1 + pecaAlturaH > limiteInferiorMesa + pecaAlturaH) {
+                        direcaoVisualEsq = 'cima'; // Se baixo colide, vira cima
+                    }
+                    else if (direcaoVisualEsq === 'cima' && nextYTurn1 < limiteSuperiorMesa) {
+                        direcaoVisualEsq = 'baixo'; // Se cima colide, vira baixo
+                    }
+                } else if (direcaoVisualEsq === 'cima' && nextY < limiteSuperiorMesa) {
+                    direcaoVisualEsq = 'direita';
+                    mudouDirecao = true; // Vira pra dentro
+                } else if (direcaoVisualEsq === 'baixo' && nextY + pecaAlturaH > limiteInferiorMesa + pecaAlturaH) {
+                    direcaoVisualEsq = 'direita';
+                    mudouDirecao = true; // Vira pra dentro
+                }
+                if (mudouDirecao) {
+                    ({ x: nextX, y: nextY } = calcularPosicaoProximaPecaHorizontal(xAtualEsq, yAtualEsq, largAnterior, altAnterior, direcaoVisualEsq));
+                }
+                pecaAtualVisual.desenharFrente(nextX, nextY, pecaAtualVisual.l1, pecaAtualVisual.l2, 'horizontal');
+                xAtualEsq = nextX;
+                yAtualEsq = nextY;
+                if (i === 0) {
+                    infoPontaEsquerda = { x: xAtualEsq, y: yAtualEsq, direcaoVisual: direcaoVisualEsq };
+                }
+            }
+
+            // Desenhar Direita
+            let xAtualDir = xInicial;
+            let yAtualDir = yInicial;
+            let direcaoVisualDir = 'direita';
+            for (let i = indiceMeio + 1; i < mesa.length; i++) {
+                const { pecaVisual: pecaAtualVisual } = mesa[i];
+                const largAnterior = pecaLarguraH;
+                const altAnterior = pecaAlturaH;
+                let { x: nextX, y: nextY } = calcularPosicaoProximaPecaHorizontal(xAtualDir, yAtualDir, largAnterior, altAnterior, direcaoVisualDir);
+                let mudouDirecao = false;
+                if (direcaoVisualDir === 'direita' && nextX + pecaLarguraH > limiteDireitoMesa + pecaLarguraH) {
+                    direcaoVisualDir = (yAtualDir < centroMesaY) ? 'baixo' : 'cima';
+                    mudouDirecao = true;
+                    let { y: nextYTurn1 } = calcularPosicaoProximaPecaHorizontal(xAtualDir, yAtualDir, largAnterior, altAnterior, direcaoVisualDir);
+                    if (direcaoVisualDir === 'baixo' && nextYTurn1 + pecaAlturaH > limiteInferiorMesa + pecaAlturaH) {
+                        direcaoVisualDir = 'cima';
+                    }
+                    else if (direcaoVisualDir === 'cima' && nextYTurn1 < limiteSuperiorMesa) {
+                        direcaoVisualDir = 'baixo';
+                    }
+                } else if (direcaoVisualDir === 'cima' && nextY < limiteSuperiorMesa) {
+                    direcaoVisualDir = 'esquerda';
+                    mudouDirecao = true; // Vira pra dentro
+                } else if (direcaoVisualDir === 'baixo' && nextY + pecaAlturaH > limiteInferiorMesa + pecaAlturaH) {
+                    direcaoVisualDir = 'esquerda';
+                    mudouDirecao = true; // Vira pra dentro
+                }
+                if (mudouDirecao) {
+                    ({ x: nextX, y: nextY } = calcularPosicaoProximaPecaHorizontal(xAtualDir, yAtualDir, largAnterior, altAnterior, direcaoVisualDir));
+                }
+                pecaAtualVisual.desenharFrente(nextX, nextY, pecaAtualVisual.l1, pecaAtualVisual.l2, 'horizontal');
+                xAtualDir = nextX;
+                yAtualDir = nextY;
+                if (i === mesa.length - 1) {
+                    infoPontaDireita = { x: xAtualDir, y: yAtualDir, direcaoVisual: direcaoVisualDir };
+                }
+            }
+
+            // Desenhar Áreas Clicáveis
+            areaJogarEsquerda = { ativa: false };
+            areaJogarDireita = { ativa: false };
+            if (pecaSelecionada !== null && jogadorPodeInteragir && !jogoAcabou) {
+                const pecaDaMao = maoJogador[pecaSelecionada];
+                if (pecaDaMao) {
+                    const encaixeEsquerda = checarEncaixe(pecaDaMao, 'esquerda');
+                    const encaixeDireita = checarEncaixe(pecaDaMao, 'direita');
+                    const tamanhoAreaClick = Math.min(pecaLarguraH, pecaAlturaH) * 0.8;
+                    const margemAreaClick = 8 * escalaDesenho;
+                    const desenharArea = (infoPonta, ladoLogico) => {
+                        if (!infoPonta) return null;
+                        const { x: pX, y: pY, direcaoVisual: dV } = infoPonta;
+                        const pL = pecaLarguraH;
+                        const pA = pecaAlturaH;
+                        let areaX, areaY;
+                        switch (dV) {
+                            case 'esquerda': areaX = pX - tamanhoAreaClick - margemAreaClick; areaY = pY + pA / 2 - tamanhoAreaClick / 2; break;
+                            case 'direita': areaX = pX + pL + margemAreaClick; areaY = pY + pA / 2 - tamanhoAreaClick / 2; break;
+                            case 'cima': areaX = pX + pL / 2 - tamanhoAreaClick / 2; areaY = pY - tamanhoAreaClick - margemAreaClick; break;
+                            case 'baixo': areaX = pX + pL / 2 - tamanhoAreaClick / 2; areaY = pY + pA + margemAreaClick; break;
+                            default: return null;
+                        }
+                        const areaRect = { x: areaX, y: areaY, largura: tamanhoAreaClick, altura: tamanhoAreaClick, ativa: true };
+                        ctx.fillStyle = COR_DESTAQUE_JOGAVEL_FILL;
+                        ctx.strokeStyle = COR_DESTAQUE_JOGAVEL_STROKE;
+                        ctx.lineWidth = 2.5 * escalaDesenho;
+                        ctx.beginPath();
+                        if (ctx.roundRect) {
+                            ctx.roundRect(areaX, areaY, tamanhoAreaClick, tamanhoAreaClick, 5 * escalaDesenho);
+                        } else {
+                            ctx.rect(areaX, areaY, tamanhoAreaClick, tamanhoAreaClick);
+                        }
+                        ctx.fill();
+                        ctx.stroke();
+                        return areaRect;
+                    };
+                    if (encaixeEsquerda.valida) {
+                        const rect = desenharArea(infoPontaEsquerda, 'esquerda');
+                        if (rect) areaJogarEsquerda = rect;
+                    }
+                    if (encaixeDireita.valida) {
+                        const rect = desenharArea(infoPontaDireita, 'direita');
+                        if (rect) areaJogarDireita = rect;
+                    }
+                } else {
+                    pecaSelecionada = null;
+                }
+            }
+        }
+
+        function calcularPosicaoProximaPecaHorizontal(xAnterior, yAnterior, largAnterior, altAnterior, direcao) {
+            let nextX = xAnterior;
+            let nextY = yAnterior;
+            const largAtual = pecaLarguraH;
+            const altAtual = pecaAlturaH;
+            const espaco = espacoMesaEscalado;
+            switch (direcao) {
+                case 'esquerda':
+                    nextX = xAnterior - largAtual - espaco;
+                    nextY = yAnterior + (altAnterior - altAtual) / 2;
+                    break;
+                case 'direita':
+                    nextX = xAnterior + largAnterior + espaco;
+                    nextY = yAnterior + (altAnterior - altAtual) / 2;
+                    break;
+                case 'baixo':
+                    nextY = yAnterior + altAnterior + espaco;
+                    nextX = xAnterior + (largAnterior - largAtual) / 2;
+                    break;
+                case 'cima':
+                    nextY = yAnterior - altAtual - espaco;
+                    nextX = xAnterior + (largAnterior - largAtual) / 2;
+                    break;
+            }
+            return { x: nextX, y: nextY };
+        }
+
+        function desenharBotaoPassar() {
+            if (!mostrarBotaoPassar || !areaBotaoPassarRect || !jogadorPodeInteragir || jogoAcabou) return;
+            ctx.fillStyle = hoverBotaoPassar ? COR_BOTAO_PASSAR_HOVER_FILL : COR_BOTAO_PASSAR_FILL;
+            ctx.strokeStyle = COR_BOTAO_PASSAR_HOVER_FILL;
+            ctx.lineWidth = 1 * escalaDesenho; // Borda mais escura
+            const raioCanto = 6 * escalaDesenho;
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(areaBotaoPassarRect.x, areaBotaoPassarRect.y, areaBotaoPassarRect.largura, areaBotaoPassarRect.altura, raioCanto);
+            } else {
+                ctx.rect(areaBotaoPassarRect.x, areaBotaoPassarRect.y, areaBotaoPassarRect.largura, areaBotaoPassarRect.altura);
+            }
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = COR_BOTAO_PASSAR_TEXT;
+            ctx.font = `bold ${tamanhoFonteBase * 0.9}px 'Segoe UI', Tahoma, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("Passar", areaBotaoPassarRect.x + areaBotaoPassarRect.largura / 2, areaBotaoPassarRect.y + areaBotaoPassarRect.altura / 2 + 1 * escalaDesenho);
+        }
+
+        function desenharStatus() {
+            if (!areaStatusRect) return;
+            ctx.fillStyle = 'rgba(250, 250, 250, 0.7)'; // Fundo barra status claro/transparente
+            ctx.fillRect(areaStatusRect.x, areaStatusRect.y, areaStatusRect.largura, areaStatusRect.altura);
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); // Linha superior sutil
+            ctx.moveTo(areaStatusRect.x, areaStatusRect.y + 0.5);
+            ctx.lineTo(areaStatusRect.x + areaStatusRect.largura, areaStatusRect.y + 0.5);
+            ctx.stroke();
+            ctx.fillStyle = COR_TEXTO_STATUS;
+            ctx.font = `${tamanhoFonteBase * 0.95}px 'Segoe UI', Tahoma, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(mensagemStatus, CENTRO_X, areaStatusRect.y + areaStatusRect.altura / 2 + 1 * escalaDesenho);
+        }
+
+        function desenharMensagemFimJogo() {
+            if (!jogoAcabou || !mensagemFimJogo) return;
+            ctx.save();
+            ctx.fillStyle = COR_OVERLAY_FIM;
+            ctx.fillRect(0, 0, CANVAS_LARGURA, CANVAS_ALTURA);
+            ctx.font = `bold ${tamanhoFonteBase * 2.1}px 'Segoe UI', Tahoma, sans-serif`;
+            ctx.fillStyle = COR_TEXTO_FIM;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(0,0,0,0.2)';
+            ctx.shadowBlur = 6 * escalaDesenho; // Sombra mais suave
+            ctx.shadowOffsetX = 1 * escalaDesenho;
+            ctx.shadowOffsetY = 1 * escalaDesenho;
+            const linhas = mensagemFimJogo.split('\n');
+            const alturaLinha = tamanhoFonteBase * 2.6;
+            const yInicial = CENTRO_Y - (linhas.length - 1) * alturaLinha / 2;
+            linhas.forEach((linha, i) => {
+                ctx.fillText(linha, CENTRO_X, yInicial + i * alturaLinha);
+            });
+            ctx.restore();
+        }
+
+        function desenharJogo() {
+            ctx.clearRect(0, 0, CANVAS_LARGURA, CANVAS_ALTURA);
+            ctx.imageSmoothingEnabled = true;
+            desenharFundosAreas();
+            desenharAreaIA();
+            desenharMesa();
+            desenharMonte();
+            desenharAreaJogador();
+            desenharBotaoPassar();
+            desenharStatus();
+            desenharMensagemFimJogo();
+            atualizarCursor();
+        }
+
+        // --- Lógica do Jogo (Funções Core) ---
+
+        function criarTodasAsPecas() {
+            todasAsPecas = [];
+            for (let i = 0; i <= 6; i++) {
+                for (let j = i; j <= 6; j++) {
+                    todasAsPecas.push(new Peca(i, j));
+                }
+            }
+        }
+        function embaralhar(a) {
+            for (let i = a.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [a[i], a[j]] = [a[j], a[i]];
+            }
+        }
+        function distribuirPecas() {
+            criarTodasAsPecas();
+            embaralhar(todasAsPecas);
+            maoJogador = todasAsPecas.slice(0, 7);
+            maoIA = todasAsPecas.slice(7, 14);
+            monte = todasAsPecas.slice(14);
+            mesa = [];
+            pontas = { esquerda: null, direita: null };
+            pecaSelecionada = null;
+            jogoAcabou = false;
+            mensagemFimJogo = "";
+            passesConsecutivos = 0;
+            jogadorPodeInteragir = false;
+            mostrarBotaoPassar = false;
+            jogadorQueIniciou = null;
+        }
+        function determinarPrimeiroJogadorEPeca() {
+            let mJ = { idx: -1, v: -1 };
+            let mIA = { idx: -1, v: -1 };
+            const cV = (p) => p.ehDoble ? 100 + Math.min(p.l1, p.l2) : p.valorTotal;
+            maoJogador.forEach((p, i) => {
+                const v = cV(p);
+                if (v > mJ.v) mJ = { idx: i, v: v };
+            });
+            maoIA.forEach((p, i) => {
+                const v = cV(p);
+                if (v > mIA.v) mIA = { idx: i, v: v };
+            });
+            if (mJ.v > mIA.v) return { jogador: JOGADOR, indicePeca: mJ.idx };
+            if (mIA.v > mJ.v) return { jogador: IA, indicePeca: mIA.idx };
+            if (mJ.idx !== -1) return { jogador: JOGADOR, indicePeca: mJ.idx }; // Empate, jogador começa
+            if (mIA.idx !== -1) return { jogador: IA, indicePeca: mIA.idx }; // Só se jogador não tiver peças (impossível no início)
+            console.warn("Nenhuma peça encontrada para início? Usando Jogador[0].");
+            return { jogador: JOGADOR, indicePeca: 0 };
+        }
+        function isPecaJogavel(pMao) {
+            if (!pMao) return false;
+            if (mesa.length === 0) return true; // Qualquer peça pode iniciar
+            const pE = pontas.esquerda;
+            const pD = pontas.direita;
+            const l1 = pMao.l1;
+            const l2 = pMao.l2;
+            const cE = (pE !== null) && (l1 === pE || l2 === pE); // Conecta na esquerda?
+            const cD = (pD !== null) && (l1 === pD || l2 === pD); // Conecta na direita?
+            return cE || cD;
+        }
+        function podeJogarAlgumaPeca(mao) {
+            if (mesa.length === 0) return mao.length > 0;
+            for (const p of mao) {
+                if (isPecaJogavel(p)) return true;
+            }
+            return false;
+        }
+        function checarEncaixe(pMao, lado) {
+            if (!pMao || jogoAcabou) return { valida: false, conectaQualLado: null };
+            if (mesa.length === 0) return { valida: true, conectaQualLado: 'l1' }; // Primeira peça sempre conecta l1 (arbitrário)
+            const vP = (lado === 'esquerda') ? pontas.esquerda : pontas.direita;
+            if (vP === null) {
+                console.error(`Erro: Tentando encaixar no lado ${lado} mas a ponta lógica é null.`);
+                return { valida: false, conectaQualLado: null };
+            }
+            if (pMao.l1 === vP) return { valida: true, conectaQualLado: 'l1' };
+            if (pMao.l2 === vP) return { valida: true, conectaQualLado: 'l2' };
+            return { valida: false, conectaQualLado: null };
+        }
+
+        function realizarJogada(quem, idxOuPeca, lado) {
+            if (jogoAcabou && quem !== null) return false; // Não joga se acabou, exceto a 1a peça
+
+            let mao, pOrigMao, idxMao = -1;
+            if (quem === JOGADOR) {
+                mao = maoJogador;
+                idxMao = idxOuPeca;
+                pOrigMao = mao?.[idxMao];
+            } else if (quem === IA) {
+                mao = maoIA;
+                idxMao = idxOuPeca;
+                pOrigMao = mao?.[idxMao];
+            } else { // Jogada inicial (quem = null)
+                pOrigMao = idxOuPeca; // A própria peça é passada
+                mao = null;
+            }
+
+            if (!pOrigMao) {
+                console.error("Peca original invalida para jogada.");
+                return false;
+            }
+
+            const { valida, conectaQualLado } = checarEncaixe(pOrigMao, lado);
+
+            if (!valida && mesa.length > 0) { // Se não for a 1a peça e não for válida
+                if (quem === JOGADOR) {
+                    atualizarStatus("Jogada inválida!");
+                    pecaSelecionada = null; // Desseleciona
+                    desenharJogo();
+                }
+                return false;
+            }
+
+            // Determina qual lado conecta e qual fica exposto
+            let lCon, lExp;
+            if (mesa.length === 0) {
+                // Primeira peça: l1 conecta 'virtualmente', l2 expõe à direita
+                lCon = pOrigMao.l1;
+                lExp = pOrigMao.l2;
+                // Se for doble, tanto faz
+            } else {
+                lCon = (conectaQualLado === 'l1') ? pOrigMao.l1 : pOrigMao.l2;
+                lExp = (conectaQualLado === 'l1') ? pOrigMao.l2 : pOrigMao.l1;
+            }
+
+            // Cria a peça visual na orientação correta para a mesa
+            let pVis;
+            if (lado === 'esquerda') {
+                // Lado esquerdo conecta (lCon), lado direito expõe (lExp)
+                pVis = new Peca(lExp, lCon);
+            } else { // Direita ou centro (primeira peça)
+                // Lado esquerdo conecta (lCon), lado direito expõe (lExp)
+                pVis = new Peca(lCon, lExp);
+            }
+
+            // Remove da mão se for jogador ou IA
+            if (quem !== null && mao && idxMao >= 0 && idxMao < mao.length) {
+                mao.splice(idxMao, 1);
+            } else if (quem !== null) { // Se era pra remover e falhou
+                console.error(`Erro ao remover peça ${idxMao} da mão de ${quem}.`);
+                return false;
+            }
+
+            const itemMesa = { pecaVisual: pVis };
+
+            // Adiciona na mesa e atualiza pontas
+            if (mesa.length === 0) {
+                mesa.push(itemMesa);
+                pontas.esquerda = pOrigMao.l1; // Ponta lógica esquerda é l1 da peça original
+                pontas.direita = pOrigMao.l2;  // Ponta lógica direita é l2 da peça original
+            } else if (lado === 'esquerda') {
+                mesa.unshift(itemMesa);
+                pontas.esquerda = lExp; // Nova ponta esquerda é o lado exposto
+            } else { // lado === 'direita'
+                mesa.push(itemMesa);
+                pontas.direita = lExp; // Nova ponta direita é o lado exposto
+            }
+
+            //console.log(`Jogada: ${pOrigMao.id} ${lado||'centro'}. PVis:[${pVis.l1}|${pVis.l2}]. Pontas:{E:${pontas.esquerda},D:${pontas.direita}}`);
+
+            if (quem !== null) { // Jogada normal (não inicial)
+                passesConsecutivos = 0;
+                pecaSelecionada = null; // Desseleciona após jogar
+                mostrarBotaoPassar = false; // Esconde o botão de passar
+                if (!verificarFimDeJogo()) {
+                    proximoTurno(quem);
+                } else {
+                    desenharJogo(); // Jogo acabou, apenas redesenha com msg final
+                }
+            } else { // Jogada inicial
+                turnoAtual = (jogadorQueIniciou === JOGADOR) ? IA : JOGADOR; // Passa o turno
+                atualizarStatus(); // Atualiza status para o próximo jogador
+                desenharJogo();
+                if (turnoAtual === IA) {
+                    jogadorPodeInteragir = false;
+                    setTimeout(jogarTurnoIA, DELAY_IA);
+                } else { // Turno do Jogador após a 1a jogada
+                    jogadorPodeInteragir = true;
+                    atualizarCursor();
+                    // Verifica se jogador pode jogar ou precisa comprar/passar
+                    if (!podeJogarAlgumaPeca(maoJogador)) {
+                        mostrarBotaoPassar = (monte.length === 0);
+                        atualizarStatus(monte.length > 0 ? "Sua Vez: Compre." : "Sua Vez: Passe.");
+                    }
+                    desenharJogo(); // Redesenha com as opções do jogador
+                }
+            }
+            return true; // Jogada bem-sucedida
+        }
+
+        function realizarCompra(quem) {
+            if (jogoAcabou || monte.length === 0) return false;
+            const m = (quem === JOGADOR) ? maoJogador : maoIA;
+            if (quem === JOGADOR && podeJogarAlgumaPeca(m)) {
+                atualizarStatus("Você pode jogar! Não precisa comprar.");
+                desenharJogo();
+                return false; // Impede compra se pode jogar
+            }
+            const nP = monte.pop();
+            m.push(nP);
+            passesConsecutivos = 0; // Compra quebra a sequência de passes
+            if (quem === JOGADOR) {
+                pecaSelecionada = null; // Desseleciona ao comprar
+                // Reavalia se pode jogar após comprar
+                if (!podeJogarAlgumaPeca(maoJogador)) {
+                    mostrarBotaoPassar = (monte.length === 0); // Mostra botão só se monte acabar
+                    atualizarStatus(monte.length > 0 ? "Comprou. Compre ou Passe." : "Comprou. Sem jogada. Passe.");
+                } else {
+                    mostrarBotaoPassar = false;
+                    atualizarStatus("Comprou. Agora jogue.");
+                }
+                desenharJogo();
+            }
+            return true; // Compra realizada
+        }
+        function passarVez() {
+            if (jogoAcabou || turnoAtual !== JOGADOR || !mostrarBotaoPassar) return;
+            passesConsecutivos++;
+            atualizarStatus(`Você passou a vez.`);
+            mostrarBotaoPassar = false; // Esconde o botão após passar
+            pecaSelecionada = null; // Desseleciona
+            desenharJogo();
+            if (!verificarFimDeJogo()) { // Verifica se o passe acabou o jogo
+                proximoTurno(JOGADOR);
+            }
+            // Se verificarFimDeJogo retornar true, ele já terá atualizado o estado e a msg
+        }
+        function proximoTurno(quemJogou) {
+            if (jogoAcabou) return;
+            turnoAtual = (quemJogou === JOGADOR) ? IA : JOGADOR;
+            atualizarStatus(); // Define a mensagem padrão para o turno
+            desenharJogo(); // Redesenha para refletir a mudança de turno (antes do delay da IA)
+
+            if (turnoAtual === IA) {
+                jogadorPodeInteragir = false;
+                atualizarCursor();
+                setTimeout(jogarTurnoIA, DELAY_IA);
+            } else { // Turno do Jogador
+                jogadorPodeInteragir = true;
+                // Verifica se pode jogar logo que recebe o turno
+                if (!podeJogarAlgumaPeca(maoJogador)) {
+                    mostrarBotaoPassar = (monte.length === 0);
+                    atualizarStatus(monte.length > 0 ? "Sua Vez: Compre uma peça." : "Sua Vez: Passe a vez.");
+                } else {
+                    mostrarBotaoPassar = false; // Garante que botão está escondido se puder jogar
+                    atualizarStatus(); // Usa a mensagem padrão "Sua vez: Escolha..."
+                }
+                desenharJogo(); // Redesenha com as opções corretas
+                atualizarCursor();
+            }
+        }
+        function verificarFimDeJogo() {
+            let fim = false;
+            let msg = "";
+            let pJ = 0, pI = 0;
+            if (maoJogador.length === 0) {
+                msg = "Você Bateu!\nVenceu!";
+                fim = true;
+            } else if (maoIA.length === 0) {
+                msg = "IA Bateu!\nIA Venceu!";
+                fim = true;
+            } else if (passesConsecutivos >= 2 || (!podeJogarAlgumaPeca(maoJogador) && !podeJogarAlgumaPeca(maoIA) && monte.length === 0)) {
+                pJ = maoJogador.reduce((s, p) => s + p.valorTotal, 0);
+                pI = maoIA.reduce((s, p) => s + p.valorTotal, 0);
+                msg = "Jogo Bloqueado!\n";
+                if (pJ < pI) msg += `Você venceu por pontos (${pJ} vs ${pI})`;
+                else if (pI < pJ) msg += `IA venceu por pontos (${pI} vs ${pJ})`;
+                else msg += `Empate (${pJ} pontos cada)`;
+                fim = true;
+            }
+            // Se o jogo terminou, define o estado e a mensagem final
+            if (fim) {
+                msg += "\n\nClique para jogar novamente.";
+                mensagemFimJogo = msg;
+                jogoAcabou = true; // Marca jogo como acabado AQUI
+                atualizarStatus("Fim de Jogo.", true); // Atualiza status DEPOIS
+                return true; // Indica que o jogo acabou
+            }
+            return false; // Indica que o jogo não acabou
+        }
+
+        function jogarTurnoIA() {
+            if (jogoAcabou || turnoAtual !== IA) return;
+
+            atualizarStatus("IA pensando...");
+            desenharJogo(); // Mostra "IA pensando"
+
+            let mj = null; // Melhor jogada encontrada { indice, lado }
+            let mV = -1; // Maior valor de peça jogável
+
+            // Procura a melhor peça para jogar (maior valor, prioriza dobles)
+            for (let i = 0; i < maoIA.length; i++) {
+                const pO = maoIA[i]; // Peça original da mão da IA
+                const vO = pO.ehDoble ? 100 + Math.min(pO.l1, pO.l2) : pO.valorTotal; // Valor da peça (dobles valem mais)
+
+                // Tenta encaixar na direita
+                const eD = checarEncaixe(pO, 'direita');
+                if (eD.valida && vO > mV) { // Se encaixa e é melhor que a atual
+                    mV = vO;
+                    mj = { indice: i, lado: 'direita' };
+                }
+                // Tenta encaixar na esquerda (mesmo valor, pode sobrescrever direita)
+                const eE = checarEncaixe(pO, 'esquerda');
+                if (eE.valida && vO >= mV) { // Se encaixa e é igual ou melhor
+                    mV = vO;
+                    mj = { indice: i, lado: 'esquerda' };
+                }
+            }
+
+            if (mj) { // IA tem uma peça para jogar
+                const pId = maoIA[mj.indice].id;
+                atualizarStatus(`IA jogando ${pId}...`);
+                desenharJogo(); // Mostra qual peça a IA vai jogar
+                // Pequeno delay antes de realmente fazer a jogada visualmente
+                setTimeout(() => {
+                    realizarJogada(IA, mj.indice, mj.lado);
+                }, DELAY_IA * 0.6);
+
+            } else { // IA não tem peça para jogar
+                if (monte.length > 0) { // Tenta comprar
+                    atualizarStatus("IA comprando...");
+                    desenharJogo();
+                    setTimeout(() => {
+                        if (realizarCompra(IA)) { // Comprou com sucesso
+                            // Após comprar, a IA tenta jogar novamente no mesmo turno
+                            setTimeout(jogarTurnoIA, DELAY_IA * 0.5); // Chama a si mesma
+                        } else { // Erro na compra? Improvável, mas seguro tratar
+                            console.error("IA falhou ao tentar comprar do monte.");
+                            passesConsecutivos++; // Se falhou compra, conta como passe
+                            atualizarStatus("IA passou (erro compra).");
+                            desenharJogo();
+                            if (!verificarFimDeJogo()) {
+                                proximoTurno(IA); // Passa o turno se o jogo não acabou
+                            } else {
+                                desenharJogo(); // Jogo acabou, redesenha
+                            }
+                        }
+                    }, DELAY_IA * 0.4); // Delay antes da compra
+
+                } else { // Monte vazio E não pode jogar => IA passa
+                    passesConsecutivos++;
+                    atualizarStatus("IA passou.");
+                    desenharJogo(); // Desenha o status da IA passando
+
+                    // --- VERIFICAÇÃO DE BLOQUEIO IMEDIATO ---
+                    // Se a IA passou E o jogador TAMBÉM não pode jogar E o monte está vazio
+                    if (!podeJogarAlgumaPeca(maoJogador)) {
+                        console.log("Fim de jogo detectado após passe da IA: Jogador também bloqueado.");
+                        verificarFimDeJogo(); // Calcula pontos, marca jogo como acabado e atualiza mensagem
+                        desenharJogo(); // Redesenha com a mensagem de fim
+                        // Não chama proximoTurno, o jogo acabou aqui.
+                    } else {
+                        // Jogo continua, passa para o jogador
+                        // verificarFimDeJogo() aqui é uma segurança extra, caso o passe duplo já tenha ocorrido
+                        if (!verificarFimDeJogo()) {
+                            proximoTurno(IA);
+                        } else { // Jogo acabou por outra razão (ex: jogador bateu antes, passe duplo anterior)
+                            desenharJogo();
+                        }
+                    }
+                    // --- FIM DA VERIFICAÇÃO DE BLOQUEIO ---
+                }
+            }
+        }
+
+        // --- Eventos & Inicialização ---
+
+        function getMousePos(el, evt) {
+            const r = el.getBoundingClientRect();
+            const sX = el.width / r.width;
+            const sY = el.height / r.height;
+            return { x: (evt.clientX - r.left) * sX, y: (evt.clientY - r.top) * sY };
+        }
+        function isDentro(p, r) {
+            return r && p && r.largura > 0 && r.altura > 0 &&
+                p.x >= r.x && p.x <= r.x + r.largura &&
+                p.y >= r.y && p.y <= r.y + r.altura;
+        }
+
+        function verificarHover(e) {
+            if (jogoAcabou) {
+                if (!canvas.classList.contains('clicavel')) canvas.classList.add('clicavel');
+                if (canvas.classList.contains('esperando')) canvas.classList.remove('esperando');
+                hoverBotaoPassar = false;
+                return; // Se acabou, cursor é sempre pointer para reiniciar
+            }
+            if (!jogadorPodeInteragir) {
+                hoverBotaoPassar = false; // Sem hover se não pode interagir
+                if (canvas.classList.contains('clicavel')) canvas.classList.remove('clicavel');
+                if (!canvas.classList.contains('esperando')) canvas.classList.add('esperando');
+                return; // Cursor de espera
+            }
+            // Se pode interagir:
+            if (canvas.classList.contains('esperando')) canvas.classList.remove('esperando');
+
+            const p = getMousePos(canvas, e);
+            let cC = false; // Cursor Clicável
+            let hB = false; // Hover Botão Passar
+
+            // 1. Botão Passar
+            if (mostrarBotaoPassar && areaBotaoPassarRect && isDentro(p, areaBotaoPassarRect)) {
+                cC = true;
+                hB = true;
+            }
+            // 2. Monte para comprar
+            if (!podeJogarAlgumaPeca(maoJogador) && monte.length > 0 && areaClicarMonte && isDentro(p, areaClicarMonte)) {
+                cC = true;
+            }
+            // 3. Peças na mão que são jogáveis
+            const larguraTotalMao = maoJogador.length * (pecaLarguraV + espacoMaoEscalado) - espacoMaoEscalado;
+            let startXJogador = areaJogadorRect.x + (areaJogadorRect.largura - larguraTotalMao) / 2;
+            startXJogador = Math.max(startXJogador, areaMonteRect.x + areaMonteRect.largura + margemGeralInterface * 1.5);
+            const pecaYJogador = areaJogadorRect.y + (areaJogadorRect.altura - pecaAlturaV) / 2;
+            const limiteDireitoMao = areaJogadorRect.x + areaJogadorRect.largura - margemGeralInterface * 2;
+            for (let i = 0; i < maoJogador.length; i++) {
+                const pX = startXJogador + i * (pecaLarguraV + espacoMaoEscalado);
+                if (pX + pecaLarguraV < limiteDireitoMao + 5) { // Garante que a peça inteira está visível
+                    if (maoJogador[i] && isPecaJogavel(maoJogador[i]) && maoJogador[i].contemPontoMao(p.x, p.y, pX, pecaYJogador)) {
+                        cC = true;
+                        break; // Encontrou uma peça jogável sob o mouse
+                    }
+                }
+            }
+            // 4. Áreas de jogar na mesa (se peça selecionada)
+            if (pecaSelecionada !== null) {
+                if (areaJogarEsquerda.ativa && isDentro(p, areaJogarEsquerda)) cC = true;
+                if (areaJogarDireita.ativa && isDentro(p, areaJogarDireita)) cC = true;
+            }
+
+            // Atualiza hover do botão e redesenha se necessário
+            if (hB !== hoverBotaoPassar) {
+                hoverBotaoPassar = hB;
+                desenharJogo();
+            }
+            // Atualiza classe do cursor
+            if (cC && !canvas.classList.contains('clicavel')) canvas.classList.add('clicavel');
+            else if (!cC && canvas.classList.contains('clicavel')) canvas.classList.remove('clicavel');
+        }
+
+        function atualizarCursor() {
+            if (jogoAcabou) {
+                canvas.classList.remove('esperando');
+                canvas.classList.add('clicavel'); // Cursor pointer para reiniciar
+            } else if (!jogadorPodeInteragir || turnoAtual === IA) {
+                canvas.classList.add('esperando');
+                canvas.classList.remove('clicavel'); // Cursor wait
+            } else { // Jogador pode interagir
+                canvas.classList.remove('esperando');
+                // O cursor 'clicavel' (pointer) é definido pelo verificarHover
+            }
+        }
+        function atualizarStatus(nMsg = null, fim = false) {
+            // Nota: jogoAcabou é agora setado dentro de verificarFimDeJogo
+            jogadorPodeInteragir = (turnoAtual === JOGADOR && !jogoAcabou);
+
+            if (nMsg && !fim) { // Mensagem específica que não é de fim de jogo
+                mensagemStatus = nMsg;
+            }
+            else if (!jogoAcabou) { // Mensagens padrão durante o jogo
+                if (turnoAtual === JOGADOR) {
+                    if (!podeJogarAlgumaPeca(maoJogador)) {
+                        mensagemStatus = monte.length > 0 ? "Sua Vez: Compre uma peça." : "Sua Vez: Passe a vez.";
+                    } else {
+                        mensagemStatus = pecaSelecionada === null ? "Sua Vez: Escolha uma peça." : "Sua Vez: Escolha onde jogar.";
+                    }
+                } else { // Vez da IA
+                    // Mantém "IA pensando..." ou "IA jogando..." se já estiver definido
+                    if (!mensagemStatus || !mensagemStatus.toLowerCase().includes("ia")) {
+                        mensagemStatus = "Vez da IA...";
+                    }
+                }
+            }
+            else if (fim && nMsg) { // Mensagem específica de fim de jogo
+                mensagemStatus = nMsg;
+            }
+            // else: Se jogoAcabou mas nMsg é null, mantém a última mensagem ("Fim de Jogo.")
+
+            // Controla visibilidade do botão de passar
+            mostrarBotaoPassar = (jogadorPodeInteragir && !podeJogarAlgumaPeca(maoJogador) && monte.length === 0 && !jogoAcabou);
+            atualizarCursor(); // Garante que o cursor está correto
+        }
+
+        function handleMouseClick(e) {
+            if (jogoAcabou) {
+                iniciarJogo(); // Clicar em qualquer lugar reinicia
+                return;
+            }
+            if (!jogadorPodeInteragir) return; // Ignora click se não for a vez do jogador
+
+            const pos = getMousePos(canvas, e);
+
+            // 1. Clicou no Botão Passar?
+            if (mostrarBotaoPassar && areaBotaoPassarRect && isDentro(pos, areaBotaoPassarRect)) {
+                passarVez();
+                return;
+            }
+            // 2. Clicou no Monte para Comprar?
+            if (!podeJogarAlgumaPeca(maoJogador) && monte.length > 0 && areaClicarMonte && isDentro(pos, areaClicarMonte)) {
+                realizarCompra(JOGADOR);
+                return;
+            }
+            // 3. Clicou na Área de Jogar na Mesa (com peça selecionada)?
+            if (pecaSelecionada !== null) {
+                const pSO = maoJogador[pecaSelecionada];
+                if (pSO) { // Verifica se a peça selecionada ainda existe (segurança)
+                    let jogou = false;
+                    if (areaJogarEsquerda.ativa && isDentro(pos, areaJogarEsquerda) && checarEncaixe(pSO, 'esquerda').valida) {
+                        jogou = realizarJogada(JOGADOR, pecaSelecionada, 'esquerda');
+                    } else if (areaJogarDireita.ativa && isDentro(pos, areaJogarDireita) && checarEncaixe(pSO, 'direita').valida) {
+                        jogou = realizarJogada(JOGADOR, pecaSelecionada, 'direita');
+                    }
+                    // Se jogou com sucesso, a função realizarJogada cuida do resto (desselecionar, passar turno, etc)
+                    if (jogou) return;
+
+                    // Se clicou fora das áreas de jogar ou a jogada falhou por algum motivo,
+                    // considerar deselecionar a peça? Ou manter selecionada?
+                    // Por enquanto, vamos deselecionar se o clique foi fora das áreas válidas.
+                    if (!isDentro(pos, areaJogarEsquerda) && !isDentro(pos, areaJogarDireita)) {
+                        pecaSelecionada = null;
+                        atualizarStatus();
+                        desenharJogo();
+                    } // Se clicou numa área inválida, não faz nada (mantém selecionado)
+
+                } else { // Peça selecionada se tornou inválida (improvável)
+                    pecaSelecionada = null;
+                    console.warn("Peca selecionada era invalida no momento do clique na mesa?");
+                    atualizarStatus();
+                    desenharJogo();
+                }
+                // Se tinha peça selecionada, o fluxo termina aqui (jogou ou não)
+                // Exceto se deselecionou acima, aí o código continua para checar se clicou em outra peça.
+                if (pecaSelecionada !== null && !jogou) return; // Ainda selecionada e não jogou? Termina.
+            }
+
+            // 4. Clicou em uma Peça na Mão?
+            let idxClicado = -1;
+            const larguraTotalMao = maoJogador.length * (pecaLarguraV + espacoMaoEscalado) - espacoMaoEscalado;
+            let startXJogador = areaJogadorRect.x + (areaJogadorRect.largura - larguraTotalMao) / 2;
+            startXJogador = Math.max(startXJogador, areaMonteRect.x + areaMonteRect.largura + margemGeralInterface * 1.5);
+            const pecaYJogador = areaJogadorRect.y + (areaJogadorRect.altura - pecaAlturaV) / 2;
+            const limiteDireitoMao = areaJogadorRect.x + areaJogadorRect.largura - margemGeralInterface * 2;
+            for (let i = 0; i < maoJogador.length; i++) {
+                const pX = startXJogador + i * (pecaLarguraV + espacoMaoEscalado);
+                if (pX + pecaLarguraV < limiteDireitoMao + 5) { // Garante que a peça está visível
+                    if (maoJogador[i] && maoJogador[i].contemPontoMao(pos.x, pos.y, pX, pecaYJogador)) {
+                        idxClicado = i;
+                        break;
+                    }
+                }
+            }
+
+            if (idxClicado !== -1) { // Clicou numa peça da mão
+                const pC = maoJogador[idxClicado];
+                if (isPecaJogavel(pC)) { // Se a peça clicada é jogável
+                    pecaSelecionada = (pecaSelecionada === idxClicado) ? null : idxClicado; // Seleciona ou deseleciona
+                    atualizarStatus(); // Atualiza mensagem (escolha peça/escolha onde jogar)
+                    desenharJogo();
+                } else { // Peça não jogável
+                    pecaSelecionada = null; // Garante deseleção
+                    atualizarStatus("Esta peça não pode ser jogada agora.");
+                    desenharJogo();
+                }
+                return; // Ação foi clicar na mão
+            }
+
+            // Se chegou aqui, clicou em área vazia sem peça selecionada, não faz nada.
+        }
+
+        function ajustarCanvasProporcionalmente() {
+            const margemBody = 20; // Espaço fora do canvas
+            const viewportWidth = window.innerWidth - margemBody;
+            const viewportHeight = window.innerHeight - margemBody;
+            const aspectRatio = 20 / 11; // Largura / Altura desejada
+
+            // Calcula dimensões baseadas na largura e depois na altura, pega a menor
+            let novoLargura = viewportWidth;
+            let novoAltura = novoLargura / aspectRatio;
+            if (novoAltura > viewportHeight) { // Se altura calculada for maior que a tela
+                novoAltura = viewportHeight; // Usa a altura máxima
+                novoLargura = novoAltura * aspectRatio; // Recalcula largura
+            }
+
+            // Define um tamanho mínimo razoável
+            const minWidth = 750;
+            const minHeight = minWidth / aspectRatio;
+
+            // Aplica as novas dimensões, respeitando o mínimo
+            novoLargura = Math.max(minWidth, Math.round(novoLargura));
+            novoAltura = Math.max(minHeight, Math.round(novoAltura));
+
+            // Redimensiona SÓ SE NECESSÁRIO para evitar redesenhos desnecessários
+            if (canvas.width !== novoLargura || canvas.height !== novoAltura) {
+                canvas.width = novoLargura;
+                canvas.height = novoAltura;
+                console.log(`Canvas resized: ${canvas.width}x${canvas.height}`);
+                return true; // Indica que houve redimensionamento
+            }
+            return false; // Indica que não houve redimensionamento
+        }
+
+        function iniciarJogo() {
+            console.log("--- Iniciando Dominó Minimalista v6.5 ---");
+            // Define o tamanho do canvas antes de calcular posições
+            ajustarCanvasProporcionalmente();
+            ajustarTamanhoPosicoes(); // Calcula todas as áreas e escalas
+            distribuirPecas(); // Cria, embaralha e distribui
+
+            const infoInicio = determinarPrimeiroJogadorEPeca();
+
+            // Validação robusta da peça inicial
+            if (!infoInicio || infoInicio.indicePeca < 0 ||
+                (infoInicio.jogador === JOGADOR && infoInicio.indicePeca >= maoJogador.length) ||
+                (infoInicio.jogador === IA && infoInicio.indicePeca >= maoIA.length)) {
+                console.error("Erro crítico ao determinar jogador/peça inicial.", infoInicio);
+                alert("Erro ao iniciar o jogo. Verifique o console. Tentando fallback...");
+                // Fallback: Jogador começa com a primeira peça que tiver
+                jogadorQueIniciou = JOGADOR;
+                infoInicio.jogador = JOGADOR;
+                infoInicio.indicePeca = 0;
+                if (maoJogador.length === 0) {
+                    alert("Fallback falhou: Mão do Jogador vazia após distribuição! Não é possível iniciar.");
+                    return; // Não pode iniciar
+                }
+            }
+
+            jogadorQueIniciou = infoInicio.jogador;
+            turnoAtual = jogadorQueIniciou; // Turno inicial é de quem começa
+
+            let maoInicial = (turnoAtual === JOGADOR) ? maoJogador : maoIA;
+            let pecaInicialOriginal = null;
+
+            // Garante que o índice é válido antes de remover
+            if (infoInicio.indicePeca >= 0 && infoInicio.indicePeca < maoInicial.length) {
+                pecaInicialOriginal = maoInicial.splice(infoInicio.indicePeca, 1)[0];
+            } else {
+                // Se o fallback falhou ou o índice ainda é inválido (não deveria acontecer)
+                console.error(`Índice inicial ${infoInicio.indicePeca} inválido para mão de tamanho ${maoInicial.length}.`);
+                if (maoInicial.length > 0) { // Pega a primeira peça como último recurso
+                    console.warn("Usando a primeira peça da mão como fallback final.");
+                    pecaInicialOriginal = maoInicial.splice(0, 1)[0];
+                } else {
+                    alert("Erro crítico: Mão inicial vazia, não foi possível obter a peça inicial.");
+                    return; // Não pode iniciar
+                }
+            }
+
+            // Só inicia a sequência se conseguiu uma peça
+            if (pecaInicialOriginal) {
+                const idInicial = pecaInicialOriginal.id;
+                console.log(`Primeiro Jogador: ${turnoAtual} com a peça ${idInicial}`);
+                atualizarStatus(`Início. ${turnoAtual === JOGADOR ? 'Você' : 'IA'} começa com ${idInicial}.`);
+                pecaSelecionada = null; // Garante que nada está selecionado
+                jogoAcabou = false; // Garante que o jogo não está marcado como acabado
+                jogadorPodeInteragir = false; // Jogador não interage durante a 1a jogada
+
+                // Realiza a primeira jogada (sem jogador, usando a peça diretamente)
+                // Usamos timeout para permitir que o status inicial seja visto brevemente
+                setTimeout(() => {
+                    realizarJogada(null, pecaInicialOriginal, null); // lado null = centro
+                }, 400); // Pequeno delay visual
+
+            } else {
+                // Se mesmo com fallbacks não conseguiu peça, informa o usuário.
+                alert("Erro inesperado: Não foi possível iniciar o jogo por falta de peça inicial.");
+            }
+        }
+
+        // --- Listeners ---
+        canvas.addEventListener('click', handleMouseClick);
+        canvas.addEventListener('mousemove', verificarHover);
+        window.addEventListener('resize', () => {
+            if (ajustarCanvasProporcionalmente()) {
+                // Se o tamanho mudou significativamente, reinicia para evitar problemas de layout
+                iniciarJogo();
+            } else {
+                // Se só ajustou margens ou não mudou, recalcula posições e redesenha
+                ajustarTamanhoPosicoes();
+                desenharJogo();
+            }
+        });
+        window.onload = iniciarJogo; // Inicia o jogo quando a página carregar
+
+    </script>
+</body>
+
+</html>
