@@ -1,1 +1,15 @@
-.history
+.history/
+.vscode/
+.idea/
+
+# Dart / Flutter
+**/.dart_tool/
+**/pubspec.lock
+**/build/
+**/.packages
+
+# JavaScript / Web
+**/node_modules/
+**/dist/
+**/.env
+**/.DS_Store
