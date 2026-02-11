@@ -1,0 +1,202 @@
+/* Resets e Variáveis */
+:root {
+    --bg-color: #0f0f13;
+    --card-bg: rgba(255, 255, 255, 0.08);
+    /* Glassmorphism light */
+    --text-primary: #ffffff;
+    --text-secondary: #aaaaaa;
+    --accent-color: #00ffcc;
+    /* Neon Cyan */
+    --hover-glow: rgba(0, 255, 204, 0.4);
+    --font-heading: 'Press Start 2P', cursive;
+    --font-body: 'Roboto', sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: var(--bg-color);
+    background-image:
+        radial-gradient(circle at 10% 20%, rgba(90, 90, 150, 0.1) 0%, transparent 20%),
+        radial-gradient(circle at 90% 80%, rgba(0, 255, 204, 0.05) 0%, transparent 20%);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+}
+
+/* Container Principal */
+.container {
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+/* Header */
+header {
+    text-align: center;
+    margin-bottom: 40px;
+    padding-top: 20px;
+}
+
+h1 {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.retro-text {
+    font-family: var(--font-heading);
+    color: var(--accent-color);
+    text-shadow: 2px 2px 0px #ff00ff;
+    /* Sombra Neon Pink */
+    margin-right: 10px;
+}
+
+header p {
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+/* Grid de Jogos */
+.games-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 25px;
+    padding-bottom: 40px;
+}
+
+/* Cartão do Jogo */
+.game-card {
+    background: var(--card-bg);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 25px;
+    text-align: center;
+    text-decoration: none;
+    color: var(--text-primary);
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    position: relative;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+}
+
+.game-card:hover {
+    transform: translateY(-8px) scale(1.02);
+    box-shadow: 0 10px 30px -5px var(--hover-glow);
+    border-color: var(--accent-color);
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.icon {
+    font-size: 3.5rem;
+    margin-bottom: 15px;
+    transition: transform 0.3s ease;
+}
+
+.game-card:hover .icon {
+    transform: scale(1.2) rotate(5deg);
+}
+
+.game-info h2 {
+    font-size: 1.4rem;
+    margin-bottom: 8px;
+    font-weight: 700;
+}
+
+.game-info p {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+/* Variantes (múltiplas versões do mesmo jogo) */
+.variant-links {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.variant-tag {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-decoration: none;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    transition: all 0.25s ease;
+}
+
+.variant-tag:hover {
+    background: var(--accent-color);
+    color: var(--bg-color);
+    transform: scale(1.1);
+    box-shadow: 0 4px 15px var(--hover-glow);
+}
+
+.variant-tag.tag-ai {
+    border-color: rgba(255, 100, 255, 0.4);
+    background: rgba(255, 100, 255, 0.1);
+}
+
+.variant-tag.tag-ai:hover {
+    background: #ff64ff;
+    border-color: #ff64ff;
+    box-shadow: 0 4px 15px rgba(255, 100, 255, 0.4);
+}
+
+.variant-tag.tag-new {
+    border-color: rgba(255, 204, 0, 0.4);
+    background: rgba(255, 204, 0, 0.1);
+}
+
+.variant-tag.tag-new:hover {
+    background: #ffcc00;
+    border-color: #ffcc00;
+    box-shadow: 0 4px 15px rgba(255, 204, 0, 0.4);
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 20px;
+    margin-top: auto;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    width: 100%;
+}
+
+/* Responsividade */
+@media (max-width: 600px) {
+    h1 {
+        font-size: 1.8rem;
+    }
+
+    .retro-text {
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    .games-grid {
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+}
