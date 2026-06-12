@@ -1,26 +1,48 @@
 import * as THREE from 'three';
 import { createOfficeChair } from './chair.js';
 
+// NPC hip height ≈ 0.9 (SCALE 2.0, leg 0.45*2)
+// Chair seat height = gridUnit * 0.4 = 0.8  ← matches hip level
+// Table top height  = gridUnit * 0.75 = 1.5  ← comfortable above chair
+// gridUnit = 2.0
+
 export function createMeetingTable({ gridUnit, colors, addBox }) {
     const meetingGroup = new THREE.Group();
-    addBox(gridUnit * 2.4, 0.035, gridUnit * 1.9, 0, 0.018, 0, colors.meeting_rug, meetingGroup);
-    addBox(gridUnit * 1.8, gridUnit * 0.12, gridUnit * 1.0, 0, gridUnit * 0.7, 0, colors.meeting_table, meetingGroup);
-    addBox(0.14, gridUnit * 0.65, 0.14, -gridUnit * 0.75, gridUnit * 0.325, -gridUnit * 0.35, colors.desk_leg, meetingGroup);
-    addBox(0.14, gridUnit * 0.65, 0.14, gridUnit * 0.75, gridUnit * 0.325, -gridUnit * 0.35, colors.desk_leg, meetingGroup);
-    addBox(0.14, gridUnit * 0.65, 0.14, -gridUnit * 0.75, gridUnit * 0.325, gridUnit * 0.35, colors.desk_leg, meetingGroup);
-    addBox(0.14, gridUnit * 0.65, 0.14, gridUnit * 0.75, gridUnit * 0.325, gridUnit * 0.35, colors.desk_leg, meetingGroup);
-    addBox(0.7, 0.05, 0.45, -0.45, gridUnit * 0.78, -0.05, 0xf2f2f2, meetingGroup);
-    addBox(0.45, 0.04, 0.32, 0.45, gridUnit * 0.79, 0.12, 0xd9e6f2, meetingGroup);
-    addBox(0.12, 0.12, 0.12, 0.05, gridUnit * 0.82, -0.25, 0x222222, meetingGroup);
-    addBox(0.22, 0.04, 0.16, 0.05, gridUnit * 0.79, 0.32, colors.meeting_accent, meetingGroup);
 
+    const tableW  = gridUnit * 1.9;  // table top width
+    const tableD  = gridUnit * 1.1;  // table top depth
+    const tableH  = gridUnit * 0.75; // table top height (1.5 units)
+    const legH    = tableH - 0.06;   // leg height
+    const legSize = 0.16;
+
+    // Rug / felt pad
+    addBox(gridUnit * 2.6, 0.03, gridUnit * 2.0, 0, 0.015, 0, colors.meeting_rug, meetingGroup);
+
+    // Table top
+    addBox(tableW, 0.07, tableD, 0, tableH, 0, colors.meeting_table, meetingGroup);
+
+    // Four legs
+    const lx = tableW / 2 - 0.15;
+    const lz = tableD / 2 - 0.15;
+    addBox(legSize, legH, legSize, -lx,  legH / 2, -lz, colors.desk_leg, meetingGroup);
+    addBox(legSize, legH, legSize,  lx,  legH / 2, -lz, colors.desk_leg, meetingGroup);
+    addBox(legSize, legH, legSize, -lx,  legH / 2,  lz, colors.desk_leg, meetingGroup);
+    addBox(legSize, legH, legSize,  lx,  legH / 2,  lz, colors.desk_leg, meetingGroup);
+
+    // Props on the table
+    addBox(0.7,  0.05, 0.45, -0.45, tableH + 0.065, -0.05, 0xf2f2f2, meetingGroup); // paper
+    addBox(0.45, 0.04, 0.32,  0.45, tableH + 0.065,  0.12, 0xd9e6f2, meetingGroup); // laptop
+    addBox(0.12, 0.12, 0.12,  0.05, tableH + 0.1,   -0.25, 0x222222, meetingGroup); // phone
+    addBox(0.22, 0.04, 0.16,  0.05, tableH + 0.065,  0.32, colors.meeting_accent, meetingGroup); // notepad
+
+    // Six chairs — spread further to clear the larger table
     const chairOffsets = [
-        [-gridUnit * 0.65, 0, -gridUnit * 0.75, 0],
-        [0, 0, -gridUnit * 0.75, 0],
-        [gridUnit * 0.65, 0, -gridUnit * 0.75, 0],
-        [-gridUnit * 0.65, 0, gridUnit * 0.75, Math.PI],
-        [0, 0, gridUnit * 0.75, Math.PI],
-        [gridUnit * 0.65, 0, gridUnit * 0.75, Math.PI]
+        [-gridUnit * 0.65, 0, -gridUnit * 0.80, 0],
+        [0,                0, -gridUnit * 0.80, 0],
+        [ gridUnit * 0.65, 0, -gridUnit * 0.80, 0],
+        [-gridUnit * 0.65, 0,  gridUnit * 0.80, Math.PI],
+        [0,                0,  gridUnit * 0.80, Math.PI],
+        [ gridUnit * 0.65, 0,  gridUnit * 0.80, Math.PI],
     ];
     chairOffsets.forEach(([cx, cy, cz, rotY]) => {
         const chair = createOfficeChair({ gridUnit: gridUnit, colors: colors, addBox });

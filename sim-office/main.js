@@ -649,12 +649,12 @@ function initializeWorld() {
                     if (isWalkable(nx, nz) && !cafeSpots.some(p => p.gridX === nx && p.gridZ === nz)) cafeSpots.push({gridX: nx, gridZ: nz, type: tileType, targetGridX: x, targetGridZ: z, reservedBy: null});
                 }
             } else if (tileType === 9) {
-                addMeetingSeatSpot(x, z, x - 1, z - 1, -GRID_UNIT*0.65, -GRID_UNIT*0.75, 0);
-                addMeetingSeatSpot(x, z, x, z - 1, 0, -GRID_UNIT*0.75, 0);
-                addMeetingSeatSpot(x, z, x + 1, z - 1, GRID_UNIT*0.65, -GRID_UNIT*0.75, 0);
-                addMeetingSeatSpot(x, z, x - 1, z + 1, -GRID_UNIT*0.65, GRID_UNIT*0.75, Math.PI);
-                addMeetingSeatSpot(x, z, x, z + 1, 0, GRID_UNIT*0.75, Math.PI);
-                addMeetingSeatSpot(x, z, x + 1, z + 1, GRID_UNIT*0.65, GRID_UNIT*0.75, Math.PI);
+                addMeetingSeatSpot(x, z, x - 1, z - 1, -GRID_UNIT*0.65, -GRID_UNIT*0.80, 0);
+                addMeetingSeatSpot(x, z, x, z - 1, 0, -GRID_UNIT*0.80, 0);
+                addMeetingSeatSpot(x, z, x + 1, z - 1, GRID_UNIT*0.65, -GRID_UNIT*0.80, 0);
+                addMeetingSeatSpot(x, z, x - 1, z + 1, -GRID_UNIT*0.65, GRID_UNIT*0.80, Math.PI);
+                addMeetingSeatSpot(x, z, x, z + 1, 0, GRID_UNIT*0.80, Math.PI);
+                addMeetingSeatSpot(x, z, x + 1, z + 1, GRID_UNIT*0.65, GRID_UNIT*0.80, Math.PI);
             } else if (tileType === 11) {
                 bathroomSpotsM.push({gridX: x, gridZ: z});
             } else if (tileType === 12) {
@@ -1361,8 +1361,9 @@ function renderLoop(timestamp) {
                         w.animParts.armR.rotation.x = -Math.PI / 6;
                     }
                 } else {
-                    const chairZOffset = GRID_UNIT * 0.35;
-                    w.meshGroup.position.set(deskWorldX, -0.1, deskWorldZ + chairZOffset);
+                    // Chair seat = gridUnit*0.45 = 0.9; NPC hip = 0.9 → group y = 0
+                    const chairZOffset = GRID_UNIT * 0.38;
+                    w.meshGroup.position.set(deskWorldX, 0, deskWorldZ + chairZOffset);
                     w.meshGroup.rotation.y = Math.PI; // Face the desk
 
                     w.animParts.legL.rotation.x = -Math.PI / 2;
@@ -1380,7 +1381,8 @@ function renderLoop(timestamp) {
             } else if (isMeeting) {
                 const targetProp = w.targetMeetingSpot;
                 const [propX, , propZ] = gridToWorld(targetProp.targetGridX, targetProp.targetGridZ);
-                w.meshGroup.position.set(propX + targetProp.seatOffsetX, -0.1, propZ + targetProp.seatOffsetZ);
+                // Chair seat = gridUnit*0.45 = 0.9; NPC hip = 0.9 → group y = 0
+                w.meshGroup.position.set(propX + targetProp.seatOffsetX, 0, propZ + targetProp.seatOffsetZ);
                 w.meshGroup.rotation.y = targetProp.rotationY;
                 const explainAnim = Math.sin(timestamp * 0.004);
                 w.animParts.armL.rotation.x = -0.4 + explainAnim * 0.2;
@@ -1399,7 +1401,8 @@ function renderLoop(timestamp) {
                 const [wX, , wZ] = gridToWorld(w.currentGrid[0], w.currentGrid[1]);
                 
                 if (targetProp.type === 5 || targetProp.type === 7) { // Sofa ou Pufe
-                    w.meshGroup.position.set(propX, -0.3, propZ); // senta
+                    // Sofa seat top = 0.45; NPC hip pivot = 0.9 → group y = 0.45 - 0.9 = -0.45
+                    w.meshGroup.position.set(propX, -0.45, propZ); // senta no sofa
                     w.meshGroup.rotation.y = Math.atan2(wX - propX, wZ - propZ); // olha pra onde veio
                     w.animParts.legL.rotation.x = -Math.PI / 2;
                     w.animParts.legR.rotation.x = -Math.PI / 2;
