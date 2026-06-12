@@ -67,6 +67,16 @@ let simulationTime = 8.0; // Começa às 8:00 (início do expediente)
 let activeEvent = null;
 let eventTimer = 0;
 
+// --- Economy State ---
+let companyFunds = 10000;
+let companyLevel = 1;
+let totalRevenue = 0;
+let dailyCost = 0;
+let tasksCompleted = 0;
+let gameSpeed = 1;
+let companyLevelThresholds = [0, 5000, 15000, 30000, 60000];
+let companyLevelNames = ["", "Garagem", "Startup", "Agência", "Corporação", "Império"];
+
 const MEETING_CHANCE = 0.12;
 const MEETING_DURATION_MIN = 7000;
 const MEETING_DURATION_MAX = 14000;
@@ -1207,7 +1217,12 @@ function updateWorkers(deltaTimeSeconds) {
             } else if (worker.stateTimer <= 0) {
                 switch (worker.state) {
                     case 'working':
-                        if (worker.currentTask) { worker.currentTask.status = 'completed'; worker.currentTask = null; }
+                        if (worker.currentTask) { 
+                            worker.currentTask.status = 'completed'; 
+                            worker.currentTask = null; 
+                            tasksCompleted++;
+                            totalRevenue += BASE_TASK_REWARD * (0.8 + Math.random()*0.4);
+                        }
                         worker.taskProgress = 0; worker.state = 'idle'; worker.stateTimer = 1500 + Math.random()*3000;
                         decidedAction = true; needsPath = false; break;
                     case 'on_break':
@@ -1485,10 +1500,158 @@ function renderLoop(timestamp) {
         }
     });
 
+    // --- Economy HUD updates ---
+    dailyCost = RENT_COST_PER_DAY + (workers.length * BASE_WORKER_COST);
+    document.getElementById('revenueVal').textContent = 'R$ ' + totalRevenue.toFixed(0);
+    document.getElementById('costVal').textContent = 'R$ ' + dailyCost.toFixed(0);
+    
+    // Level progress
+    if (companyLevel < companyLevelThresholds.length - 1) {
+        let currentThresh = companyLevelThresholds[companyLevel];
+        let nextThresh = companyLevelThresholds[companyLevel + 1];
+        let pct = Math.max(0, Math.min(100, ((totalRevenue - currentThresh) / (nextThresh - currentThresh)) * 100));
+        document.getElementById('levelPct').textContent = pct.toFixed(0) + '%';
+        document.getElementById('levelBar').style.width = pct + '%';
+        
+        if (totalRevenue >= nextThresh) {
+            companyLevel++;
+            document.getElementById('levelNum').textContent = companyLevel;
+            document.getElementById('companyLevel').textContent = companyLevelNames[companyLevel];
+            showToast('Nível da Empresa subiu para: ' + companyLevelNames[companyLevel] + '!');
+        }
+    } else {
+        document.getElementById('levelPct').textContent = 'MAX';
+        document.getElementById('levelBar').style.width = '100%';
+    }
+    
+    // Production & Mood bars
+    let prodVal = workers.length > 0 ? (wWorking / workers.length) * 100 : 0;
+    document.getElementById('prodPct').textContent = prodVal.toFixed(0) + '%';
+    document.getElementById('prodBar').style.width = prodVal + '%';
+    
+    document.getElementById('moodPct').textContent = (avgMood * 100).toFixed(0) + '%';
+    document.getElementById('taskDoneVal').textContent = tasksCompleted;
+
     renderer.render(scene, camera);
     requestAnimationFrame(renderLoop);
+}
+
+// --- Action & Event Handlers ---
+window.logEvent = function(msg, type='info') {
+    const logEl = document.getElementById('eventLog');
+    if(!logEl) return;
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    const h = Math.floor(simulationTime).toString().padStart(2, '0');
+    const m = Math.floor((simulationTime % 1) * 60).toString().padStart(2, '0');
+    entry.innerHTML = `<span class="log-time">[${h}:${m}]</span> ${msg}`;
+    logEl.prepend(entry);
+    if(logEl.children.length > 20) logEl.lastChild.remove();
+}
+
+window.showToast = function(msg) {
+    const toast = document.getElementById('toast');
+    if(!toast) return;
+    toast.textContent = msg;
+    toast.classList.remove('hidden');
+    setTimeout(() => toast.classList.add('hidden'), 3000);
+}
+
+window.managerAction = function(actionType) {
+    switch(actionType) {
+        case 'pizza':
+            if (totalRevenue < 300) { showToast('Receita insuficiente!'); return; }
+            totalRevenue -= 300;
+            workers.forEach(w => w.mood = Math.min(1.0, w.mood + 0.3));
+            logEvent('Você comprou Pizza para a equipe!', 'good');
+            showToast('Pizza pedida! Humor +30%');
+            break;
+            
+        case 'coffee':
+            if (totalRevenue < 150) { showToast('Receita insuficiente!'); return; }
+            totalRevenue -= 150;
+            workers.forEach(w => w.needs.break = Math.max(0, w.needs.break - 0.5));
+            logEvent('Café especial liberado. Menos pausas!', 'good');
+            showToast('Café especial! Menos vontade de pausa.');
+            break;
+
+        case 'happy_hour':
+            if (totalRevenue < 800) { showToast('Receita insuficiente!'); return; }
+            if (simulationTime < 16) { showToast('Muito cedo para Happy Hour!'); return; }
+            totalRevenue -= 800;
+            workers.forEach(w => {
+                if(w.state !== 'left_office' && w.state !== 'moving_to_exit') {
+                    const pool = [...loungeSpots, ...cafeSpots];
+                    const spot = pickReservedSpot(w, pool);
+                    if(spot) {
+                        w.targetBreakSpot = spot;
+                        w.state = 'moving_to_break';
+                        const pth = findPath(w.currentGrid[0], w.currentGrid[1], spot.gridX, spot.gridZ);
+                        if (pth && pth.length > 1) {
+                            w.currentPath = pth; w.pathIndex = 1;
+                        }
+                    }
+                }
+                w.mood = 1.0;
+            });
+            logEvent('Happy Hour iniciado!', 'good');
+            break;
+
+        case 'deadline':
+            workers.forEach(w => {
+                w.speed *= 1.5;
+                w.mood -= 0.4;
+            });
+            logEvent('DEADLINE! Velocidade alta, humor caiu.', 'bad');
+            showToast('Modo Deadline ativado!');
+            setTimeout(() => {
+                workers.forEach(w => w.speed /= 1.5);
+                logEvent('O deadline passou. Ritmo normalizado.', 'info');
+            }, 30000); // 30 sec real time
+            break;
+
+        case 'all_hands':
+            workers.forEach(w => {
+                if(w.state !== 'left_office' && w.state !== 'moving_to_exit') {
+                    const spot = pickReservedSpot(w, meetingSpots);
+                    if(spot) {
+                        w.targetMeetingSpot = spot;
+                        w.state = 'moving_to_meeting';
+                        const pth = findPath(w.currentGrid[0], w.currentGrid[1], spot.gridX, spot.gridZ);
+                        if (pth && pth.length > 1) {
+                            w.currentPath = pth; w.pathIndex = 1;
+                        }
+                    }
+                }
+            });
+            logEvent('Reunião All-Hands chamada.', 'info');
+            break;
+            
+        case 'fire_drill':
+            activeEvent = 'fire_drill';
+            eventTimer = 15000;
+            const alertEl = document.getElementById('eventAlert');
+            if (alertEl) {
+                alertEl.classList.remove('hidden');
+                document.getElementById('eventIcon').textContent = '🚨';
+                document.getElementById('eventText').textContent = 'Simulação de Incêndio!';
+                document.getElementById('eventSubText').textContent = 'Todos devem evacuar o prédio';
+                alertEl.style.borderColor = '#ff5252';
+            }
+            logEvent('Simulação de incêndio iniciada.', 'bad');
+            break;
+            
+        case 'hire':
+            showToast('RH ocupado no momento. Implementação em breve!');
+            break;
+            
+        default:
+            showToast('Ação não implementada ainda.');
+            break;
+    }
 }
 
 // Iniciar
 initializeWorld();
 requestAnimationFrame(renderLoop);
+
