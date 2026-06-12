@@ -1607,7 +1607,21 @@ window.managerAction = function(actionType) {
         case 'pizza':
             if (totalRevenue < 300) { showToast('Receita insuficiente!'); return; }
             totalRevenue -= 300;
-            workers.forEach(w => w.mood = Math.min(1.0, w.mood + 0.3));
+            workers.forEach(w => {
+                if(w.state !== 'left_office' && w.state !== 'moving_to_exit') {
+                    const spot = pickReservedSpot(w, cafeSpots);
+                    if(spot) {
+                        w.targetBreakSpot = spot;
+                        w.state = 'moving_to_break';
+                        const pth = findPath(w.currentGrid[0], w.currentGrid[1], spot.gridX, spot.gridZ);
+                        if (pth && pth.length > 1) {
+                            w.currentPath = pth; w.pathIndex = 1;
+                        }
+                    }
+                    showBubble(w, '🍕', 5000);
+                }
+                w.mood = Math.min(1.0, w.mood + 0.3);
+            });
             logEvent('Você comprou Pizza para a equipe!', 'good');
             showToast('Pizza pedida! Humor +30%');
             break;
