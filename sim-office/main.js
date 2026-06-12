@@ -19,7 +19,7 @@ import {
     WALL_HEIGHT_FACTOR,
     WALL_THICKNESS,
     WORK_TIME_BEFORE_BATHROOM_CHANCE,
-    WORK_TIME_BEFORE_BREAK_CHANCE
+    WORK_TIME_BEFORE_BREAK_CHANCE,
     BASE_TASK_REWARD,
     BASE_WORKER_COST,
     RENT_COST_PER_DAY
@@ -171,8 +171,8 @@ window.addEventListener('mousemove', (event) => {
                 const worker = workers.find(w => w.id === rootGroup.userData.workerId);
                 if (worker && worker.identity) {
                     tooltipEl.classList.remove('hidden');
-                    ttName.textContent = worker.identity.name;
                     ttRole.textContent = worker.identity.role;
+                    ttName.innerHTML = `${worker.identity.name} <span style="font-size:0.7em;opacity:0.7">(${worker.personality})</span>`;
                     ttRole.style.backgroundColor = worker.identity.roleColor;
                     
                     let emoji = '😐';
@@ -646,7 +646,7 @@ function initializeWorld() {
                     const [targetWorldX, , targetWorldZ] = gridToWorld(x, targetGridZ);
                     deskSpots.push({ pos: [targetWorldX, 0, targetWorldZ], gridX: x, gridZ: targetGridZ, deskGridActual: [x, z], workerId: null, isStanding: tileType === 20 });
                 }
-            } else if (tileType === 5 || tileType === 7 || tileType === 'T' || tileType === 4 || tileType === 14 || tileType === 15 || tileType === 16 || tileType === 17 || tileType === 22) {
+            } else if (tileType === 5 || tileType === 7 || tileType === 'T' || tileType === 4 || tileType === 13 || tileType === 14 || tileType === 15 || tileType === 16 || tileType === 17 || tileType === 22) {
                 const checkNeighbors = [{dx:0,dz:1},{dx:0,dz:-1},{dx:1,dz:0},{dx:-1,dz:0}];
                 for (const n of checkNeighbors) {
                     const nx = x + n.dx, nz = z + n.dz;
@@ -796,6 +796,7 @@ function initializeWorld() {
             stateTimer: 1000 + Math.random() * 5000,
             needs: { bathroom: Math.random()*0.5, break: Math.random()*0.5 },
             mood: 0.5 + Math.random() * 0.5,
+            personality: ['introvert', 'extrovert', 'slacker', 'overachiever', 'normal'][Math.floor(Math.random() * 5)],
             chatTarget: null,
             timeSinceBreak: Math.random() * WORK_TIME_BEFORE_BREAK_CHANCE,
             timeSinceBathroom: Math.random() * WORK_TIME_BEFORE_BATHROOM_CHANCE,
@@ -1024,9 +1025,15 @@ function updateWorkers(deltaTimeSeconds) {
         }
 
         if (worker.state === 'working' && worker.currentTask) {
-            const speedMultiplier = 0.5 + worker.mood;
+            let speedMultiplier = 0.5 + worker.mood;
+            if (worker.personality === 'slacker') speedMultiplier *= 0.6;
+            if (worker.personality === 'overachiever') speedMultiplier *= 1.8;
             worker.taskProgress -= dtMs * speedMultiplier;
             worker.stateTimer = worker.taskProgress;
+            
+            if (worker.personality === 'overachiever' && worker.needs.break > 0.6) {
+                worker.mood = Math.max(0, worker.mood - 0.0005 * dtMs); // Burnout faster
+            }
         }
 
         if (worker.state.startsWith('moving_')) {
@@ -1099,7 +1106,11 @@ function updateWorkers(deltaTimeSeconds) {
                 let dirX = dist > 0 ? dx / dist : 0;
                 let dirZ = dist > 0 ? dz / dist : 0;
 
-                if ((worker.state === 'moving_to_wander' || worker.state === 'moving_to_break') && !worker.chatTarget && Math.random() < 0.02) {
+                let chatChance = 0.02;
+                if (worker.personality === 'introvert') chatChance = 0.002;
+                if (worker.personality === 'extrovert') chatChance = 0.06;
+
+                if ((worker.state === 'moving_to_wander' || worker.state === 'moving_to_break') && !worker.chatTarget && Math.random() < chatChance) {
                     for (const other of workers) {
                         if (other.id !== worker.id && !other.chatTarget && !other.isInsideBathroom && 
                             (other.state === 'moving_to_wander' || other.state === 'idle' || other.state === 'moving_to_break')) {
@@ -1171,7 +1182,8 @@ function updateWorkers(deltaTimeSeconds) {
                     }
                 }
                 if (!decidedAction && worker.needs.break > NEED_THRESHOLD) {
-                    const chance = worker.needs.break > 0.9 ? 1.0 : (CHANCE_TO_ACT_ON_NEED + (worker.needs.break - NEED_THRESHOLD) * 2);
+                    let chance = worker.needs.break > 0.9 ? 1.0 : (CHANCE_TO_ACT_ON_NEED + (worker.needs.break - NEED_THRESHOLD) * 2);
+                    if (worker.personality === 'slacker') chance *= 2.0;
                     if (Math.random() < chance) {
                         // Filtra apenas spots acessíveis da mesma zona do worker
                         const [wx, wz] = worker.currentGrid;
@@ -1237,7 +1249,7 @@ function updateWorkers(deltaTimeSeconds) {
                             worker.chatTarget.chatTarget = null;
                             worker.chatTarget = null;
                         }
-                        worker.mood = Math.min(1.0, worker.mood + 0.2);
+                        worker.mood = Math.min(1.0, worker.mood + (worker.personality === 'extrovert' ? 0.4 : 0.2));
                         decidedAction = true; needsPath = false; break;
                 }
             }
@@ -1455,6 +1467,39 @@ function renderLoop(timestamp) {
                     w.animParts.legL.rotation.x = 0;
                     w.animParts.legR.rotation.x = 0;
                     if (!w.bubbleSprite.visible && Math.random() < 0.005) showBubble(w, '📞', 3000);
+                } else if (targetProp.type === 14) { // Impressora
+                    const visX = w.pos[0] + (propX - w.pos[0]) * 0.75;
+                    const visZ = w.pos[2] + (propZ - w.pos[2]) * 0.75;
+                    w.meshGroup.position.set(visX, 0, visZ);
+                    w.meshGroup.rotation.y = Math.atan2(propX - w.pos[0], propZ - w.pos[2]);
+                    const waitAnim = Math.sin(timestamp * 0.008);
+                    w.animParts.armR.rotation.x = -Math.PI / 4 + waitAnim * 0.1;
+                    w.animParts.armL.rotation.x = -Math.PI / 4 - waitAnim * 0.1;
+                    w.animParts.legL.rotation.x = 0;
+                    w.animParts.legR.rotation.x = 0;
+                    if (!w.bubbleSprite.visible && Math.random() < 0.005) showBubble(w, '📄', 2000);
+                } else if (targetProp.type === 15) { // Bebedouro
+                    const visX = w.pos[0] + (propX - w.pos[0]) * 0.75;
+                    const visZ = w.pos[2] + (propZ - w.pos[2]) * 0.75;
+                    w.meshGroup.position.set(visX, 0, visZ);
+                    w.meshGroup.rotation.y = Math.atan2(propX - w.pos[0], propZ - w.pos[2]);
+                    const drinkAnim = Math.abs(Math.sin(timestamp * 0.004));
+                    w.animParts.armR.rotation.x = -Math.PI / 1.2 * drinkAnim; // copo d'água
+                    w.animParts.armL.rotation.x = -0.1;
+                    w.animParts.legL.rotation.x = 0;
+                    w.animParts.legR.rotation.x = 0;
+                } else if (targetProp.type === 13) { // Whiteboard
+                    const visX = w.pos[0] + (propX - w.pos[0]) * 0.75;
+                    const visZ = w.pos[2] + (propZ - w.pos[2]) * 0.75;
+                    w.meshGroup.position.set(visX, 0, visZ);
+                    w.meshGroup.rotation.y = Math.atan2(propX - w.pos[0], propZ - w.pos[2]);
+                    const drawAnim = Math.sin(timestamp * 0.012);
+                    w.animParts.armR.rotation.x = -Math.PI / 2 + drawAnim * 0.2; // desenhando
+                    w.animParts.armR.rotation.z = drawAnim * 0.2; // movendo lateralmente
+                    w.animParts.armL.rotation.x = -0.2;
+                    w.animParts.legL.rotation.x = 0;
+                    w.animParts.legR.rotation.x = 0;
+                    if (!w.bubbleSprite.visible && Math.random() < 0.005) showBubble(w, '💡', 3000);
                 } else if (targetProp.type === 23) { // Ping Pong
                     w.meshGroup.position.set(w.pos[0], 0, w.pos[2]);
                     w.meshGroup.rotation.y = targetProp.side === -1 ? Math.PI / 2 : -Math.PI / 2;
