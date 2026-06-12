@@ -1629,7 +1629,21 @@ window.managerAction = function(actionType) {
         case 'coffee':
             if (totalRevenue < 150) { showToast('Receita insuficiente!'); return; }
             totalRevenue -= 150;
-            workers.forEach(w => w.needs.break = Math.max(0, w.needs.break - 0.5));
+            workers.forEach(w => {
+                w.needs.break = Math.max(0, w.needs.break - 0.5);
+                if(w.state !== 'left_office' && w.state !== 'moving_to_exit') {
+                    const spot = pickReservedSpot(w, cafeSpots);
+                    if(spot) {
+                        w.targetBreakSpot = spot;
+                        w.state = 'moving_to_break';
+                        const pth = findPath(w.currentGrid[0], w.currentGrid[1], spot.gridX, spot.gridZ);
+                        if (pth && pth.length > 1) {
+                            w.currentPath = pth; w.pathIndex = 1;
+                        }
+                    }
+                    showBubble(w, '☕', 4000);
+                }
+            });
             logEvent('Café especial liberado. Menos pausas!', 'good');
             showToast('Café especial! Menos vontade de pausa.');
             break;
@@ -1650,6 +1664,7 @@ window.managerAction = function(actionType) {
                             w.currentPath = pth; w.pathIndex = 1;
                         }
                     }
+                    showBubble(w, '🎉', 5000);
                 }
                 w.mood = 1.0;
             });
@@ -1660,6 +1675,7 @@ window.managerAction = function(actionType) {
             workers.forEach(w => {
                 w.speed *= 1.5;
                 w.mood -= 0.4;
+                showBubble(w, '🔥', 4000);
             });
             logEvent('DEADLINE! Velocidade alta, humor caiu.', 'bad');
             showToast('Modo Deadline ativado!');
@@ -1681,6 +1697,7 @@ window.managerAction = function(actionType) {
                             w.currentPath = pth; w.pathIndex = 1;
                         }
                     }
+                    showBubble(w, '📣', 4000);
                 }
             });
             logEvent('Reunião All-Hands chamada.', 'info');
@@ -1697,6 +1714,7 @@ window.managerAction = function(actionType) {
                 document.getElementById('eventSubText').textContent = 'Todos devem evacuar o prédio';
                 alertEl.style.borderColor = '#ff5252';
             }
+            workers.forEach(w => showBubble(w, '🚨', 5000));
             logEvent('Simulação de incêndio iniciada.', 'bad');
             break;
             
