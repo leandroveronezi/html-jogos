@@ -35,14 +35,15 @@ export function createMeetingTable({ gridUnit, colors, addBox }) {
     addBox(0.12, 0.12, 0.12,  0.05, tableH + 0.1,   -0.25, 0x222222, meetingGroup); // phone
     addBox(0.22, 0.04, 0.16,  0.05, tableH + 0.065,  0.32, colors.meeting_accent, meetingGroup); // notepad
 
-    // Six chairs — spread further to clear the larger table
+    // Six chairs — rotations: chairs at -Z face +Z (Math.PI), chairs at +Z face -Z (0)
+    // Backrest is at local +Z, so rotation=Math.PI flips it away from the table on the -Z side
     const chairOffsets = [
-        [-gridUnit * 0.65, 0, -gridUnit * 0.80, 0],
-        [0,                0, -gridUnit * 0.80, 0],
-        [ gridUnit * 0.65, 0, -gridUnit * 0.80, 0],
-        [-gridUnit * 0.65, 0,  gridUnit * 0.80, Math.PI],
-        [0,                0,  gridUnit * 0.80, Math.PI],
-        [ gridUnit * 0.65, 0,  gridUnit * 0.80, Math.PI],
+        [-gridUnit * 0.65, 0, -gridUnit * 0.85, Math.PI],
+        [0,                0, -gridUnit * 0.85, Math.PI],
+        [ gridUnit * 0.65, 0, -gridUnit * 0.85, Math.PI],
+        [-gridUnit * 0.65, 0,  gridUnit * 0.85, 0],
+        [0,                0,  gridUnit * 0.85, 0],
+        [ gridUnit * 0.65, 0,  gridUnit * 0.85, 0],
     ];
     chairOffsets.forEach(([cx, cy, cz, rotY]) => {
         const chair = createOfficeChair({ gridUnit: gridUnit, colors: colors, addBox });

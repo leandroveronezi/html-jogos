@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador de Escritório v8.5 (Three.js, HUD Expandido)</title>
+    <title>Sim Office — Gerenciador de Escritório</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     
     <!-- Import Map para Three.js -->
@@ -17,42 +19,185 @@
     </script>
 </head>
 <body>
+
+    <!-- ===== HUD ESQUERDO — Stats & Economia ===== -->
     <div id="hud-container">
         <div class="hud-header">
-            <h2>🏢 Sim Office</h2>
-            <div id="timeOfDayVal" class="time-display">08:00 (Manhã)</div>
-        </div>
-        <div class="hud-stats">
-            <div class="stat-card">
-                <div class="stat-icon">📋</div>
-                <div class="stat-info">
-                    <span class="stat-label">Tarefas</span>
-                    <span class="stat-value"><span id="taskActiveVal">0</span> / <span id="taskPendingVal">0</span></span>
+            <div class="hud-title">
+                <span class="company-icon">🏢</span>
+                <div>
+                    <div class="company-name">Sim Office</div>
+                    <div id="companyLevel" class="company-level">Startup</div>
                 </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-icon">😊</div>
-                <div class="stat-info">
-                    <span class="stat-label">Humor Geral</span>
-                    <div class="progress-bar-bg"><div class="progress-bar-fill" id="moodBar"></div></div>
+            <div id="timeOfDayVal" class="time-display">08:00</div>
+        </div>
+
+        <!-- Economia -->
+        <div class="hud-section">
+            <div class="economy-row">
+                <div class="economy-item green">
+                    <span class="eco-icon">💰</span>
+                    <div>
+                        <div class="eco-label">Receita</div>
+                        <div class="eco-value" id="revenueVal">R$ 0</div>
+                    </div>
+                </div>
+                <div class="economy-item red">
+                    <span class="eco-icon">💸</span>
+                    <div>
+                        <div class="eco-label">Custo/dia</div>
+                        <div class="eco-value" id="costVal">R$ 0</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Barra de nível da empresa -->
+            <div class="level-bar-wrap">
+                <div class="level-bar-label">
+                    <span>Nível <span id="levelNum">1</span></span>
+                    <span id="levelPct">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill level-fill" id="levelBar"></div>
                 </div>
             </div>
         </div>
-        <div class="hud-details">
-            <div class="detail-row"><span class="dot working"></span> Trabalhando: <span id="countWorking">0</span></div>
-            <div class="detail-row"><span class="dot break"></span> Pausa/Café: <span id="countBreak">0</span></div>
-            <div class="detail-row"><span class="dot meeting"></span> Em Reunião: <span id="countMeeting">0</span></div>
-            <div class="detail-row"><span class="dot bathroom"></span> Banheiro: <span id="countBathroom">0</span></div>
+
+        <!-- Workers -->
+        <div class="hud-section">
+            <div class="hud-stats">
+                <div class="stat-card">
+                    <div class="stat-icon">😊</div>
+                    <div class="stat-info">
+                        <span class="stat-label">Moral Geral</span>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" id="moodBar"></div>
+                        </div>
+                    </div>
+                    <span class="stat-pct" id="moodPct">50%</span>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⚡</div>
+                    <div class="stat-info">
+                        <span class="stat-label">Produtividade</span>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill prod-fill" id="prodBar"></div>
+                        </div>
+                    </div>
+                    <span class="stat-pct" id="prodPct">0%</span>
+                </div>
+            </div>
+            <div class="hud-details">
+                <div class="detail-row"><span class="dot working"></span>Trabalhando<span id="countWorking">0</span></div>
+                <div class="detail-row"><span class="dot break"></span>Pausa/Café<span id="countBreak">0</span></div>
+                <div class="detail-row"><span class="dot meeting"></span>Reunião<span id="countMeeting">0</span></div>
+                <div class="detail-row"><span class="dot bathroom"></span>Banheiro<span id="countBathroom">0</span></div>
+            </div>
+        </div>
+
+        <!-- Tarefas -->
+        <div class="hud-section tasks-row">
+            <div class="task-badge pending">
+                <span>📋</span>
+                <div><div class="task-num" id="taskPendingVal">0</div><div class="task-lbl">Pendentes</div></div>
+            </div>
+            <div class="task-badge active">
+                <span>⚙️</span>
+                <div><div class="task-num" id="taskActiveVal">0</div><div class="task-lbl">Em andamento</div></div>
+            </div>
+            <div class="task-badge done">
+                <span>✅</span>
+                <div><div class="task-num" id="taskDoneVal">0</div><div class="task-lbl">Concluídas</div></div>
+            </div>
         </div>
     </div>
 
-    <!-- Alerta de Evento -->
+    <!-- ===== PAINEL DE AÇÕES DO GERENTE (direita) ===== -->
+    <div id="action-panel">
+        <div class="action-header">
+            <span>🎮</span> Controles do Gerente
+        </div>
+
+        <div class="action-section-title">Bem-estar</div>
+        <div class="action-grid">
+            <button class="action-btn" id="btnPizza" onclick="managerAction('pizza')">
+                <span class="btn-icon">🍕</span>
+                <span class="btn-label">Pizza</span>
+                <span class="btn-cost">R$300</span>
+            </button>
+            <button class="action-btn" id="btnCoffee" onclick="managerAction('coffee')">
+                <span class="btn-icon">☕</span>
+                <span class="btn-label">Café Especial</span>
+                <span class="btn-cost">R$150</span>
+            </button>
+            <button class="action-btn" id="btnHappyHour" onclick="managerAction('happy_hour')">
+                <span class="btn-icon">🎉</span>
+                <span class="btn-label">Happy Hour</span>
+                <span class="btn-cost">R$800</span>
+            </button>
+            <button class="action-btn" id="btnVacation" onclick="managerAction('vacation')">
+                <span class="btn-icon">🏖️</span>
+                <span class="btn-label">Day Off</span>
+                <span class="btn-cost">Moral+</span>
+            </button>
+        </div>
+
+        <div class="action-section-title">Produtividade</div>
+        <div class="action-grid">
+            <button class="action-btn" id="btnMeeting" onclick="managerAction('all_hands')">
+                <span class="btn-icon">📣</span>
+                <span class="btn-label">All Hands</span>
+                <span class="btn-cost">Reunião Geral</span>
+            </button>
+            <button class="action-btn" id="btnDeadline" onclick="managerAction('deadline')">
+                <span class="btn-icon">🔥</span>
+                <span class="btn-label">Deadline!</span>
+                <span class="btn-cost">Prod+/Moral-</span>
+            </button>
+            <button class="action-btn upgrade" id="btnEquip" onclick="managerAction('equipment')">
+                <span class="btn-icon">🖥️</span>
+                <span class="btn-label">Novo Equip.</span>
+                <span class="btn-cost">R$1.200</span>
+            </button>
+            <button class="action-btn upgrade" id="btnHire" onclick="managerAction('hire')">
+                <span class="btn-icon">👤</span>
+                <span class="btn-label">Contratar</span>
+                <span class="btn-cost">R$500/dia</span>
+            </button>
+        </div>
+
+        <div class="action-section-title">Emergências</div>
+        <div class="action-grid">
+            <button class="action-btn danger" id="btnFire" onclick="managerAction('fire_drill')">
+                <span class="btn-icon">🚨</span>
+                <span class="btn-label">Simulacro</span>
+                <span class="btn-cost">Evacuação</span>
+            </button>
+            <button class="action-btn danger" id="btnFlex" onclick="managerAction('flex_hours')">
+                <span class="btn-icon">⏰</span>
+                <span class="btn-label">Hora Flex</span>
+                <span class="btn-cost">Todos Descansam</span>
+            </button>
+        </div>
+
+        <!-- Log de eventos -->
+        <div class="action-section-title">📋 Log de Eventos</div>
+        <div id="eventLog" class="event-log"></div>
+    </div>
+
+    <!-- ===== Alerta de Evento (centro) ===== -->
     <div id="eventAlert" class="event-alert hidden">
         <span id="eventIcon">🚨</span>
-        <span id="eventText">Simulação de Incêndio!</span>
+        <div>
+            <div id="eventText" style="font-weight:700">Simulação de Incêndio!</div>
+            <div id="eventSubText" style="font-size:0.8em;opacity:0.8"></div>
+        </div>
     </div>
 
-    <!-- Tooltip do NPC -->
+    <!-- ===== Toast de feedback ===== -->
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- ===== Tooltip do NPC ===== -->
     <div id="npcTooltip" class="tooltip hidden">
         <div class="tooltip-header">
             <h3 id="ttName">Nome</h3>
@@ -64,9 +209,8 @@
         </div>
     </div>
 
-    <!-- Three.js vai criar o canvas automaticamente, mas podemos usar um fixo se preferir. -->
     <canvas id="webglCanvas"></canvas>
-    <div id="info">Use o botão esquerdo para girar, direito para mover. Use o scroll para zoom.<br>Passe o mouse sobre os NPCs para ver detalhes.</div>
+    <div id="info">Clique e arraste para girar · Scroll para zoom · Botão direito para mover · Passe o mouse nos NPCs para detalhes</div>
 
     <script type="module" src="main.js"></script>
 </body>
