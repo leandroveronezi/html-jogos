@@ -20,6 +20,9 @@ import {
     WALL_THICKNESS,
     WORK_TIME_BEFORE_BATHROOM_CHANCE,
     WORK_TIME_BEFORE_BREAK_CHANCE
+    BASE_TASK_REWARD,
+    BASE_WORKER_COST,
+    RENT_COST_PER_DAY
 } from './config.js';
 import { createSofa } from './furniture/sofa.js';
 import { createPlant } from './furniture/plant.js';
