@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador de Escritório v8.0 (Three.js, 3D Realista)</title>
+    <title>Simulador de Escritório v8.5 (Three.js, HUD Expandido)</title>
     <link rel="stylesheet" href="style.css">
     
     <!-- Import Map para Three.js -->
@@ -17,24 +17,56 @@
     </script>
 </head>
 <body>
-    <div id="uiContainer">
-        <div class="stat">
-            <span class="stat-label">Tarefas Pendentes:</span>
-            <span class="stat-value" id="taskPendingVal">0</span>
+    <div id="hud-container">
+        <div class="hud-header">
+            <h2>🏢 Sim Office</h2>
+            <div id="timeOfDayVal" class="time-display">08:00 (Manhã)</div>
         </div>
-        <div class="stat">
-            <span class="stat-label">Tarefas Ativas:</span>
-            <span class="stat-value" id="taskActiveVal">0</span>
+        <div class="hud-stats">
+            <div class="stat-card">
+                <div class="stat-icon">📋</div>
+                <div class="stat-info">
+                    <span class="stat-label">Tarefas</span>
+                    <span class="stat-value"><span id="taskActiveVal">0</span> / <span id="taskPendingVal">0</span></span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">😊</div>
+                <div class="stat-info">
+                    <span class="stat-label">Humor Geral</span>
+                    <div class="progress-bar-bg"><div class="progress-bar-fill" id="moodBar"></div></div>
+                </div>
+            </div>
         </div>
-        <div class="stat">
-            <span class="stat-label">Dia:</span>
-            <span class="stat-value" id="timeOfDayVal">Manhã</span>
+        <div class="hud-details">
+            <div class="detail-row"><span class="dot working"></span> Trabalhando: <span id="countWorking">0</span></div>
+            <div class="detail-row"><span class="dot break"></span> Pausa/Café: <span id="countBreak">0</span></div>
+            <div class="detail-row"><span class="dot meeting"></span> Em Reunião: <span id="countMeeting">0</span></div>
+            <div class="detail-row"><span class="dot bathroom"></span> Banheiro: <span id="countBathroom">0</span></div>
         </div>
     </div>
-    <!-- Three.js vai criar o canvas automaticamente, mas podemos usar um fixo se preferir. 
-         Aqui vamos deixar ele criar e sobrescrever o css. -->
+
+    <!-- Alerta de Evento -->
+    <div id="eventAlert" class="event-alert hidden">
+        <span id="eventIcon">🚨</span>
+        <span id="eventText">Simulação de Incêndio!</span>
+    </div>
+
+    <!-- Tooltip do NPC -->
+    <div id="npcTooltip" class="tooltip hidden">
+        <div class="tooltip-header">
+            <h3 id="ttName">Nome</h3>
+            <span id="ttRole" class="role-badge">Cargo</span>
+        </div>
+        <div class="tooltip-body">
+            <div class="tt-stat"><span>Humor:</span> <span id="ttMood">😊</span></div>
+            <div class="tt-stat"><span>Ação:</span> <span id="ttState">Trabalhando</span></div>
+        </div>
+    </div>
+
+    <!-- Three.js vai criar o canvas automaticamente, mas podemos usar um fixo se preferir. -->
     <canvas id="webglCanvas"></canvas>
-    <div id="info">Use o botão esquerdo para girar, direito para mover. Use o scroll para zoom.</div>
+    <div id="info">Use o botão esquerdo para girar, direito para mover. Use o scroll para zoom.<br>Passe o mouse sobre os NPCs para ver detalhes.</div>
 
     <script type="module" src="main.js"></script>
 </body>

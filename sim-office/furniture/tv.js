@@ -4,15 +4,9 @@ export function createTV({ gridUnit, colors, addBox }) {
     const tvGroup = new THREE.Group();
     const tvDepth = 0.1;
     addBox(gridUnit * 1.5, gridUnit * 0.8, tvDepth, 0, gridUnit * 1.2, 0, colors.tv_bezel, tvGroup);
-    const tvScreenGeo = new THREE.PlaneGeometry(gridUnit * 1.4, gridUnit * 0.7);
-    const tvScreenMat = new THREE.MeshStandardMaterial({ 
-        color: 0x000000, 
-        emissive: 0x88ccff,
-        emissiveIntensity: 1.5 
-    });
-    const tvScreen = new THREE.Mesh(tvScreenGeo, tvScreenMat);
-    tvScreen.position.set(0, gridUnit * 1.2, tvDepth / 2 + 0.001);
-    tvGroup.add(tvScreen);
+    const tvScreen = addBox(gridUnit * 1.4, gridUnit * 0.7, 0.02, 0, gridUnit * 1.2, tvDepth / 2 + 0.01, 0x000000, tvGroup);
+    tvScreen.material.emissive.setHex(0x88ccff);
+    tvScreen.material.emissiveIntensity = 1.5;
     
     // Luz projetada pela TV apenas para frente
     const tvLight = new THREE.SpotLight(0x88ccff, 1.0, 5, Math.PI / 3, 0.5, 1);
@@ -28,7 +22,7 @@ export function createTV({ gridUnit, colors, addBox }) {
         // Cores vibrantes simulando código (VSCode Syntax Highlighting)
         const tvColors = [0x569cd6, 0x4ec9b0, 0xce9178, 0xdcdcaa, 0xc586c0, 0x9cdcfe];
         const randomTvColor = tvColors[Math.floor(Math.random() * tvColors.length)];
-        tvScreenMat.emissive.setHex(randomTvColor);
+        tvScreen.material.emissive.setHex(randomTvColor);
         tvLight.color.setHex(randomTvColor);
     }, 200 + Math.random() * 800);
     

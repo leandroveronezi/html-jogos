@@ -36,10 +36,14 @@ import { createWaterCooler } from './furniture/water_cooler.js';
 import { createVendingMachine } from './furniture/vending_machine.js';
 import { createArcade } from './furniture/arcade.js';
 import { createBigTree, createTrashCan } from './furniture/tree.js';
+import { createStandingDesk } from './furniture/standing_desk.js';
+import { createPhoneBooth } from './furniture/phone_booth.js';
+import { createPingPong } from './furniture/ping_pong.js';
 import { initWorkerGeometries, createWorker } from './furniture/worker.js';
 import { officeLayout } from './layout.js';
-import { isWalkable, findPath } from './utils/pathfinding.js';
+import { isWalkable, findPath, isSameZone } from './utils/pathfinding.js';
 import { gridToWorld, worldToGrid } from './utils/grid.js';
+import { generateIdentity } from './utils/names.js';
 
 const WORLD_DEPTH_UNITS = officeLayout.length;
 const WORLD_WIDTH_UNITS = officeLayout[0].length;
@@ -56,7 +60,9 @@ const bathroomSpotsM = [];
 const bathroomSpotsF = [];
 let workerIdCounter = 0;
 let stuckCheckTimer = STUCK_CHECK_INTERVAL;
-let simulationTime = 8; // Começa às 8h da manhã
+let simulationTime = 8.0; // Começa às 8:00 (início do expediente)
+let activeEvent = null;
+let eventTimer = 0;
 
 const MEETING_CHANCE = 0.12;
 const MEETING_DURATION_MIN = 7000;
@@ -118,9 +124,67 @@ window.addEventListener('resize', () => {
     camera.updateProjectionMatrix();
 });
 
+// --- Raycaster para Tooltip (Identidade NPC) ---
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const tooltipEl = document.getElementById('npcTooltip');
+const ttName = document.getElementById('ttName');
+const ttRole = document.getElementById('ttRole');
+const ttMood = document.getElementById('ttMood');
+const ttState = document.getElementById('ttState');
 
+window.addEventListener('mousemove', (event) => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    
+    if (tooltipEl) {
+        tooltipEl.style.left = `${event.clientX}px`;
+        tooltipEl.style.top = `${event.clientY - 10}px`;
+    }
 
-
+    if (mouse.x >= -1 && mouse.x <= 1 && mouse.y >= -1 && mouse.y <= 1) {
+        raycaster.setFromCamera(mouse, camera);
+        const workerMeshes = workers.map(w => w.meshGroup).filter(g => g.visible);
+        const intersects = raycaster.intersectObjects(workerMeshes, true);
+        
+        if (intersects.length > 0) {
+            let rootGroup = intersects[0].object;
+            while (rootGroup.parent && rootGroup.userData.workerId === undefined) {
+                rootGroup = rootGroup.parent;
+            }
+            
+            if (rootGroup.userData.workerId !== undefined) {
+                const worker = workers.find(w => w.id === rootGroup.userData.workerId);
+                if (worker && worker.identity) {
+                    tooltipEl.classList.remove('hidden');
+                    ttName.textContent = worker.identity.name;
+                    ttRole.textContent = worker.identity.role;
+                    ttRole.style.backgroundColor = worker.identity.roleColor;
+                    
+                    let emoji = '😐';
+                    if (worker.mood > 0.7) emoji = '😄';
+                    else if (worker.mood > 0.4) emoji = '🙂';
+                    else if (worker.mood > 0.2) emoji = '😩';
+                    else emoji = '🤬';
+                    ttMood.textContent = emoji;
+                    
+                    let st = 'Trabalhando';
+                    if (worker.state === 'idle') st = 'Ocioso';
+                    if (worker.state === 'on_break' || worker.state === 'moving_to_break') st = 'Pausa para café';
+                    if (worker.state === 'in_meeting' || worker.state === 'moving_to_meeting') st = 'Em Reunião';
+                    if (worker.state === 'using_bathroom' || worker.state === 'moving_to_bathroom') st = 'Banheiro';
+                    if (worker.state === 'chatting') st = 'Conversando';
+                    if (worker.state === 'moving_to_desk' || worker.state === 'moving_to_desk_for_work') st = 'Indo trabalhar';
+                    if (worker.state === 'moving_to_wander') st = 'Andando à toa';
+                    ttState.textContent = st;
+                    return;
+                }
+            }
+        }
+    }
+    if (tooltipEl) tooltipEl.classList.add('hidden');
+});
 
 // --- Corrigir NPCs Presos ---
 function correctStuckWorkers() {
@@ -172,6 +236,53 @@ function correctStuckWorkers() {
             }
         }
     });
+}
+
+function createSpeechBubble(parentGroup) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
+    
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(1.5, 1.5, 1.5);
+    sprite.position.y = 2.8; 
+    sprite.visible = false;
+    
+    sprite.userData = { canvas, ctx, tex, timer: 0 };
+    parentGroup.add(sprite);
+    return sprite;
+}
+
+function showBubble(worker, emoji, duration) {
+    if(!worker.bubbleSprite) return;
+    const { canvas, ctx, tex } = worker.bubbleSprite.userData;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.beginPath();
+    ctx.arc(64, 50, 40, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(64, 90);
+    ctx.lineTo(50, 110);
+    ctx.lineTo(75, 80);
+    ctx.fill();
+    
+    ctx.font = '40px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#000000';
+    ctx.fillText(emoji, 64, 54);
+    
+    tex.needsUpdate = true;
+    worker.bubbleSprite.visible = true;
+    worker.bubbleSprite.userData.timer = duration;
 }
 
 function generateTasks(count) {
@@ -303,8 +414,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { coffeeGroup.rotation.y = Math.PI; offsetZ = wallDist - coffeeDepth/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { coffeeGroup.rotation.y = 0; offsetZ = -(wallDist - coffeeDepth/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { coffeeGroup.rotation.y = Math.PI/2; offsetX = wallDist - coffeeDepth/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { coffeeGroup.rotation.y = -Math.PI/2; offsetX = -(wallDist - coffeeDepth/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { coffeeGroup.rotation.y = -Math.PI/2; offsetX = wallDist - coffeeDepth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { coffeeGroup.rotation.y = Math.PI/2; offsetX = -(wallDist - coffeeDepth/2); }
                     
                     coffeeGroup.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(coffeeGroup);
@@ -317,8 +428,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { bsGroup.rotation.y = Math.PI; offsetZ = wallDist - sd/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { bsGroup.rotation.y = 0; offsetZ = -(wallDist - sd/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { bsGroup.rotation.y = Math.PI/2; offsetX = wallDist - sd/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { bsGroup.rotation.y = -Math.PI/2; offsetX = -(wallDist - sd/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { bsGroup.rotation.y = -Math.PI/2; offsetX = wallDist - sd/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { bsGroup.rotation.y = Math.PI/2; offsetX = -(wallDist - sd/2); }
                     
                     bsGroup.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(bsGroup);
@@ -331,8 +442,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { sofaGroup.rotation.y = Math.PI; offsetZ = wallDist - GRID_UNIT*0.25; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { sofaGroup.rotation.y = 0; offsetZ = -(wallDist - GRID_UNIT*0.25); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { sofaGroup.rotation.y = Math.PI/2; offsetX = wallDist - GRID_UNIT*0.25; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { sofaGroup.rotation.y = -Math.PI/2; offsetX = -(wallDist - GRID_UNIT*0.25); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { sofaGroup.rotation.y = -Math.PI/2; offsetX = wallDist - GRID_UNIT*0.25; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { sofaGroup.rotation.y = Math.PI/2; offsetX = -(wallDist - GRID_UNIT*0.25); }
                     
                     sofaGroup.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(sofaGroup);
@@ -359,8 +470,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { counterGroup.rotation.y = Math.PI; offsetZ = wallDist - cafeDepth/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { counterGroup.rotation.y = 0; offsetZ = -(wallDist - cafeDepth/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { counterGroup.rotation.y = Math.PI/2; offsetX = wallDist - cafeDepth/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { counterGroup.rotation.y = -Math.PI/2; offsetX = -(wallDist - cafeDepth/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { counterGroup.rotation.y = -Math.PI/2; offsetX = wallDist - cafeDepth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { counterGroup.rotation.y = Math.PI/2; offsetX = -(wallDist - cafeDepth/2); }
                     
                     counterGroup.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(counterGroup);
@@ -380,8 +491,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { tvGroup.rotation.y = Math.PI; offsetZ = wallDist - tvDepth/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { tvGroup.rotation.y = 0; offsetZ = -(wallDist - tvDepth/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { tvGroup.rotation.y = Math.PI/2; offsetX = wallDist - tvDepth/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { tvGroup.rotation.y = -Math.PI/2; offsetX = -(wallDist - tvDepth/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { tvGroup.rotation.y = -Math.PI/2; offsetX = wallDist - tvDepth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { tvGroup.rotation.y = Math.PI/2; offsetX = -(wallDist - tvDepth/2); }
                     
                     tvGroup.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(tvGroup);
@@ -394,8 +505,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { boardGroup.rotation.y = Math.PI; offsetZ = wallDist - bDepth/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { boardGroup.rotation.y = 0; offsetZ = -(wallDist - bDepth/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { boardGroup.rotation.y = Math.PI/2; offsetX = wallDist - bDepth/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { boardGroup.rotation.y = -Math.PI/2; offsetX = -(wallDist - bDepth/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { boardGroup.rotation.y = -Math.PI/2; offsetX = wallDist - bDepth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { boardGroup.rotation.y = Math.PI/2; offsetX = -(wallDist - bDepth/2); }
                     
                     boardGroup.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(boardGroup);
@@ -408,8 +519,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { group.rotation.y = Math.PI; offsetZ = wallDist - depth/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { group.rotation.y = 0; offsetZ = -(wallDist - depth/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = Math.PI/2; offsetX = wallDist - depth/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = -Math.PI/2; offsetX = -(wallDist - depth/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = -Math.PI/2; offsetX = wallDist - depth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = Math.PI/2; offsetX = -(wallDist - depth/2); }
                     
                     group.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(group);
@@ -422,8 +533,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { group.rotation.y = Math.PI; offsetZ = wallDist - depth/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { group.rotation.y = 0; offsetZ = -(wallDist - depth/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = Math.PI/2; offsetX = wallDist - depth/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = -Math.PI/2; offsetX = -(wallDist - depth/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = -Math.PI/2; offsetX = wallDist - depth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = Math.PI/2; offsetX = -(wallDist - depth/2); }
                     
                     group.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(group);
@@ -436,8 +547,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { group.rotation.y = Math.PI; offsetZ = wallDist - depth/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { group.rotation.y = 0; offsetZ = -(wallDist - depth/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = Math.PI/2; offsetX = wallDist - depth/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = -Math.PI/2; offsetX = -(wallDist - depth/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = -Math.PI/2; offsetX = wallDist - depth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = Math.PI/2; offsetX = -(wallDist - depth/2); }
                     
                     group.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(group);
@@ -450,8 +561,8 @@ function initializeWorld() {
                     const wallDist = GRID_UNIT - WALL_THICKNESS/2;
                     if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { group.rotation.y = Math.PI; offsetZ = wallDist - depth/2; }
                     else if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { group.rotation.y = 0; offsetZ = -(wallDist - depth/2); }
-                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = Math.PI/2; offsetX = wallDist - depth/2; }
-                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = -Math.PI/2; offsetX = -(wallDist - depth/2); }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = -Math.PI/2; offsetX = wallDist - depth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = Math.PI/2; offsetX = -(wallDist - depth/2); }
                     
                     group.position.set(worldX + offsetX, 0, worldZ + offsetZ);
                     scene.add(group);
@@ -470,6 +581,42 @@ function initializeWorld() {
                     scene.add(trashGroup);
                     break;
                 }
+                case 20: { // Standing Desk
+                    const deskGroup = createStandingDesk({ gridUnit: GRID_UNIT, colors: COLORS, addBox });
+                    deskGroup.position.set(worldX, 0, worldZ);
+                    scene.add(deskGroup);
+                    break;
+                }
+                case 22: { // Phone Booth
+                    const { group, depth } = createPhoneBooth({ gridUnit: GRID_UNIT, colors: COLORS, addBox });
+                    
+                    let offsetZ = 0, offsetX = 0;
+                    const wallDist = GRID_UNIT - WALL_THICKNESS/2;
+                    
+                    if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) { group.rotation.y = 0; offsetZ = -(wallDist - depth/2); }
+                    else if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) { group.rotation.y = Math.PI; offsetZ = wallDist - depth/2; }
+                    else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) { group.rotation.y = -Math.PI/2; offsetX = wallDist - depth/2; }
+                    else if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) { group.rotation.y = Math.PI/2; offsetX = -(wallDist - depth/2); }
+                    
+                    // Secondary snapping to lean against the side wall as well
+                    if (group.rotation.y === 0 || group.rotation.y === Math.PI) {
+                        if (officeLayout[z]?.[x-1] === 10 || officeLayout[z]?.[x-1] === 1) offsetX = -(wallDist - depth/2);
+                        else if (officeLayout[z]?.[x+1] === 10 || officeLayout[z]?.[x+1] === 1) offsetX = wallDist - depth/2;
+                    } else {
+                        if (officeLayout[z-1]?.[x] === 10 || officeLayout[z-1]?.[x] === 1) offsetZ = -(wallDist - depth/2);
+                        else if (officeLayout[z+1]?.[x] === 10 || officeLayout[z+1]?.[x] === 1) offsetZ = wallDist - depth/2;
+                    }
+                    
+                    group.position.set(worldX + offsetX, 0, worldZ + offsetZ);
+                    scene.add(group);
+                    break;
+                }
+                case 23: { // Ping Pong
+                    const group = createPingPong({ gridUnit: GRID_UNIT, colors: COLORS, addBox });
+                    group.position.set(worldX, 0, worldZ);
+                    scene.add(group);
+                    break;
+                }
             }
         }
     }
@@ -480,18 +627,21 @@ function initializeWorld() {
             const tileType = officeLayout[z]?.[x];
             const [worldX, , worldZ] = gridToWorld(x, z);
 
-            if (tileType === 2) {
+            if (tileType === 2 || tileType === 20) {
                 const targetGridZ = z + 1;
                 if (isWalkable(x, targetGridZ)) {
                     const [targetWorldX, , targetWorldZ] = gridToWorld(x, targetGridZ);
-                    deskSpots.push({ pos: [targetWorldX, 0, targetWorldZ], gridX: x, gridZ: targetGridZ, deskGridActual: [x, z], workerId: null });
+                    deskSpots.push({ pos: [targetWorldX, 0, targetWorldZ], gridX: x, gridZ: targetGridZ, deskGridActual: [x, z], workerId: null, isStanding: tileType === 20 });
                 }
-            } else if (tileType === 5 || tileType === 7 || tileType === 'T' || tileType === 4) {
+            } else if (tileType === 5 || tileType === 7 || tileType === 'T' || tileType === 4 || tileType === 14 || tileType === 15 || tileType === 16 || tileType === 17 || tileType === 22) {
                 const checkNeighbors = [{dx:0,dz:1},{dx:0,dz:-1},{dx:1,dz:0},{dx:-1,dz:0}];
                 for (const n of checkNeighbors) {
                     const nx = x + n.dx, nz = z + n.dz;
                     if (isWalkable(nx, nz) && !loungeSpots.some(p => p.gridX === nx && p.gridZ === nz)) loungeSpots.push({gridX: nx, gridZ: nz, type: tileType, targetGridX: x, targetGridZ: z, reservedBy: null});
                 }
+            } else if (tileType === 23) {
+                if (isWalkable(x - 1, z) && !loungeSpots.some(p => p.gridX === x - 1 && p.gridZ === z)) loungeSpots.push({gridX: x - 1, gridZ: z, type: 23, targetGridX: x, targetGridZ: z, reservedBy: null, side: -1});
+                if (isWalkable(x + 1, z) && !loungeSpots.some(p => p.gridX === x + 1 && p.gridZ === z)) loungeSpots.push({gridX: x + 1, gridZ: z, type: 23, targetGridX: x, targetGridZ: z, reservedBy: null, side: 1});
             } else if (tileType === 3 || tileType === 8) {
                 const checkNeighbors = [{dx:0,dz:1},{dx:0,dz:-1},{dx:1,dz:0},{dx:-1,dz:0}];
                 for (const n of checkNeighbors) {
@@ -611,20 +761,29 @@ function initializeWorld() {
 
         const shirtColor = COLORS.worker_shirt_colors[i % COLORS.worker_shirt_colors.length];
         const { workerGroup, animParts } = createWorker({ startPos, shirtColor });
+        workerGroup.userData.workerId = workerIdCounter;
         scene.add(workerGroup);
+
+        const identity = generateIdentity();
+        const [doorWorldX, , doorWorldZ] = gridToWorld(12, 14);
+        workerGroup.visible = simulationTime >= 8 && simulationTime < 18;
 
         workers.push({
             id: workerIdCounter++,
-            pos: [...startPos],
-            targetPos: [...startPos],
-            currentGrid: [...startGrid],
+            identity: identity,
+            pos: [doorWorldX + (Math.random() - 0.5), 0, doorWorldZ + (Math.random() - 0.5)],
+            targetPos: [doorWorldX, 0, doorWorldZ],
+            currentGrid: [12, 14],
             targetGrid: [...startGrid],
             deskGrid: assignedDeskSpot.deskGridActual,
             deskSpotGrid: startGrid,
+            isStandingDesk: assignedDeskSpot.isStanding || false,
             speed: 0.8 + Math.random() * 0.4,
-            state: 'idle',
-            stateTimer: 2000 + Math.random() * 20000,
+            state: simulationTime >= 8 && simulationTime < 18 ? 'moving_to_desk' : 'left_office',
+            stateTimer: 1000 + Math.random() * 5000,
             needs: { bathroom: Math.random()*0.5, break: Math.random()*0.5 },
+            mood: 0.5 + Math.random() * 0.5,
+            chatTarget: null,
             timeSinceBreak: Math.random() * WORK_TIME_BEFORE_BREAK_CHANCE,
             timeSinceBathroom: Math.random() * WORK_TIME_BEFORE_BATHROOM_CHANCE,
             currentTask: null,
@@ -635,8 +794,24 @@ function initializeWorld() {
             targetBreakSpot: null,
             targetMeetingSpot: null,
             meshGroup: workerGroup,
-            animParts: animParts
+            animParts: animParts,
+            bubbleSprite: createSpeechBubble(workerGroup)
         });
+
+        // Se já é horário de trabalho, calcular caminho inicial agora
+        if (simulationTime >= 8 && simulationTime < 18) {
+            const lastWorker = workers[workers.length - 1];
+            const initPath = findPath(12, 14, startGrid[0], startGrid[1]);
+            if (initPath && initPath.length > 1) {
+                lastWorker.currentPath = initPath;
+                lastWorker.pathIndex = 1;
+                const [tx, , tz] = gridToWorld(initPath[1][0], initPath[1][1]);
+                lastWorker.targetPos = [tx, 0, tz];
+            } else {
+                lastWorker.state = 'idle';
+                lastWorker.stateTimer = 1000;
+            }
+        }
     }
 
     generateTasks(MAX_TASKS / 2);
@@ -656,15 +831,132 @@ function assignTask(worker) {
     return false;
 }
 
-// --- Lógica de Atualização (Idêntica) ---
+// --- Lógica de Atualização ---
 function updateWorkers(deltaTimeSeconds) {
     const dtMs = deltaTimeSeconds * 1000;
+    // Cache de workers visíveis e ativos para evitar filtragem O(n²) por worker
+    const activeWorkers = workers.filter(w => w.meshGroup.visible && !w.isInsideBathroom);
     if (officeTasks.filter(t => t.status === 'pending').length < workers.length / 4 &&
         officeTasks.filter(t => t.status !== 'completed').length < MAX_TASKS * 0.8) {
         generateTasks(workers.length / 2);
     }
 
+    if (activeEvent) {
+        eventTimer -= dtMs;
+        if (eventTimer <= 0) {
+            activeEvent = null;
+            const alertEl = document.getElementById('eventAlert');
+            if (alertEl) alertEl.classList.add('hidden');
+        }
+    } else {
+        if (Math.random() < 0.0003 && simulationTime >= 9 && simulationTime < 17) {
+            activeEvent = Math.random() < 0.5 ? 'pizza' : 'fire_drill';
+            eventTimer = 15000;
+            const alertEl = document.getElementById('eventAlert');
+            if (alertEl) {
+                alertEl.classList.remove('hidden');
+                document.getElementById('eventIcon').textContent = activeEvent === 'pizza' ? '🍕' : '🚨';
+                document.getElementById('eventText').textContent = activeEvent === 'pizza' ? 'Pizza no escritório!' : 'Treinamento de Incêndio!';
+                alertEl.style.background = activeEvent === 'pizza' ? 'rgba(255, 152, 0, 0.9)' : 'rgba(244, 67, 54, 0.9)';
+                alertEl.style.border = activeEvent === 'pizza' ? '2px solid #ff9800' : '2px solid #ff5252';
+            }
+        }
+    }
+
+    const isWorkingHours = simulationTime >= 8 && simulationTime < 18;
+    const isLunchTime = simulationTime >= 12 && simulationTime < 13;
+
     workers.forEach(worker => {
+        // Handle Overrides
+        if (activeEvent === 'fire_drill') {
+            if (worker.state !== 'moving_to_exit' && worker.state !== 'waiting_outside') {
+                worker.state = 'moving_to_exit';
+                const pth = findPath(worker.currentGrid[0], worker.currentGrid[1], 12, 14);
+                if (pth && pth.length > 1) {
+                    worker.currentPath = pth; worker.pathIndex = 1;
+                    const [tx, , tz] = gridToWorld(pth[1][0], pth[1][1]);
+                    worker.targetPos = [tx, 0, tz];
+                }
+                releaseReservedSpot(worker, 'targetBreakSpot');
+                releaseReservedSpot(worker, 'targetMeetingSpot');
+                if (worker.currentTask) { worker.currentTask.status = 'pending'; worker.currentTask.assignedWorkerId = null; worker.currentTask = null; }
+            }
+        } else if (activeEvent === 'pizza') {
+            if (worker.state !== 'moving_to_break' && worker.state !== 'on_break') {
+                const pool = [...loungeSpots, ...cafeSpots];
+                const spot = pickReservedSpot(worker, pool);
+                if (spot) {
+                    worker.targetBreakSpot = spot;
+                    worker.state = 'moving_to_break';
+                    const pth = findPath(worker.currentGrid[0], worker.currentGrid[1], spot.gridX, spot.gridZ);
+                    if (pth && pth.length > 1) {
+                        worker.currentPath = pth; worker.pathIndex = 1;
+                        const [tx, , tz] = gridToWorld(pth[1][0], pth[1][1]);
+                        worker.targetPos = [tx, 0, tz];
+                    }
+                    if (worker.currentTask) { worker.currentTask.status = 'pending'; worker.currentTask.assignedWorkerId = null; worker.currentTask = null; }
+                }
+            }
+        } else {
+            if (!isWorkingHours) {
+                if (worker.state !== 'moving_to_exit' && worker.state !== 'left_office') {
+                    worker.state = 'moving_to_exit';
+                    const pth = findPath(worker.currentGrid[0], worker.currentGrid[1], 12, 14);
+                    if (pth && pth.length > 1) {
+                        worker.currentPath = pth; worker.pathIndex = 1;
+                        const [tx, , tz] = gridToWorld(pth[1][0], pth[1][1]);
+                        worker.targetPos = [tx, 0, tz];
+                    } else {
+                        worker.state = 'left_office';
+                        worker.meshGroup.visible = false;
+                    }
+                    releaseReservedSpot(worker, 'targetBreakSpot');
+                    releaseReservedSpot(worker, 'targetMeetingSpot');
+                    if (worker.currentTask) { worker.currentTask.status = 'pending'; worker.currentTask.assignedWorkerId = null; worker.currentTask = null; }
+                }
+            } else if (isLunchTime) {
+                if (worker.state !== 'moving_to_break' && worker.state !== 'on_break' && worker.state !== 'using_bathroom' && !worker.state.startsWith('moving_to_bathroom') && worker.state !== 'left_office') {
+                    const pool = [...loungeSpots, ...cafeSpots];
+                    const spot = pickReservedSpot(worker, pool);
+                    if (spot) {
+                        worker.targetBreakSpot = spot;
+                        worker.state = 'moving_to_break';
+                        const pth = findPath(worker.currentGrid[0], worker.currentGrid[1], spot.gridX, spot.gridZ);
+                        if (pth && pth.length > 1) {
+                            worker.currentPath = pth; worker.pathIndex = 1;
+                            const [tx, , tz] = gridToWorld(pth[1][0], pth[1][1]);
+                            worker.targetPos = [tx, 0, tz];
+                        }
+                        if (worker.currentTask) { worker.currentTask.status = 'pending'; worker.currentTask.assignedWorkerId = null; worker.currentTask = null; }
+                    }
+                }
+            } else if (worker.state === 'left_office' || worker.state === 'waiting_outside') {
+                worker.meshGroup.visible = true;
+                if (worker.state === 'left_office') {
+                    const [dx, , dz] = gridToWorld(12, 14);
+                    worker.pos = [dx + (Math.random() - 0.5), 0, dz + (Math.random() - 0.5)];
+                    worker.currentGrid = [12, 14];
+                }
+                worker.state = 'moving_to_desk';
+                const pth = findPath(worker.currentGrid[0], worker.currentGrid[1], worker.deskSpotGrid[0], worker.deskSpotGrid[1]);
+                if (pth && pth.length > 1) {
+                    worker.currentPath = pth; worker.pathIndex = 1;
+                    const [tx, , tz] = gridToWorld(pth[1][0], pth[1][1]);
+                    worker.targetPos = [tx, 0, tz];
+                } else {
+                    worker.state = 'idle'; worker.stateTimer = 1000;
+                }
+            }
+        }
+        
+        if (worker.state === 'left_office') return;
+
+        if (worker.bubbleSprite && worker.bubbleSprite.visible) {
+            worker.bubbleSprite.userData.timer -= dtMs;
+            if (worker.bubbleSprite.userData.timer <= 0) worker.bubbleSprite.visible = false;
+            worker.bubbleSprite.position.y = 2.8 + Math.sin(Date.now() * 0.005) * 0.1;
+        }
+
         if (worker.isInsideBathroom) {
             worker.stateTimer -= dtMs;
             if (worker.state === 'using_bathroom' && worker.stateTimer <= 0) {
@@ -702,10 +994,25 @@ function updateWorkers(deltaTimeSeconds) {
                 worker.needs.bathroom += Math.random() * 0.00012 * dtMs * (worker.timeSinceBathroom / WORK_TIME_BEFORE_BATHROOM_CHANCE);
             worker.needs.break = Math.min(worker.needs.break, 1.0);
             worker.needs.bathroom = Math.min(worker.needs.bathroom, 1.0);
+            
+            if (worker.state === 'working') {
+                worker.mood = Math.max(0, worker.mood - 0.00003 * dtMs); 
+            }
+
+            if (Math.random() < 0.001) {
+                if (worker.needs.bathroom > 0.8) showBubble(worker, '🚽', 3000);
+                else if (worker.needs.break > 0.8) showBubble(worker, '☕', 3000);
+                else if (worker.mood < 0.2) showBubble(worker, '😫', 3000);
+            }
+        }
+        
+        if (worker.state === 'on_break') {
+            worker.mood = Math.min(1.0, worker.mood + 0.0001 * dtMs);
         }
 
         if (worker.state === 'working' && worker.currentTask) {
-            worker.taskProgress -= dtMs;
+            const speedMultiplier = 0.5 + worker.mood;
+            worker.taskProgress -= dtMs * speedMultiplier;
             worker.stateTimer = worker.taskProgress;
         }
 
@@ -713,8 +1020,9 @@ function updateWorkers(deltaTimeSeconds) {
             if (!worker.currentPath || worker.pathIndex >= worker.currentPath.length) {
                 if (worker.currentPath && worker.pathIndex >= worker.currentPath.length) {
                     const finalGrid = worker.currentPath[worker.currentPath.length - 1];
-                    const finalWorldPos = gridToWorld(finalGrid[0], finalGrid[1]);
-                    worker.pos[0] = finalWorldPos[0]; worker.pos[2] = finalWorldPos[2];
+                    let [finalWorldX, , finalWorldZ] = gridToWorld(finalGrid[0], finalGrid[1]);
+                    
+                    worker.pos[0] = finalWorldX; worker.pos[2] = finalWorldZ;
                     worker.currentGrid = [...finalGrid];
                 }
                 worker.currentPath = null; worker.pathIndex = 0;
@@ -724,11 +1032,22 @@ function updateWorkers(deltaTimeSeconds) {
                 else if (worker.state === 'moving_to_wander') { worker.state = 'idle'; worker.stateTimer = 800 + Math.random()*1800; }
                 else if (worker.state === 'moving_to_bathroom') { worker.isInsideBathroom = true; worker.state = 'using_bathroom'; worker.stateTimer = BATHROOM_DURATION_MIN + Math.random()*(BATHROOM_DURATION_MAX-BATHROOM_DURATION_MIN); }
                 else if (worker.state === 'moving_to_desk_for_work') { worker.state = 'working'; worker.stateTimer = worker.currentTask ? worker.taskProgress : 500; }
+                else if (worker.state === 'moving_to_exit') {
+                    if (activeEvent === 'fire_drill') {
+                        worker.state = 'waiting_outside';
+                        worker.stateTimer = 2000;
+                    } else {
+                        worker.state = 'left_office';
+                        worker.meshGroup.visible = false;
+                        worker.stateTimer = 2000;
+                    }
+                }
                 else { worker.state = 'idle'; worker.stateTimer = 500; }
             } else {
                 let targetGrid = worker.currentPath[worker.pathIndex];
                 let [targetWorldX, , targetWorldZ] = gridToWorld(targetGrid[0], targetGrid[1]);
                 
+
                 let dx = targetWorldX - worker.pos[0];
                 let dz = targetWorldZ - worker.pos[2];
                 let dist = Math.sqrt(dx * dx + dz * dz);
@@ -739,6 +1058,7 @@ function updateWorkers(deltaTimeSeconds) {
                     const nextTargetWorldPos = gridToWorld(targetGrid[0], targetGrid[1]);
                     targetWorldX = nextTargetWorldPos[0];
                     targetWorldZ = nextTargetWorldPos[2];
+                    
                     dx = targetWorldX - worker.pos[0];
                     dz = targetWorldZ - worker.pos[2];
                     dist = Math.sqrt(dx * dx + dz * dz);
@@ -748,8 +1068,8 @@ function updateWorkers(deltaTimeSeconds) {
                 const moveAmount = worker.speed * GRID_UNIT * deltaTimeSeconds;
 
                 let sepX = 0, sepZ = 0, closeCount = 0;
-                for (const other of workers) {
-                    if (other.id !== worker.id && other.meshGroup.visible && !other.isInsideBathroom) {
+                for (const other of activeWorkers) {
+                    if (other.id !== worker.id) {
                         const ddx = worker.pos[0] - other.pos[0];
                         const ddz = worker.pos[2] - other.pos[2];
                         const sqDist = ddx * ddx + ddz * ddz;
@@ -765,6 +1085,32 @@ function updateWorkers(deltaTimeSeconds) {
 
                 let dirX = dist > 0 ? dx / dist : 0;
                 let dirZ = dist > 0 ? dz / dist : 0;
+
+                if ((worker.state === 'moving_to_wander' || worker.state === 'moving_to_break') && !worker.chatTarget && Math.random() < 0.02) {
+                    for (const other of workers) {
+                        if (other.id !== worker.id && !other.chatTarget && !other.isInsideBathroom && 
+                            (other.state === 'moving_to_wander' || other.state === 'idle' || other.state === 'moving_to_break')) {
+                            const dSq = (worker.pos[0] - other.pos[0])**2 + (worker.pos[2] - other.pos[2])**2;
+                            if (dSq < 6.0) {
+                                worker.chatTarget = other;
+                                other.chatTarget = worker;
+                                worker.state = 'chatting';
+                                other.state = 'chatting';
+                                const chatTime = 4000 + Math.random() * 4000;
+                                worker.stateTimer = chatTime;
+                                other.stateTimer = chatTime;
+                                worker.currentPath = null;
+                                other.currentPath = null;
+                                worker.meshGroup.rotation.y = Math.atan2(other.pos[0] - worker.pos[0], other.pos[2] - worker.pos[2]);
+                                other.meshGroup.rotation.y = Math.atan2(worker.pos[0] - other.pos[0], worker.pos[2] - other.pos[2]);
+                                showBubble(worker, ['💬','😂','🤔','👍','🗣️'][Math.floor(Math.random()*5)], chatTime);
+                                showBubble(other, ['💬','😂','🤔','👍','🗣️'][Math.floor(Math.random()*5)], chatTime);
+                                // currentPath is now null — stop processing movement for this worker this frame
+                                return;
+                            }
+                        }
+                    }
+                }
 
                 if (closeCount > 0) {
                     dirX += sepX * 0.7;
@@ -796,28 +1142,45 @@ function updateWorkers(deltaTimeSeconds) {
         else if (worker.stateTimer <= 0 || worker.state === 'idle') {
             let needsPath = false; let destinationGrid = null; let nextState = worker.state; let decidedAction = false;
             if (worker.state === 'idle') {
-                if (!decidedAction && worker.needs.bathroom > NEED_THRESHOLD && Math.random() < CHANCE_TO_ACT_ON_NEED) {
-                    const targetBathroomPool = Math.random() > 0.5 ? bathroomSpotsF : bathroomSpotsM;
-                    if (targetBathroomPool.length > 0) {
-                        const targetSpot = targetBathroomPool[Math.floor(Math.random() * targetBathroomPool.length)];
-                        destinationGrid = [targetSpot.gridX, targetSpot.gridZ]; nextState = 'moving_to_bathroom'; needsPath = true; worker.needs.bathroom = 0; worker.timeSinceBathroom = 0; decidedAction = true;
+                if (!decidedAction && worker.needs.bathroom > NEED_THRESHOLD) {
+                    const chance = worker.needs.bathroom > 0.9 ? 1.0 : (CHANCE_TO_ACT_ON_NEED + (worker.needs.bathroom - NEED_THRESHOLD) * 2);
+                    if (Math.random() < chance) {
+                        const [wx, wz] = worker.currentGrid;
+                        // Tenta banheiro preferido, se não acessível tenta o outro
+                        const preferred = Math.random() > 0.5 ? bathroomSpotsF : bathroomSpotsM;
+                        const alternate = preferred === bathroomSpotsF ? bathroomSpotsM : bathroomSpotsF;
+                        const allBath = [...preferred, ...alternate];
+                        const reachableBath = allBath.filter(s => isSameZone(wx, wz, s.gridX, s.gridZ));
+                        if (reachableBath.length > 0) {
+                            const targetSpot = reachableBath[Math.floor(Math.random() * reachableBath.length)];
+                            destinationGrid = [targetSpot.gridX, targetSpot.gridZ]; nextState = 'moving_to_bathroom'; needsPath = true; worker.needs.bathroom = 0; worker.timeSinceBathroom = 0; decidedAction = true;
+                        }
                     }
                 }
-                if (!decidedAction && worker.needs.break > NEED_THRESHOLD && Math.random() < CHANCE_TO_ACT_ON_NEED) {
-                    const breakPool = [...loungeSpots, ...cafeSpots];
-                    if (breakPool.length > 0) {
-                        const targetSpot = pickReservedSpot(worker, breakPool);
-                        if (targetSpot) {
-                            destinationGrid = [targetSpot.gridX, targetSpot.gridZ]; nextState = 'moving_to_break'; needsPath = true; worker.needs.break = 0; worker.timeSinceBreak = 0; decidedAction = true;
-                            worker.targetBreakSpot = targetSpot;
-                        }
-                    } else worker.stateTimer = 1500 + Math.random()*2000;
+                if (!decidedAction && worker.needs.break > NEED_THRESHOLD) {
+                    const chance = worker.needs.break > 0.9 ? 1.0 : (CHANCE_TO_ACT_ON_NEED + (worker.needs.break - NEED_THRESHOLD) * 2);
+                    if (Math.random() < chance) {
+                        // Filtra apenas spots acessíveis da mesma zona do worker
+                        const [wx, wz] = worker.currentGrid;
+                        const breakPool = [...loungeSpots, ...cafeSpots].filter(s => isSameZone(wx, wz, s.gridX, s.gridZ));
+                        if (breakPool.length > 0) {
+                            const targetSpot = pickReservedSpot(worker, breakPool);
+                            if (targetSpot) {
+                                destinationGrid = [targetSpot.gridX, targetSpot.gridZ]; nextState = 'moving_to_break'; needsPath = true; worker.needs.break = 0; worker.timeSinceBreak = 0; decidedAction = true;
+                                worker.targetBreakSpot = targetSpot;
+                            }
+                        } else worker.stateTimer = 1500 + Math.random()*2000;
+                    }
                 }
                 if (!decidedAction && !worker.currentTask && meetingSpots.length > 0 && Math.random() < MEETING_CHANCE) {
-                    const targetSpot = pickReservedSpot(worker, meetingSpots);
-                    if (targetSpot) {
-                        destinationGrid = [targetSpot.gridX, targetSpot.gridZ]; nextState = 'moving_to_meeting'; needsPath = true; decidedAction = true;
-                        worker.targetMeetingSpot = targetSpot;
+                    const [wx, wz] = worker.currentGrid;
+                    const reachableMeetingSpots = meetingSpots.filter(s => isSameZone(wx, wz, s.gridX, s.gridZ));
+                    if (reachableMeetingSpots.length > 0) {
+                        const targetSpot = pickReservedSpot(worker, reachableMeetingSpots);
+                        if (targetSpot) {
+                            destinationGrid = [targetSpot.gridX, targetSpot.gridZ]; nextState = 'moving_to_meeting'; needsPath = true; decidedAction = true;
+                            worker.targetMeetingSpot = targetSpot;
+                        }
                     }
                 }
                 if (!decidedAction && !worker.currentTask && Math.random() < WANDER_CHANCE) {
@@ -830,10 +1193,12 @@ function updateWorkers(deltaTimeSeconds) {
                     if (!isAtDeskSpot) { destinationGrid = worker.deskSpotGrid; nextState = 'moving_to_desk_for_work'; needsPath = true; decidedAction = true; }
                     else { worker.state = 'working'; worker.stateTimer = worker.currentTask.duration; decidedAction = true; needsPath = false; }
                 }
-                if (!decidedAction && !worker.currentTask && assignTask(worker)) {
-                    if (!isAtDeskSpot) { destinationGrid = worker.deskSpotGrid; nextState = 'moving_to_desk_for_work'; needsPath = true; }
-                    else { worker.state = 'working'; worker.stateTimer = worker.currentTask.duration; needsPath = false; }
-                    decidedAction = true;
+                if (!decidedAction && !worker.currentTask) {
+                    if (Math.random() < 0.5 && assignTask(worker)) {
+                        if (!isAtDeskSpot) { destinationGrid = worker.deskSpotGrid; nextState = 'moving_to_desk_for_work'; needsPath = true; }
+                        else { worker.state = 'working'; worker.stateTimer = worker.currentTask.duration; needsPath = false; }
+                        decidedAction = true;
+                    }
                 }
                 if (!decidedAction && worker.state === 'idle') worker.stateTimer = 2000 + Math.random()*3000;
             } else if (worker.stateTimer <= 0) {
@@ -848,6 +1213,14 @@ function updateWorkers(deltaTimeSeconds) {
                     case 'in_meeting':
                         releaseReservedSpot(worker, 'targetMeetingSpot');
                         destinationGrid = worker.deskSpotGrid; nextState = 'moving_to_desk'; needsPath = true; decidedAction = true; break;
+                    case 'chatting':
+                        worker.state = 'idle'; worker.stateTimer = 1000 + Math.random()*2000;
+                        if (worker.chatTarget) {
+                            worker.chatTarget.chatTarget = null;
+                            worker.chatTarget = null;
+                        }
+                        worker.mood = Math.min(1.0, worker.mood + 0.2);
+                        decidedAction = true; needsPath = false; break;
                 }
             }
             if (needsPath && destinationGrid) {
@@ -875,6 +1248,11 @@ let lastTime = 0;
 const taskPendingVal = document.getElementById('taskPendingVal');
 const taskActiveVal = document.getElementById('taskActiveVal');
 const timeOfDayVal = document.getElementById('timeOfDayVal');
+const countWorking = document.getElementById('countWorking');
+const countBreak = document.getElementById('countBreak');
+const countMeeting = document.getElementById('countMeeting');
+const countBathroom = document.getElementById('countBathroom');
+const moodBar = document.getElementById('moodBar');
 
 function renderLoop(timestamp) {
     const deltaTime = timestamp - lastTime;
@@ -895,8 +1273,26 @@ function renderLoop(timestamp) {
     if (taskPendingVal) taskPendingVal.textContent = pendingTasks;
     if (taskActiveVal) taskActiveVal.textContent = activeTasks;
 
+    // --- HUD Expandido Stats ---
+    let wWorking = 0, wBreak = 0, wMeeting = 0, wBathroom = 0, avgMood = 0;
+    if (workers.length > 0) {
+        workers.forEach(w => {
+            avgMood += w.mood;
+            if (w.state === 'working' || (w.state === 'idle' && w.currentGrid[0] === w.deskSpotGrid[0] && w.currentGrid[1] === w.deskSpotGrid[1])) wWorking++;
+            else if (w.state === 'on_break' || w.state === 'moving_to_break') wBreak++;
+            else if (w.state === 'in_meeting' || w.state === 'moving_to_meeting' || w.state === 'chatting') wMeeting++;
+            else if (w.state === 'using_bathroom' || w.state === 'moving_to_bathroom' || w.isInsideBathroom) wBathroom++;
+        });
+        avgMood /= workers.length;
+    }
+    if (countWorking) countWorking.textContent = wWorking;
+    if (countBreak) countBreak.textContent = wBreak;
+    if (countMeeting) countMeeting.textContent = wMeeting;
+    if (countBathroom) countBathroom.textContent = wBathroom;
+    if (moodBar) moodBar.style.width = `${avgMood * 100}%`;
+
     // --- Ciclo de Dia e Noite ---
-    simulationTime += deltaTimeSeconds * 0.5; // 1s real = 30 min no jogo
+    simulationTime += deltaTimeSeconds * (1/20); // 1s real = 3 min no jogo
     if (simulationTime >= 24) simulationTime = 0;
     
     let timeStr = "Madrugada";
@@ -930,6 +1326,11 @@ function renderLoop(timestamp) {
 
     // Atualizar Meshes dos NPCs
     workers.forEach(w => {
+        // Nunca mostrar workers que saíram do escritório
+        if (w.state === 'left_office') {
+            w.meshGroup.visible = false;
+            return;
+        }
         if (!w.isInsideBathroom) {
             w.meshGroup.visible = true;
 
@@ -941,49 +1342,73 @@ function renderLoop(timestamp) {
             const isBreaking = w.state === 'on_break' && isAtBreakSpot && !isMoving;
             const isAtMeetingSpot = w.targetMeetingSpot && w.currentGrid[0] === w.targetMeetingSpot.gridX && w.currentGrid[1] === w.targetMeetingSpot.gridZ;
             const isMeeting = w.state === 'in_meeting' && isAtMeetingSpot && !isMoving;
+            const isChatting = w.state === 'chatting' && !isMoving;
 
             if (isSitting) {
-                // Sentar na cadeira
                 const [deskWorldX, , deskWorldZ] = gridToWorld(w.deskGrid[0], w.deskGrid[1]);
-                const chairZOffset = GRID_UNIT * 0.35;
-                w.meshGroup.position.set(deskWorldX, 0.4, deskWorldZ + chairZOffset);
-                w.meshGroup.rotation.y = Math.PI; // Face the desk
-
-                w.animParts.legL.rotation.x = -Math.PI / 2;
-                w.animParts.legR.rotation.x = -Math.PI / 2;
-
-                if (w.state === 'working') {
-                    const typeAnim = Math.sin(timestamp * 0.015) * 0.1;
-                    w.animParts.armL.rotation.x = -Math.PI / 3 + typeAnim;
-                    w.animParts.armR.rotation.x = -Math.PI / 3 - typeAnim;
+                
+                if (w.isStandingDesk) {
+                    w.meshGroup.position.set(deskWorldX, 0, deskWorldZ + GRID_UNIT * 0.4);
+                    w.meshGroup.rotation.y = Math.PI;
+                    w.animParts.legL.rotation.x = 0;
+                    w.animParts.legR.rotation.x = 0;
+                    if (w.state === 'working') {
+                        const typeAnim = Math.sin(timestamp * 0.015) * 0.1;
+                        w.animParts.armL.rotation.x = -Math.PI / 3 + typeAnim;
+                        w.animParts.armR.rotation.x = -Math.PI / 3 - typeAnim;
+                    } else {
+                        w.animParts.armL.rotation.x = -Math.PI / 6;
+                        w.animParts.armR.rotation.x = -Math.PI / 6;
+                    }
                 } else {
-                    w.animParts.armL.rotation.x = -Math.PI / 6;
-                    w.animParts.armR.rotation.x = -Math.PI / 6;
+                    const chairZOffset = GRID_UNIT * 0.35;
+                    w.meshGroup.position.set(deskWorldX, -0.1, deskWorldZ + chairZOffset);
+                    w.meshGroup.rotation.y = Math.PI; // Face the desk
+
+                    w.animParts.legL.rotation.x = -Math.PI / 2;
+                    w.animParts.legR.rotation.x = -Math.PI / 2;
+
+                    if (w.state === 'working') {
+                        const typeAnim = Math.sin(timestamp * 0.015) * 0.1;
+                        w.animParts.armL.rotation.x = -Math.PI / 3 + typeAnim;
+                        w.animParts.armR.rotation.x = -Math.PI / 3 - typeAnim;
+                    } else {
+                        w.animParts.armL.rotation.x = -Math.PI / 6;
+                        w.animParts.armR.rotation.x = -Math.PI / 6;
+                    }
                 }
             } else if (isMeeting) {
                 const targetProp = w.targetMeetingSpot;
                 const [propX, , propZ] = gridToWorld(targetProp.targetGridX, targetProp.targetGridZ);
-                w.meshGroup.position.set(propX + targetProp.seatOffsetX, 0.4, propZ + targetProp.seatOffsetZ);
+                w.meshGroup.position.set(propX + targetProp.seatOffsetX, -0.1, propZ + targetProp.seatOffsetZ);
                 w.meshGroup.rotation.y = targetProp.rotationY;
                 const explainAnim = Math.sin(timestamp * 0.004);
                 w.animParts.armL.rotation.x = -0.4 + explainAnim * 0.2;
                 w.animParts.armR.rotation.x = -0.8 - explainAnim * 0.35;
                 w.animParts.legL.rotation.x = -Math.PI / 2;
                 w.animParts.legR.rotation.x = -Math.PI / 2;
+            } else if (isChatting) {
+                const talkAnim = Math.sin(timestamp * 0.008);
+                w.animParts.armL.rotation.x = -0.3 + talkAnim * 0.2;
+                w.animParts.armR.rotation.x = 0.3 - talkAnim * 0.2;
+                w.animParts.legL.rotation.x = 0;
+                w.animParts.legR.rotation.x = 0;
             } else if (isBreaking) {
                 const targetProp = w.targetBreakSpot;
                 const [propX, , propZ] = gridToWorld(targetProp.targetGridX, targetProp.targetGridZ);
                 const [wX, , wZ] = gridToWorld(w.currentGrid[0], w.currentGrid[1]);
                 
                 if (targetProp.type === 5 || targetProp.type === 7) { // Sofa ou Pufe
-                    w.meshGroup.position.set(propX, 0.05, propZ); // senta
+                    w.meshGroup.position.set(propX, -0.3, propZ); // senta
                     w.meshGroup.rotation.y = Math.atan2(wX - propX, wZ - propZ); // olha pra onde veio
                     w.animParts.legL.rotation.x = -Math.PI / 2;
                     w.animParts.legR.rotation.x = -Math.PI / 2;
                     w.animParts.armL.rotation.x = -Math.PI / 6;
                     w.animParts.armR.rotation.x = -Math.PI / 6;
                 } else if (targetProp.type === 4) { // Biblioteca
-                    w.meshGroup.position.set(w.pos[0], 0, w.pos[2]);
+                    const visX = w.pos[0] + (propX - w.pos[0]) * 0.75;
+                    const visZ = w.pos[2] + (propZ - w.pos[2]) * 0.75;
+                    w.meshGroup.position.set(visX, 0, visZ);
                     w.meshGroup.rotation.y = Math.atan2(propX - w.pos[0], propZ - w.pos[2]); // olha pro prop
                     const reachAnim = Math.sin(timestamp * 0.005);
                     w.animParts.armR.rotation.x = -Math.PI / 2 + reachAnim * 0.3; // lendo/pegando livro
@@ -991,13 +1416,33 @@ function renderLoop(timestamp) {
                     w.animParts.legL.rotation.x = 0;
                     w.animParts.legR.rotation.x = 0;
                 } else if (targetProp.type === 3 || targetProp.type === 8) { // Cafe
-                    w.meshGroup.position.set(w.pos[0], 0, w.pos[2]);
+                    const visX = w.pos[0] + (propX - w.pos[0]) * 0.75;
+                    const visZ = w.pos[2] + (propZ - w.pos[2]) * 0.75;
+                    w.meshGroup.position.set(visX, 0, visZ);
                     w.meshGroup.rotation.y = Math.atan2(propX - w.pos[0], propZ - w.pos[2]);
                     const drinkAnim = Math.abs(Math.sin(timestamp * 0.003));
                     w.animParts.armR.rotation.x = -Math.PI / 1.2 * drinkAnim; // bebendo
                     w.animParts.armL.rotation.x = -0.2;
                     w.animParts.legL.rotation.x = 0;
                     w.animParts.legR.rotation.x = 0;
+                } else if (targetProp.type === 22) { // Phone Booth
+                    w.meshGroup.position.set(propX, 0, propZ);
+                    w.meshGroup.rotation.y = 0;
+                    const talkAnim = Math.sin(timestamp * 0.008);
+                    w.animParts.armL.rotation.x = -0.3 + talkAnim * 0.2;
+                    w.animParts.armR.rotation.x = -Math.PI / 1.5; // segurando celular
+                    w.animParts.legL.rotation.x = 0;
+                    w.animParts.legR.rotation.x = 0;
+                    if (!w.bubbleSprite.visible && Math.random() < 0.005) showBubble(w, '📞', 3000);
+                } else if (targetProp.type === 23) { // Ping Pong
+                    w.meshGroup.position.set(w.pos[0], 0, w.pos[2]);
+                    w.meshGroup.rotation.y = targetProp.side === -1 ? Math.PI / 2 : -Math.PI / 2;
+                    const playAnim = Math.sin(timestamp * 0.015);
+                    w.animParts.armR.rotation.x = -Math.PI / 3 + playAnim * 0.5;
+                    w.animParts.armL.rotation.x = -0.2;
+                    w.animParts.legL.rotation.x = 0;
+                    w.animParts.legR.rotation.x = 0;
+                    if (!w.bubbleSprite.visible && Math.random() < 0.005) showBubble(w, '🏓', 2000);
                 } else { // TV ou outros
                     w.meshGroup.position.set(w.pos[0], 0, w.pos[2]);
                     w.meshGroup.rotation.y = Math.atan2(propX - w.pos[0], propZ - w.pos[2]);
