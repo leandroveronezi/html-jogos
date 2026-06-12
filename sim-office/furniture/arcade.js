@@ -3,7 +3,7 @@ import * as THREE from 'three';
 export function createArcade({ gridUnit, colors, addBox }) {
     const group = new THREE.Group();
     const w = 1.0;
-    const h = 2.0;
+    const h = 2.6; // Aumentado para bater com a altura da cabeca do NPC (aprox 2.6)
     const d = 1.0;
 
     // Base inferior
