@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HABBO SNOWSTORM // PROJETO TÉCNICO V1.0</title>
+<style>
+  * {
+    box-sizing: border-box;
+    user-select: none;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    background-color: #dbe4ee;
+    font-family: 'Courier New', Courier, monospace;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  #game-wrapper {
+    position: relative;
+    box-shadow: 0 10px 35px rgba(10, 40, 90, 0.25), 0 2px 8px rgba(0,0,0,0.1);
+    border: 3px solid #0a3574;
+    border-radius: 4px;
+    background: #fdfdfd;
+  }
+  canvas {
+    display: block;
+    cursor: crosshair;
+  }
+  /* Overlay com informações técnicas e controles */
+  .hud-top {
+    position: absolute;
+    top: 10px;
+    left: 14px;
+    right: 14px;
+    display: flex;
+    justify-content: space-between;
+    pointer-events: none;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #0b3c88;
+    text-transform: uppercase;
+  }
+  .hud-bottom {
+    position: absolute;
+    bottom: 8px;
+    left: 14px;
+    right: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    pointer-events: none;
+    font-size: 11px;
+    color: #0b3c88;
+  }
+  .hud-instructions {
+    background: rgba(255, 255, 255, 0.9);
+    padding: 4px 8px;
+    border: 1px dashed #0b3c88;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<div id="game-wrapper">
+  <div class="hud-top">
+    <span>PLANTA BAIXA ISOMÉTRICA // HABBO SNOW-UNIT 01</span>
+    <span id="match-timer">TEMPO: 02:00</span>
+    <span id="score-board">AZUL: 00 | VERMELHO: 00</span>
+  </div>
+  
+  <canvas id="snowCanvas" width="960" height="620"></canvas>
+
+  <div class="hud-bottom">
+    <div class="hud-instructions">
+      <b>[BOTAO ESQ]:</b> ANDAR / ARREMESSAR &nbsp;|&nbsp; <b>[ESPAÇO]:</b> MODELAR BOLAS DE NEVE &nbsp;|&nbsp; <b>[R]:</b> REINICIAR
+    </div>
+    <div style="font-weight: bold; letter-spacing: 1px;">
+      ESCALA: 1:50 // TINTA AZUL: 0.5mm
+    </div>
+  </div>
+</div>
+
+<script>
+/**
+ * HABBO SNOWSTORM - EDIÇÃO TÉCNICA À CANETA AZUL
+ * Desenho técnico vetorial em projeção isométrica 2:1 clássica do Habbo.
+ */
+
+const canvas = document.getElementById('snowCanvas');
+const ctx = canvas.getContext('2d');
+const scoreBoard = document.getElementById('score-board');
+const matchTimer = document.getElementById('match-timer');
+
+// Paleta de Caneta Técnica Azul
+const INK_DARK = '#092a5e';    // Linha principal de contorno
+const INK_MID  = '#13478c';    // Hachuras e detalhes
+const INK_LIGHT= '#2a6cb8';    // Linhas secundárias e projeções
+const INK_FAINT= 'rgba(19, 71, 140, 0.12)'; // Grid milimetrado
+const PAPER_BG = '#fbfcfe';    // Papel vegetal / sulfite técnico
+
+// Geometria Isométrica do Habbo (2:1)
+const TILE_W = 54;
+const TILE_H = 27;
+const GRID_SIZE = 16;
+const ORIGIN_X = canvas.width / 2;
+const ORIGIN_Y = 110;
+
+function gridToScreen(gx, gy, gz = 0) {
+  return {
+    x: ORIGIN_X + (gx - gy) * (TILE_W / 2),
+    y: ORIGIN_Y + (gx + gy) * (TILE_H / 2) - gz
+  };
+}
+
+function screenToGrid(sx, sy) {
+  const relX = sx - ORIGIN_X;
+  const relY = sy - ORIGIN_Y;
+  const gx = (relY / (TILE_H / 2) + relX / (TILE_W / 2)) / 2;
+  const gy = (relY / (TILE_H / 2) - relX / (TILE_W / 2)) / 2;
+  return { x: gx, y: gy };
+}
+
+// Estados do Jogo
+let scoreBlue = 0;
+let scoreRed = 0;
+let timeLeft = 120; // 2 minutos
+let gameOver = false;
+
+// Obstáculos do mapa (tipo no clássico: pinheiros, blocos de gelo/iglu, máquina central)
+const obstacles = [];
+function addObstacle(gx, gy, type, radius = 0.5) {
+  obstacles.push({ gx, gy, type, radius });
+}
+
+// Montagem do Mapa Clássico do Habbo
+// 1. Ilha central com buraco de água/gelo e ponte de madeira
+const centralHole = { minX: 6, maxX: 9, minY: 6, maxY: 9 };
+// 2. Máquina de bolas no meio
+addObstacle(7.5, 7.5, 'MACHINE', 1.0);
+
+// 3. Barreiras de gelo / trincheiras
+for(let i = 2; i <= 5; i++) {
+  addObstacle(i, 2, 'ICE_BLOCK', 0.4);
+  addObstacle(GRID_SIZE - 1 - i, GRID_SIZE - 3, 'ICE_BLOCK', 0.4);
+}
+for(let i = 10; i <= 13; i++) {
+  addObstacle(3, i, 'ICE_BLOCK', 0.4);
+  addObstacle(12, GRID_SIZE - 1 - i, 'ICE_BLOCK', 0.4);
+}
+
+// 4. Pinheiros desenhados em estilo cônico técnico
+const treeLocations = [
+  {gx: 1, gy: 1}, {gx: 2, gy: 7}, {gx: 1, gy: 14},
+  {gx: 14, gy: 1}, {gx: 13, gy: 8}, {gx: 14, gy: 14},
+  {gx: 7, gy: 1}, {gx: 8, gy: 14}
+];
+treeLocations.forEach(t => addObstacle(t.gx, t.gy, 'TREE', 0.6));
+
+// Entidades (Jogadores / Bots)
+class HabboUnit {
+  constructor(gx, gy, team, isPlayer = false, name = "Habbo") {
+    this.gx = gx;
+    this.gy = gy;
+    this.targetGx = gx;
+    this.targetGy = gy;
+    this.team = team; // 'BLUE' ou 'RED'
+    this.isPlayer = isPlayer;
+    this.name = name;
+
+    this.snowballs = 5;
+    this.maxSnowballs = 5;
+    this.health = 3; // Tomar 3 hits = nocaute
+    this.maxHealth = 3;
+    this.state = 'IDLE'; // 'IDLE', 'WALKING', 'MAKING_SNOW', 'DOWN'
+    this.downTimer = 0;
+    this.makeTimer = 0;
+    this.speed = 0.055;
+    this.direction = 1; // 1 = frontal, -1 = costas
+  }
+
+  update() {
+    if (this.state === 'DOWN') {
+      this.downTimer--;
+      if (this.downTimer <= 0) {
+        this.state = 'IDLE';
+        this.health = this.maxHealth;
+      }
+      return;
+    }
+
+    if (this.state === 'MAKING_SNOW') {
+      this.makeTimer++;
+      if (this.makeTimer >= 45) { // ~0.75s por bola
+        this.makeTimer = 0;
+        if (this.snowballs < this.maxSnowballs) {
+          this.snowballs++;
+        }
+        if (this.snowballs >= this.maxSnowballs) {
+          this.state = 'IDLE';
+        }
+      }
+      return;
+    }
+
+    // Movimentação em direção ao alvo
+    const dx = this.targetGx - this.gx;
+    const dy = this.targetGy - this.gy;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist > 0.08) {
+      this.state = 'WALKING';
+      const moveX = (dx / dist) * this.speed;
+      const moveY = (dy / dist) * this.speed;
+
+      const nextGx = this.gx + moveX;
+      const nextGy = this.gy + moveY;
+
+      // Colisão simples com obstáculos e limites
+      if (!this.isBlocked(nextGx, nextGy)) {
+        this.gx = nextGx;
+        this.gy = nextGy;
+      } else {
+        this.targetGx = this.gx;
+        this.targetGy = this.gy;
+        this.state = 'IDLE';
+      }
+    } else {
+      this.state = 'IDLE';
+    }
+
+    // IA para Bots
+    if (!this.isPlayer && !gameOver) {
+      this.updateAI();
+    }
+  }
+
+  isBlocked(gx, gy) {
+    if (gx < 0.5 || gx > GRID_SIZE - 1.5 || gy < 0.5 || gy > GRID_SIZE - 1.5) return true;
+    // Fosso central (exceto passarelas)
+    if (gx >= centralHole.minX && gx <= centralHole.maxX && gy >= centralHole.minY && gy <= centralHole.maxY) {
+      const onBridge = (Math.abs(gx - 7.5) < 0.45) || (Math.abs(gy - 7.5) < 0.45);
+      if (!onBridge) return true;
+    }
+    // Obstáculos
+    for (let obs of obstacles) {
+      if (Math.hypot(gx - obs.gx, gy - obs.gy) < obs.radius + 0.3) return true;
+    }
+    return false;
+  }
+
+  updateAI() {
+    // Lógica simples de bot: se sem bolas, faz bolas; se perto de inimigo, arremessa
+    const enemies = units.filter(u => u.team !== this.team && u.state !== 'DOWN');
+    if (enemies.length === 0) return;
+
+    // Achar inimigo mais próximo
+    let closest = enemies[0];
+    let minDist = Math.hypot(closest.gx - this.gx, closest.gy - this.gy);
+    for (let e of enemies) {
+      let d = Math.hypot(e.gx - this.gx, e.gy - this.gy);
+      if (d < minDist) {
+        minDist = d;
+        closest = e;
+      }
+    }
+
+    if (this.snowballs === 0 && this.state !== 'MAKING_SNOW') {
+      this.state = 'MAKING_SNOW';
+      this.makeTimer = 0;
+      return;
+    }
+
+    if (this.snowballs > 0 && minDist < 7 && Math.random() < 0.02) {
+      this.throwSnowball(closest.gx, closest.gy);
+      return;
+    }
+
+    // Caminhar aleatoriamente mantendo distância de tiro
+    if (this.state === 'IDLE' && Math.random() < 0.03) {
+      const angle = Math.random() * Math.PI * 2;
+      const step = 1.5 + Math.random() * 2.5;
+      const targetX = Math.max(1, Math.min(GRID_SIZE - 2, this.gx + Math.cos(angle) * step));
+      const targetY = Math.max(1, Math.min(GRID_SIZE - 2, this.gy + Math.sin(angle) * step));
+      if (!this.isBlocked(targetX, targetY)) {
+        this.targetGx = targetX;
+        this.targetGy = targetY;
+      }
+    }
+  }
+
+  throwSnowball(targetGx, targetGy) {
+    if (this.snowballs <= 0 || this.state === 'DOWN') return;
+    this.snowballs--;
+    snowballs.push(new Snowball(this.gx, this.gy, targetGx, targetGy, this));
+  }
+
+  takeHit(damage = 1) {
+    if (this.state === 'DOWN') return;
+    this.health -= damage;
+    if (this.health <= 0) {
+      this.state = 'DOWN';
+      this.downTimer = 180; // 3 segundos caído
+      if (this.team === 'BLUE') scoreRed += 5;
+      else scoreBlue += 5;
+      updateScoreDisplay();
+    }
+  }
+}
+
+// Projétil Bola de Neve com parábola balística
+class Snowball {
+  constructor(startGx, startGy, targetGx, targetGy, shooter) {
+    this.startGx = startGx;
+    this.startGy = startGy;
+    this.targetGx = targetGx;
+    this.targetGy = targetGy;
+    this.shooter = shooter;
+
+    this.totalDistance = Math.hypot(targetGx - startGx, targetGy - startGy);
+    this.progress = 0;
+    this.speed = 0.075 / (this.totalDistance || 1);
+    this.peakHeight = 35 + this.totalDistance * 6;
+  }
+
+  update() {
+    this.progress += this.speed;
+    if (this.progress >= 1) {
+      this.impact();
+      return false; // Remover
+    }
+    return true;
+  }
+
+  getPos() {
+    const curGx = this.startGx + (this.targetGx - this.startGx) * this.progress;
+    const curGy = this.startGy + (this.targetGy - this.startGy) * this.progress;
+    // Altura parabólica (z = 4 * h * p * (1-p))
+    const curZ = 4 * this.peakHeight * this.progress * (1 - this.progress);
+    const screen = gridToScreen(curGx, curGy, curZ);
+    const shadow = gridToScreen(curGx, curGy, 0);
+    return { screen, shadow, curGx, curGy };
+  }
+
+  impact() {
+    // Checar acerto nos jogadores
+    particles.push(new BlueprintBurst(this.targetGx, this.targetGy));
+    for (let u of units) {
+      if (u !== this.shooter && u.state !== 'DOWN') {
+        const d = Math.hypot(u.gx - this.targetGx, u.gy - this.targetGy);
+        if (d < 0.75) {
+          u.takeHit(1);
+          if (this.shooter.team === 'BLUE') scoreBlue += 1;
+          else scoreRed += 1;
+          updateScoreDisplay();
+        }
+      }
+    }
+  }
+}
+
+// Partículas técnicas de impacto (vetores e círculos de expansão tipo diagrama)
+class BlueprintBurst {
+  constructor(gx, gy) {
+    this.gx = gx;
+    this.gy = gy;
+    this.life = 1.0;
+  }
+  update() {
+    this.life -= 0.05;
+    return this.life > 0;
+  }
+  draw(ctx) {
+    const p = gridToScreen(this.gx, this.gy, 0);
+    ctx.save();
+    ctx.strokeStyle = INK_LIGHT;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+
+    const r = (1 - this.life) * 26;
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, r, r / 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Raios de dispersão
+    for(let i = 0; i < 4; i++) {
+      const ang = (i * Math.PI / 2) + (1 - this.life);
+      ctx.beginPath();
+      ctx.moveTo(p.x + Math.cos(ang) * (r * 0.5), p.y + Math.sin(ang) * (r * 0.25));
+      ctx.lineTo(p.x + Math.cos(ang) * (r * 1.3), p.y + Math.sin(ang) * (r * 0.65));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// Instanciação das Unidades
+const units = [
+  // Jogador principal (Time Azul)
+  new HabboUnit(4, 11, 'BLUE', true, 'VOCÊ [HABBO]'),
+  // Colega de equipe Azul
+  new HabboUnit(2, 13, 'BLUE', false, 'BOT_AZUL_01'),
+  // Time Vermelho
+  new HabboUnit(11, 4, 'RED', false, 'BOT_RUBRO_01'),
+  new HabboUnit(13, 2, 'RED', false, 'BOT_RUBRO_02'),
+];
+const player = units[0];
+const snowballs = [];
+const particles = [];
+
+function updateScoreDisplay() {
+  scoreBoard.textContent = `AZUL: ${scoreBlue.toString().padStart(2, '0')} | VERMELHO: ${scoreRed.toString().padStart(2, '0')}`;
+}
+
+// Renderização em Estilo de Desenho Técnico à Caneta Azul
+function drawDraftingPaper() {
+  // Fundo papel sulfite técnico
+  ctx.fillStyle = PAPER_BG;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Grade milimetrada de fundo
+  ctx.save();
+  ctx.strokeStyle = INK_FAINT;
+  ctx.lineWidth = 0.5;
+
+  const step = 20;
+  ctx.beginPath();
+  for (let x = 0; x < canvas.width; x += step) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+  }
+  for (let y = 0; y < canvas.height; y += step) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+  }
+  ctx.stroke();
+
+  // Margem técnica com cantoneiras de desenho mecânico
+  ctx.strokeStyle = INK_MID;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+
+  // Marcação de corte / escala nos cantos
+  drawCrosshair(10, 10);
+  drawCrosshair(canvas.width - 10, 10);
+  drawCrosshair(10, canvas.height - 10);
+  drawCrosshair(canvas.width - 10, canvas.height - 10);
+  ctx.restore();
+}
+
+function drawCrosshair(x, y) {
+  ctx.beginPath();
+  ctx.moveTo(x - 6, y); ctx.lineTo(x + 6, y);
+  ctx.moveTo(x, y - 6); ctx.lineTo(x, y + 6);
+  ctx.stroke();
+}
+
+// Desenho da Grade Isométrica (Chão de Neve Habbo)
+function drawIsometricGrid() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(19, 71, 140, 0.28)';
+  ctx.lineWidth = 1;
+
+  for (let gx = 0; gx <= GRID_SIZE; gx++) {
+    const p1 = gridToScreen(gx, 0);
+    const p2 = gridToScreen(gx, GRID_SIZE);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+
+  for (let gy = 0; gy <= GRID_SIZE; gy++) {
+    const p1 = gridToScreen(0, gy);
+    const p2 = gridToScreen(GRID_SIZE, gy);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+
+  // Desenho do Fosso Central de Água Gelada com hachuras de caneta
+  const cP1 = gridToScreen(centralHole.minX, centralHole.minY);
+  const cP2 = gridToScreen(centralHole.maxX + 1, centralHole.minY);
+  const cP3 = gridToScreen(centralHole.maxX + 1, centralHole.maxY + 1);
+  const cP4 = gridToScreen(centralHole.minX, centralHole.maxY + 1);
+
+  ctx.fillStyle = 'rgba(19, 71, 140, 0.05)';
+  ctx.beginPath();
+  ctx.moveTo(cP1.x, cP1.y);
+  ctx.lineTo(cP2.x, cP2.y);
+  ctx.lineTo(cP3.x, cP3.y);
+  ctx.lineTo(cP4.x, cP4.y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Hachuras diagonais de corte d'água
+  ctx.strokeStyle = 'rgba(19, 71, 140, 0.2)';
+  ctx.lineWidth = 0.8;
+  for (let i = centralHole.minX; i <= centralHole.maxX + 1; i += 0.5) {
+    const s1 = gridToScreen(i, centralHole.minY);
+    const s2 = gridToScreen(i, centralHole.maxY + 1);
+    ctx.beginPath();
+    ctx.moveTo(s1.x, s1.y);
+    ctx.lineTo(s2.x, s2.y);
+    ctx.stroke();
+  }
+
+  // Passarelas de tábuas de madeira no centro
+  drawIsometricPlank(7.5, 5.5, 1, 2.5); // Norte
+  drawIsometricPlank(7.5, 9.5, 1, 2.5); // Sul
+  drawIsometricPlank(5.5, 7.5, 2.5, 1); // Oeste
+  drawIsometricPlank(9.5, 7.5, 2.5, 1); // Leste
+
+  // Anotação Técnica de Planta
+  ctx.fillStyle = INK_LIGHT;
+  ctx.font = "9px 'Courier New'";
+  const notePos = gridToScreen(0, GRID_SIZE);
+  ctx.fillText("FIG 01. ARENA DE COMBATE BALÍSTICO (PROJEÇÃO DIMÉTRICA 26.56°)", notePos.x - 120, notePos.y + 25);
+  ctx.restore();
+}
+
+function drawIsometricPlank(cx, cy, wx, wy) {
+  const p1 = gridToScreen(cx - wx/2, cy - wy/2);
+  const p2 = gridToScreen(cx + wx/2, cy - wy/2);
+  const p3 = gridToScreen(cx + wx/2, cy + wy/2);
+  const p4 = gridToScreen(cx - wx/2, cy + wy/2);
+
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = INK_DARK;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.lineTo(p3.x, p3.y);
+  ctx.lineTo(p4.x, p4.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Linhas simulando ripas de madeira técnica
+  ctx.strokeStyle = INK_MID;
+  ctx.setLineDash([3, 2]);
+  ctx.beginPath();
+  ctx.moveTo((p1.x+p4.x)/2, (p1.y+p4.y)/2);
+  ctx.lineTo((p2.x+p3.x)/2, (p2.y+p3.y)/2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Renderização de Obstáculos (Estilo Habbo em Caneta Técnica)
+function drawObstacle(obs) {
+  const base = gridToScreen(obs.gx, obs.gy, 0);
+
+  ctx.save();
+  ctx.strokeStyle = INK_DARK;
+  ctx.lineWidth = 1.4;
+
+  if (obs.type === 'TREE') {
+    // Pinheiro cônico estilizado em blueprint com anéis de nível técnico
+    const h = 55;
+    const top = gridToScreen(obs.gx, obs.gy, h);
+
+    // Elipse base
+    ctx.beginPath();
+    ctx.ellipse(base.x, base.y, 14, 7, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Camadas cônicas
+    const layers = [0.2, 0.5, 0.8, 1.0];
+    let prevY = base.y;
+    let prevR = 14;
+
+    layers.forEach((lvl, idx) => {
+      const curZ = h * lvl;
+      const pt = gridToScreen(obs.gx, obs.gy, curZ);
+      const r = 14 * (1 - lvl * 0.7);
+
+      ctx.beginPath();
+      ctx.moveTo(base.x - prevR, prevY);
+      ctx.lineTo(base.x - r, pt.y);
+      ctx.lineTo(base.x + r, pt.y);
+      ctx.lineTo(base.x + prevR, prevY);
+      ctx.stroke();
+
+      // Hachuras técnicas de sombra
+      for (let l = -r + 2; l < r; l += 4) {
+        ctx.beginPath();
+        ctx.moveTo(base.x + l, pt.y);
+        ctx.lineTo(base.x + l - 3, pt.y + 6);
+        ctx.stroke();
+      }
+
+      prevY = pt.y;
+      prevR = r;
+    });
+
+    // Eixo central pontilhado
+    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = INK_LIGHT;
+    ctx.beginPath();
+    ctx.moveTo(base.x, base.y);
+    ctx.lineTo(top.x, top.y - 6);
+    ctx.stroke();
+
+  } else if (obs.type === 'ICE_BLOCK') {
+    // Bloco cúbico de gelo do Habbo
+    const size = 16;
+    ctx.fillStyle = '#ffffff';
+
+    // Face Superior
+    ctx.beginPath();
+    ctx.moveTo(base.x, base.y - size - 7);
+    ctx.lineTo(base.x + 14, base.y - size);
+    ctx.lineTo(base.x, base.y - size + 7);
+    ctx.lineTo(base.x - 14, base.y - size);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Face Esquerda
+    ctx.beginPath();
+    ctx.moveTo(base.x - 14, base.y - size);
+    ctx.lineTo(base.x, base.y - size + 7);
+    ctx.lineTo(base.x, base.y + 7);
+    ctx.lineTo(base.x - 14, base.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Face Direita com Hachuras de preenchimento
+    ctx.beginPath();
+    ctx.moveTo(base.x, base.y - size + 7);
+    ctx.lineTo(base.x + 14, base.y - size);
+    ctx.lineTo(base.x + 14, base.y);
+    ctx.lineTo(base.x, base.y + 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Hachura técnica no bloco
+    ctx.strokeStyle = INK_MID;
+    for (let hy = -size + 10; hy < 4; hy += 3) {
+      ctx.beginPath();
+      ctx.moveTo(base.x + 2, base.y + hy);
+      ctx.lineTo(base.x + 12, base.y + hy - 5);
+      ctx.stroke();
+    }
+
+  } else if (obs.type === 'MACHINE') {
+    // Máquina Central de Bolas do Habbo (caldeira/motor mecânico)
+    const mH = 35;
+    ctx.fillStyle = '#ffffff';
+
+    // Cilindro/Gabinete Técnico
+    ctx.beginPath();
+    ctx.rect(base.x - 22, base.y - mH, 44, 26);
+    ctx.fill();
+    ctx.stroke();
+
+    // Detalhe de engrenagem / manômetro
+    ctx.beginPath();
+    ctx.arc(base.x, base.y - mH + 13, 8, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Duto corrugado lateral
+    ctx.beginPath();
+    ctx.arc(base.x + 22, base.y - mH + 16, 7, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Antena com esfera no topo
+    ctx.beginPath();
+    ctx.moveTo(base.x, base.y - mH);
+    ctx.lineTo(base.x, base.y - mH - 16);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(base.x, base.y - mH - 18, 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Rótulo técnico
+    ctx.font = "8px 'Courier New'";
+    ctx.fillStyle = INK_MID;
+    ctx.fillText("GEN-01 [NEVE]", base.x - 24, base.y - mH - 5);
+  }
+
+  ctx.restore();
+}
+
+// Renderização dos Personagens estilo Habbo Avatar em Caneta Esferográfica
+function drawHabboUnit(u) {
+  const p = gridToScreen(u.gx, u.gy, 0);
+
+  ctx.save();
+
+  // Elipse indicadora de seleção / time no chão
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = (u.team === 'BLUE') ? INK_DARK : '#b81414';
+  if (u.isPlayer) {
+    // Marcador de rotação / mira técnica ao redor do jogador
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, 18, 9, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Marcador de destino do clique
+    const targetPos = gridToScreen(u.targetGx, u.targetGy);
+    ctx.beginPath();
+    ctx.arc(targetPos.x, targetPos.y, 4, 0, Math.PI * 2);
+    ctx.moveTo(targetPos.x - 8, targetPos.y); ctx.lineTo(targetPos.x + 8, targetPos.y);
+    ctx.moveTo(targetPos.x, targetPos.y - 8); ctx.lineTo(targetPos.x, targetPos.y + 8);
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, 14, 7, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Se estiver nocauteado (DOWN: deitado de bruços clássico do Habbo)
+  if (u.state === 'DOWN') {
+    ctx.strokeStyle = (u.team === 'BLUE') ? INK_DARK : '#b81414';
+    ctx.lineWidth = 1.3;
+    ctx.fillStyle = '#ffffff';
+
+    // Corpo caído esticado no chão
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y - 4, 16, 7, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Cabeça deitada
+    ctx.beginPath();
+    ctx.arc(p.x - 14, p.y - 6, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Letreiro "STATUS: NOCAUTE (REINICIANDO)"
+    ctx.font = "8px 'Courier New'";
+    ctx.fillStyle = (u.team === 'BLUE') ? INK_DARK : '#b81414';
+    ctx.fillText("NOCAUTE!", p.x - 18, p.y - 18);
+    ctx.restore();
+    return;
+  }
+
+  // Personagem Habbo em pé / andando
+  const bobbing = (u.state === 'WALKING') ? Math.sin(Date.now() * 0.015) * 2 : 0;
+  const posY = p.y + bobbing;
+
+  ctx.lineWidth = 1.3;
+  ctx.strokeStyle = (u.team === 'BLUE') ? INK_DARK : '#b81414';
+  ctx.fillStyle = '#ffffff';
+
+  // Pernas / Botas
+  ctx.beginPath();
+  ctx.rect(p.x - 5, posY - 10, 4, 10);
+  ctx.rect(p.x + 1, posY - 10, 4, 10);
+  ctx.fill();
+  ctx.stroke();
+
+  // Casaco de inverno clássico do SnowStorm
+  ctx.beginPath();
+  ctx.rect(p.x - 9, posY - 27, 18, 18);
+  ctx.fill();
+  ctx.stroke();
+
+  // Detalhe do capuz de pele ao redor do pescoço
+  ctx.beginPath();
+  ctx.ellipse(p.x, posY - 27, 10, 4, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Cabeça geométrica pixelada/isométrica clássica
+  ctx.beginPath();
+  ctx.rect(p.x - 6, posY - 39, 12, 12);
+  ctx.fill();
+  ctx.stroke();
+
+  // Cabelo / Gorro
+  ctx.beginPath();
+  ctx.moveTo(p.x - 7, posY - 37);
+  ctx.lineTo(p.x + 7, posY - 37);
+  ctx.lineTo(p.x + 5, posY - 43);
+  ctx.lineTo(p.x - 5, posY - 43);
+  ctx.closePath();
+  ctx.stroke();
+
+  // Olhos técnicos (traços precisos)
+  ctx.beginPath();
+  ctx.moveTo(p.x - 3, posY - 33); ctx.lineTo(p.x - 1, posY - 33);
+  ctx.moveTo(p.x + 1, posY - 33); ctx.lineTo(p.x + 3, posY - 33);
+  ctx.stroke();
+
+  // Braços (postura de arremesso ou modelagem de bola)
+  if (u.state === 'MAKING_SNOW') {
+    // Braços agachados na frente
+    ctx.beginPath();
+    ctx.arc(p.x, posY - 16, 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.font = "8px 'Courier New'";
+    ctx.fillStyle = INK_LIGHT;
+    ctx.fillText("CRIANDO NEVE...", p.x - 28, posY - 48);
+  } else {
+    // Braços laterais com luvas de neve
+    ctx.beginPath();
+    ctx.rect(p.x - 12, posY - 25, 4, 12);
+    ctx.rect(p.x + 8, posY - 25, 4, 12);
+    ctx.stroke();
+  }
+
+  // Hachuras técnicas de identificação de equipe
+  ctx.save();
+  ctx.strokeStyle = (u.team === 'BLUE') ? INK_MID : 'rgba(184, 20, 20, 0.6)';
+  ctx.lineWidth = 0.8;
+  for (let l = -7; l <= 7; l += 3) {
+    ctx.beginPath();
+    ctx.moveTo(p.x + l, posY - 25);
+    ctx.lineTo(p.x + l + 3, posY - 12);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Barra de Vida e Nome em fonte técnica
+  ctx.font = "9px 'Courier New'";
+  ctx.fillStyle = (u.team === 'BLUE') ? INK_DARK : '#b81414';
+  ctx.textAlign = "center";
+  ctx.fillText(u.name, p.x, posY - 48);
+
+  // Segmentos de saúde (3 blocos)
+  for (let h = 0; h < u.maxHealth; h++) {
+    ctx.beginPath();
+    ctx.rect(p.x - 12 + (h * 9), posY - 45, 6, 3);
+    if (h < u.health) {
+      ctx.fillStyle = (u.team === 'BLUE') ? INK_MID : '#b81414';
+      ctx.fill();
+    }
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// Projéteis e Trajetórias Técnicas
+function drawSnowballs() {
+  ctx.save();
+  snowballs.forEach(sb => {
+    const { screen, shadow } = sb.getPos();
+
+    // Sombra no chão
+    ctx.strokeStyle = 'rgba(19, 71, 140, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(shadow.x, shadow.y, 4, 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Linha de projeção ortogonal (altura do projétil)
+    ctx.strokeStyle = 'rgba(19, 71, 140, 0.2)';
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(shadow.x, shadow.y);
+    ctx.lineTo(screen.x, screen.y);
+    ctx.stroke();
+
+    // Bola de Neve (Círculo de precisão técnica com ponto central)
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = INK_DARK;
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, 0.8, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// Interface Inferior do Habbo estilo Blueprint (Bandeja de Balas e Energia)
+function drawHabboTechnicalHUD() {
+  const hudY = canvas.height - 75;
+  const hudX = canvas.width / 2;
+
+  ctx.save();
+
+  // Moldura estilo Console Habbo
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = INK_DARK;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(hudX - 180, hudY, 360, 52);
+  ctx.fillRect(hudX - 180, hudY, 360, 52);
+
+  // Título do Console
+  ctx.font = "bold 9px 'Courier New'";
+  ctx.fillStyle = INK_MID;
+  ctx.fillText("MUNIÇÃO BALÍSTICA // HABBO SNOWSTORM UI", hudX - 170, hudY + 13);
+
+  // Mostrador de Bolas de Neve (5 slots circulares com cotas)
+  for (let i = 0; i < player.maxSnowballs; i++) {
+    const slotX = hudX - 145 + (i * 26);
+    const slotY = hudY + 32;
+
+    ctx.beginPath();
+    ctx.arc(slotX, slotY, 9, 0, Math.PI * 2);
+    ctx.strokeStyle = INK_DARK;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    if (i < player.snowballs) {
+      // Bola cheia com textura hachurada
+      ctx.fillStyle = 'rgba(19, 71, 140, 0.15)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(slotX, slotY, 4, 0, Math.PI * 2);
+      ctx.fillStyle = INK_MID;
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      // Slot vazio com X técnico
+      ctx.strokeStyle = INK_LIGHT;
+      ctx.beginPath();
+      ctx.moveTo(slotX - 4, slotY - 4); ctx.lineTo(slotX + 4, slotY + 4);
+      ctx.moveTo(slotX + 4, slotY - 4); ctx.lineTo(slotX - 4, slotY + 4);
+      ctx.stroke();
+    }
+  }
+
+  // Botão / Indicador de Fabricação de Neve
+  const btnX = hudX + 15;
+  const btnY = hudY + 20;
+  ctx.strokeStyle = INK_MID;
+  ctx.strokeRect(btnX, btnY, 150, 24);
+
+  if (player.state === 'MAKING_SNOW') {
+    const progressW = (player.makeTimer / 45) * 146;
+    ctx.fillStyle = 'rgba(19, 71, 140, 0.2)';
+    ctx.fillRect(btnX + 2, btnY + 2, progressW, 20);
+    ctx.fillStyle = INK_DARK;
+    ctx.font = "bold 9px 'Courier New'";
+    ctx.fillText("COLETANDO NEVE...", btnX + 18, btnY + 16);
+  } else {
+    ctx.fillStyle = INK_DARK;
+    ctx.font = "bold 9px 'Courier New'";
+    ctx.fillText("[ESPAÇO] FAZER BOLAS", btnX + 12, btnY + 16);
+  }
+
+  ctx.restore();
+}
+
+// Loop Principal de Atualização e Desenho
+let lastSecondTime = Date.now();
+
+function gameLoop() {
+  // Atualiza temporizador da partida
+  if (!gameOver && Date.now() - lastSecondTime >= 1000) {
+    lastSecondTime = Date.now();
+    timeLeft--;
+    const min = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+    const sec = (timeLeft % 60).toString().padStart(2, '0');
+    matchTimer.textContent = `TEMPO: ${min}:${sec}`;
+
+    if (timeLeft <= 0) {
+      gameOver = true;
+    }
+  }
+
+  // Atualização de entidades
+  units.forEach(u => u.update());
+
+  for (let i = snowballs.length - 1; i >= 0; i--) {
+    if (!snowballs[i].update()) {
+      snowballs.splice(i, 1);
+    }
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    if (!particles[i].update()) {
+      particles.splice(i, 1);
+    }
+  }
+
+  // Ordenação de profundidade isométrica (Depth Sorting Y-buffer)
+  const renderList = [
+    ...obstacles.map(o => ({ type: 'OBS', y: o.gx + o.gy, item: o })),
+    ...units.map(u => ({ type: 'UNIT', y: u.gx + u.gy, item: u }))
+  ];
+  renderList.sort((a, b) => a.y - b.y);
+
+  // Renderização
+  drawDraftingPaper();
+  drawIsometricGrid();
+
+  renderList.forEach(obj => {
+    if (obj.type === 'OBS') drawObstacle(obj.item);
+    else if (obj.type === 'UNIT') drawHabboUnit(obj.item);
+  });
+
+  drawSnowballs();
+  particles.forEach(p => p.draw(ctx));
+  drawHabboTechnicalHUD();
+
+  if (gameOver) {
+    drawGameOverModal();
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+function drawGameOverModal() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(251, 252, 254, 0.88)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = INK_DARK;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(canvas.width / 2 - 200, canvas.height / 2 - 80, 400, 160);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(canvas.width / 2 - 200, canvas.height / 2 - 80, 400, 160);
+
+  ctx.fillStyle = INK_DARK;
+  ctx.font = "bold 16px 'Courier New'";
+  ctx.textAlign = "center";
+  ctx.fillText("PARTIDA FINALIZADA // RELATÓRIO TÉCNICO", canvas.width / 2, canvas.height / 2 - 40);
+
+  let winnerText = "EMPATE TÉCNICO!";
+  if (scoreBlue > scoreRed) winnerText = "VITÓRIA: EQUIPE AZUL!";
+  else if (scoreRed > scoreBlue) winnerText = "VITÓRIA: EQUIPE VERMELHA!";
+
+  ctx.font = "bold 14px 'Courier New'";
+  ctx.fillText(winnerText, canvas.width / 2, canvas.height / 2 - 10);
+  ctx.font = "12px 'Courier New'";
+  ctx.fillText(`PONTUAÇÃO: AZUL ${scoreBlue} x ${scoreRed} VERMELHO`, canvas.width / 2, canvas.height / 2 + 15);
+  ctx.fillText("PRESSIONE [R] PARA INICIAR NOVO PROJETO", canvas.width / 2, canvas.height / 2 + 48);
+  ctx.restore();
+}
+
+// Controle de Entradas do Jogador
+canvas.addEventListener('mousedown', (e) => {
+  if (gameOver) return;
+  const rect = canvas.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+
+  const clickedGrid = screenToGrid(mouseX, mouseY);
+
+  // Se clicou em algum inimigo, arremessa bola nele!
+  const targetEnemy = units.find(u => 
+    u.team !== player.team &&
+    u.state !== 'DOWN' &&
+    Math.hypot(u.gx - clickedGrid.x, u.gy - clickedGrid.y) < 1.2
+  );
+
+  if (targetEnemy && player.snowballs > 0 && player.state !== 'DOWN') {
+    player.throwSnowball(targetEnemy.gx, targetEnemy.gy);
+  } else {
+    // Caso contrário, comanda movimentação isométrica
+    if (player.state !== 'DOWN') {
+      player.state = 'IDLE';
+      player.targetGx = Math.max(0.5, Math.min(GRID_SIZE - 1.5, clickedGrid.x));
+      player.targetGy = Math.max(0.5, Math.min(GRID_SIZE - 1.5, clickedGrid.y));
+    }
+  }
+});
+
+// Teclado
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (player.state !== 'DOWN' && player.snowballs < player.maxSnowballs) {
+      player.state = 'MAKING_SNOW';
+      player.targetGx = player.gx;
+      player.targetGy = player.gy;
+    }
+  } else if (e.code === 'KeyR') {
+    // Reset da partida
+    scoreBlue = 0;
+    scoreRed = 0;
+    timeLeft = 120;
+    gameOver = false;
+    updateScoreDisplay();
+    player.gx = 4; player.gy = 11;
+    player.targetGx = 4; player.targetGy = 11;
+    player.snowballs = 5; player.health = 3; player.state = 'IDLE';
+  }
+});
+
+// Iniciação
+updateScoreDisplay();
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>

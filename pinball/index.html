@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Pinball Soccer 3D - Modo Cooperativo</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      background: #466358;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      overflow: hidden;
+    }
+    #game-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      max-width: 440px;
+      max-height: 820px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+      border-radius: 28px;
+      overflow: hidden;
+      background: #0f1c16;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .hud-bottom {
+      position: absolute;
+      bottom: 22px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding: 0 35px;
+      pointer-events: none;
+      font-weight: 900;
+      color: #ffffff;
+      text-shadow: 0 3px 8px rgba(0, 0, 0, 0.75);
+      z-index: 10;
+    }
+    .score-box {
+      text-align: center;
+    }
+    .score-label {
+      font-size: 13px;
+      letter-spacing: 1px;
+      opacity: 0.9;
+    }
+    .score-val {
+      font-size: 36px;
+      line-height: 1;
+    }
+    .banner {
+      position: absolute;
+      top: 40%;
+      left: 0;
+      right: 0;
+      transform: translateY(-50%);
+      background: rgba(0, 0, 0, 0.88);
+      color: #f1c40f;
+      font-size: 32px;
+      font-weight: 900;
+      text-align: center;
+      padding: 18px 0;
+      display: none;
+      pointer-events: none;
+      z-index: 30;
+      border-top: 3px solid #f1c40f;
+      border-bottom: 3px solid #f1c40f;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+  <div id="game-container">
+    <div id="goalBanner" class="banner">GOL!</div>
+    <canvas id="c"></canvas>
+    
+    <div class="hud-bottom">
+      <div class="score-box">
+        <div class="score-label">SEU TIME (P1)</div>
+        <div class="score-val" id="scoreP1">0</div>
+      </div>
+      <div class="score-box">
+        <div class="score-label">CPU</div>
+        <div class="score-val" id="scoreCPU">0</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- GERADOR DE ÁUDIO PROCEDURAL ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playTone(freq, type, duration, vol = 0.1) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch(e){}
+    }
+
+    const sfx = {
+      kick: () => playTone(120, 'sine', 0.15, 0.2),
+      powerKick: () => playTone(80, 'triangle', 0.3, 0.35),
+      knockdown: () => playTone(240, 'sawtooth', 0.25, 0.15),
+      wall: () => playTone(180, 'sine', 0.08, 0.08),
+      goal: () => {
+        playTone(330, 'triangle', 0.2, 0.25);
+        setTimeout(() => playTone(440, 'triangle', 0.4, 0.3), 150);
+      }
+    };
+
+    // --- CENA THREE.JS ---
+    const container = document.getElementById('game-container');
+    const canvas = document.getElementById('c');
+    const banner = document.getElementById('goalBanner');
+    const scoreP1El = document.getElementById('scoreP1');
+    const scoreCPUEl = document.getElementById('scoreCPU');
+
+    let scoreP1 = 0;
+    let scoreCPU = 0;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x5e8073);
+
+    const camera = new THREE.PerspectiveCamera(46, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.position.set(0, 26, 17);
+    camera.lookAt(0, 0, -1);
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+    sun.position.set(8, 25, 8);
+    sun.castShadow = true;
+    sun.shadow.mapSize.width = 1024;
+    sun.shadow.mapSize.height = 1024;
+    sun.shadow.camera.left = -12;
+    sun.shadow.camera.right = 12;
+    sun.shadow.camera.top = 18;
+    sun.shadow.camera.bottom = -18;
+    scene.add(sun);
+
+    // --- CAMPO DE FUTEBOL COM LISTRAS ---
+    const pitchWidth = 14;
+    const pitchLength = 26;
+    const stripesCount = 14;
+    const stripeH = pitchLength / stripesCount;
+
+    for (let i = 0; i < stripesCount; i++) {
+      const isAlt = i % 2 === 0;
+      const mat = new THREE.MeshLambertMaterial({ color: isAlt ? 0x22964b : 0x28a753 });
+      const geom = new THREE.PlaneGeometry(pitchWidth, stripeH);
+      const m = new THREE.Mesh(geom, mat);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(0, 0, -pitchLength / 2 + (i + 0.5) * stripeH);
+      m.receiveShadow = true;
+      scene.add(m);
+    }
+
+    function createFieldLine(pts) {
+      const g = new THREE.BufferGeometry().setFromPoints(pts);
+      const m = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
+      return new THREE.Line(g, m);
+    }
+
+    scene.add(createFieldLine([new THREE.Vector3(-5.8, 0.02, 0.8), new THREE.Vector3(5.8, 0.02, 0.8)]));
+
+    // Círculo central com número "18"
+    const circlePts = [];
+    for (let i = 0; i <= 36; i++) {
+      const a = (i / 36) * Math.PI * 2;
+      circlePts.push(new THREE.Vector3(Math.cos(a) * 2.0, 0.02, 0.8 + Math.sin(a) * 2.0));
+    }
+    scene.add(createFieldLine(circlePts));
+
+    const numCanvas = document.createElement('canvas');
+    numCanvas.width = 128; numCanvas.height = 128;
+    const nctx = numCanvas.getContext('2d');
+    nctx.fillStyle = "rgba(255,255,255,0.4)";
+    nctx.font = "bold 80px sans-serif";
+    nctx.textAlign = "center";
+    nctx.textBaseline = "middle";
+    nctx.fillText("18", 64, 64);
+    const numTex = new THREE.CanvasTexture(numCanvas);
+    const numPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.5, 2.5),
+      new THREE.MeshBasicMaterial({ map: numTex, transparent: true })
+    );
+    numPlane.rotation.x = -Math.PI / 2;
+    numPlane.position.set(0, 0.03, 0.8);
+    scene.add(numPlane);
+
+    // Grande Área Topo
+    scene.add(createFieldLine([
+      new THREE.Vector3(-4.5, 0.02, -10.5),
+      new THREE.Vector3(-4.5, 0.02, -5.5),
+      new THREE.Vector3(4.5, 0.02, -5.5),
+      new THREE.Vector3(4.5, 0.02, -10.5)
+    ]));
+
+    // --- ARQUIBANCADA DO TOPO ---
+    const standMat = new THREE.MeshLambertMaterial({ color: 0x1d3744 });
+    const fanColors = [0xe74c3c, 0xf1c40f, 0x3498db, 0xffffff];
+    for (let s = 0; s < 3; s++) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(pitchWidth + 2, 0.6, 1), standMat);
+      b.position.set(0, 0.3 + s * 0.6, -12.5 - s * 0.9);
+      scene.add(b);
+
+      for (let x = -5.5; x <= 5.5; x += 0.85) {
+        const fan = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshLambertMaterial({ color: fanColors[Math.floor(Math.random() * fanColors.length)] }));
+        fan.position.set(x, 0.7 + s * 0.6 + 0.2, -12.5 - s * 0.9);
+        scene.add(fan);
+      }
+    }
+
+    // --- TRAVES ---
+    const goalMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    function makeGoal(zPos, isTop) {
+      const gGroup = new THREE.Group();
+      const p1 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.8, 12), goalMat);
+      p1.position.set(-3.2, 0.9, zPos);
+      const p2 = p1.clone();
+      p2.position.x = 3.2;
+
+      const cross = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6.4, 12), goalMat);
+      cross.rotation.z = Math.PI / 2;
+      cross.position.set(0, 1.8, zPos);
+
+      const net = new THREE.Mesh(
+        new THREE.BoxGeometry(6.4, 1.8, 1.8),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.35 })
+      );
+      net.position.set(0, 0.9, zPos + (isTop ? -0.9 : 0.9));
+
+      gGroup.add(p1, p2, cross, net);
+      scene.add(gGroup);
+    }
+    makeGoal(-10.5, true);  // Gol do Goleiro CPU
+    makeGoal(12.2, false);  // Gol do fundo (se a bola vazar)
+
+    // --- BUMPERS TUBULARES ---
+    const wallSegments = [
+      { x1: -5.8, z1: -10.5, x2: -5.8, z2: 6.0 },
+      { x1: 5.8, z1: -10.5, x2: 5.8, z2: 6.0 },
+      { x1: -5.8, z1: -10.5, x2: -3.2, z2: -10.5 },
+      { x1: 5.8, z1: -10.5, x2: 3.2, z2: -10.5 },
+      { x1: -5.8, z1: 6.0, x2: -2.8, z2: 9.6 },
+      { x1: 5.8, z1: 6.0, x2: 2.8, z2: 9.6 }
+    ];
+
+    const bumperMat = new THREE.MeshLambertMaterial({ color: 0xf5f6fa });
+    wallSegments.forEach(seg => {
+      const dx = seg.x2 - seg.x1;
+      const dz = seg.z2 - seg.z1;
+      const len = Math.hypot(dx, dz);
+      const angle = Math.atan2(dx, dz);
+
+      const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, len, 12), bumperMat);
+      rail.castShadow = true;
+      rail.position.set((seg.x1 + seg.x2) / 2, 0.3, (seg.z1 + seg.z2) / 2);
+      rail.rotation.x = Math.PI / 2;
+      rail.rotation.z = -angle;
+      scene.add(rail);
+    });
+
+    // --- BOLA DE FUTEBOL 3D ---
+    const ballGeom = new THREE.SphereGeometry(0.38, 24, 24);
+    const ballTexCanvas = document.createElement('canvas');
+    ballTexCanvas.width = 128; ballTexCanvas.height = 128;
+    const bctx = ballTexCanvas.getContext('2d');
+    bctx.fillStyle = '#f8f9fa'; bctx.fillRect(0,0,128,128);
+    bctx.fillStyle = '#1e272e';
+    [[32,32], [96,32], [64,64], [32,96], [96,96]].forEach(([x,y]) => {
+      bctx.beginPath(); bctx.arc(x, y, 14, 0, Math.PI*2); bctx.fill();
+    });
+    const ballTex = new THREE.CanvasTexture(ballTexCanvas);
+
+    const ballMesh = new THREE.Mesh(ballGeom, new THREE.MeshStandardMaterial({ map: ballTex, roughness: 0.25 }));
+    ballMesh.castShadow = true;
+    scene.add(ballMesh);
+
+    // Efeito de Super Chute do Flipper
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.0, wireframe: true });
+    const glowMesh = new THREE.Mesh(new THREE.SphereGeometry(0.48, 16, 16), glowMat);
+    ballMesh.add(glowMesh);
+
+    const ball = {
+      x: 0,
+      z: 2,
+      vx: 0,
+      vz: 0.12,
+      radius: 0.38,
+      gravity: 0.007,
+      friction: 0.993,
+      isDirectFlipperShot: false,
+      holder: null // Jogador atualmente em posse
+    };
+
+    function setDirectFlipperShot(status) {
+      ball.isDirectFlipperShot = status;
+      glowMat.opacity = status ? 0.85 : 0.0;
+    }
+
+    function resetBall(serveTop) {
+      ball.x = (Math.random() - 0.5) * 2;
+      ball.z = serveTop ? -4 : 4;
+      ball.vx = (Math.random() - 0.5) * 0.12;
+      ball.vz = serveTop ? 0.16 : -0.16;
+      ball.holder = null;
+      setDirectFlipperShot(false);
+      teammates.forEach(p => { p.hasBall = false; p.kickCooldown = 40; });
+    }
+
+    // --- FLIPPERS ---
+    class Flipper3D {
+      constructor(pivotX, pivotZ, length, isLeft) {
+        this.pivotX = pivotX;
+        this.pivotZ = pivotZ;
+        this.length = length;
+        this.isLeft = isLeft;
+
+        this.restAngle = isLeft ? 0.42 : Math.PI - 0.42;
+        this.pressedAngle = isLeft ? -0.52 : Math.PI + 0.52;
+        this.angle = this.restAngle;
+        this.angVel = 0;
+        this.isPressed = false;
+
+        this.group = new THREE.Group();
+        this.group.position.set(pivotX, 0.3, pivotZ);
+        scene.add(this.group);
+
+        const flipperMesh = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.24, 0.32, length, 16),
+          new THREE.MeshLambertMaterial({ color: 0xffffff })
+        );
+        flipperMesh.castShadow = true;
+        flipperMesh.position.set(0, 0, length / 2);
+        flipperMesh.rotation.x = Math.PI / 2;
+        this.group.add(flipperMesh);
+
+        const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.6, 16), new THREE.MeshLambertMaterial({ color: 0xd63031 }));
+        this.group.add(pin);
+      }
+
+      update() {
+        const target = this.isPressed ? this.pressedAngle : this.restAngle;
+        const prev = this.angle;
+        this.angle += (target - this.angle) * 0.44;
+        this.angVel = this.angle - prev;
+        this.group.rotation.y = -this.angle + Math.PI / 2;
+      }
+
+      getTip() {
+        return {
+          x: this.pivotX + Math.cos(this.angle) * this.length,
+          z: this.pivotZ + Math.sin(this.angle) * this.length
+        };
+      }
+    }
+
+    const leftFlipper = new Flipper3D(-2.8, 9.6, 2.4, true);
+    const rightFlipper = new Flipper3D(2.8, 9.6, 2.4, false);
+
+    // --- MODELO 3D LOW-POLY DE JOGADOR ---
+    function createHumanMesh(shirtColor) {
+      const g = new THREE.Group();
+      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.75, 0.42), new THREE.MeshLambertMaterial({ color: shirtColor }));
+      torso.position.y = 0.85;
+      torso.castShadow = true;
+      g.add(torso);
+
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 12), new THREE.MeshLambertMaterial({ color: 0xffd1a4 }));
+      head.position.y = 1.4;
+      g.add(head);
+
+      const legMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+      const legL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.5, 0.22), legMat);
+      legL.position.set(-0.16, 0.25, 0);
+      legL.castShadow = true;
+      const legR = legL.clone();
+      legR.position.x = 0.16;
+      g.add(legL, legR);
+
+      // Estrelas de Nocaute
+      const stars = new THREE.Group();
+      for (let i = 0; i < 3; i++) {
+        const star = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshBasicMaterial({ color: 0xf1c40f }));
+        star.position.set(Math.cos((i * Math.PI * 2) / 3) * 0.4, 1.7, Math.sin((i * Math.PI * 2) / 3) * 0.4);
+        stars.add(star);
+      }
+      stars.visible = false;
+      g.add(stars);
+      g.stars = stars;
+
+      return g;
+    }
+
+    // --- GOLEIRO (CPU) NO GOL DO TOPO ---
+    const goalkeeperMesh = createHumanMesh(0xe67e22); // Goleiro Laranja
+    scene.add(goalkeeperMesh);
+
+    const goalkeeper = {
+      x: 0,
+      z: -10.0,
+      minX: -2.4,
+      maxX: 2.4,
+      vx: 0.06,
+      update() {
+        // Goleiro acompanha a trajetória da bola para fechar os cantos
+        if (ball.z < -2) {
+          const targetX = Math.max(this.minX, Math.min(this.maxX, ball.x));
+          this.x += (targetX - this.x) * 0.11;
+        } else {
+          this.x += this.vx;
+          if (this.x < this.minX || this.x > this.maxX) this.vx *= -1;
+        }
+        goalkeeperMesh.position.set(this.x, 0, this.z);
+      }
+    };
+
+    // --- COMPANHEIROS DE EQUIPE (DO SEU TIME - P1) ---
+    class Teammate {
+      constructor(id, baseX, baseZ, isStriker = false) {
+        this.id = id;
+        this.baseX = baseX;
+        this.baseZ = baseZ;
+        this.x = baseX;
+        this.z = baseZ;
+        this.radius = 0.65;
+        this.isStriker = isStriker;
+
+        this.isKnockedDown = false;
+        this.stunTimer = 0;
+        this.dir = Math.random() < 0.5 ? 1 : -1;
+        this.hasBall = false;
+        this.touchTimer = 0;
+        this.kickCooldown = 0;
+
+        this.mesh = createHumanMesh(0x0c2461); // Camisa Azul do seu time
+        scene.add(this.mesh);
+      }
+
+      update() {
+        // Estado: Nocauteado no chão
+        if (this.stunTimer > 0) {
+          this.stunTimer--;
+          this.mesh.rotation.x = -Math.PI / 2; // Caído
+          this.mesh.position.y = 0.2;
+          this.mesh.stars.visible = true;
+          this.mesh.stars.rotation.y += 0.15;
+
+          if (this.stunTimer === 0) {
+            this.isKnockedDown = false;
+            this.mesh.rotation.x = 0;
+            this.mesh.position.y = 0;
+            this.mesh.stars.visible = false;
+          }
+          return;
+        }
+
+        if (this.kickCooldown > 0) this.kickCooldown--;
+
+        // Movimentação tática pelo gramado
+        if (!this.hasBall) {
+          this.x += 0.018 * this.dir;
+          if (Math.abs(this.x - this.baseX) > 1.2) this.dir *= -1;
+        }
+        this.mesh.position.set(this.x, 0, this.z);
+
+        // Se está com a bola no pé
+        if (this.hasBall) {
+          // Amortece e posiciona a bola à frente do corpo do jogador
+          const forwardOffset = -0.55; // Voltado para o gol de cima!
+          const targetBallX = this.x;
+          const targetBallZ = this.z + forwardOffset;
+
+          ball.x += (targetBallX - ball.x) * 0.25;
+          ball.z += (targetBallZ - ball.z) * 0.25;
+          ball.vx = 0;
+          ball.vz = 0;
+
+          this.touchTimer--;
+          if (this.touchTimer <= 0) {
+            this.executePlay();
+          }
+          return;
+        }
+
+        // Interação com a Bola em jogo
+        const dx = ball.x - this.x;
+        const dz = ball.z - this.z;
+        const dist = Math.hypot(dx, dz);
+
+        if (dist < this.radius + ball.radius && this.kickCooldown === 0 && !ball.holder) {
+          const ballSpeed = Math.hypot(ball.vx, ball.vz);
+
+          // FOGO AMIGO: Só derruba se for CHUTE DIRETO FORTE DO SEU FLIPPER
+          if (ball.isDirectFlipperShot && ballSpeed > 0.26) {
+            this.isKnockedDown = true;
+            this.stunTimer = 190;
+            setDirectFlipperShot(false);
+            sfx.knockdown();
+
+            // Bola amortece com o impacto do corpo
+            ball.vx *= -0.3;
+            ball.vz *= -0.3;
+          } else {
+            // DOMÍNIO REALISTA: Bola mansa ou de rebote/tabela nas laterais
+            setDirectFlipperShot(false);
+            this.hasBall = true;
+            ball.holder = this;
+            this.touchTimer = 20; // 0.33s para ajeitar a bola no pé
+            sfx.kick();
+
+            // Gira o jogador de frente para o gol do topo
+            this.mesh.rotation.y = Math.PI; 
+          }
+        }
+      }
+
+      executePlay() {
+        this.hasBall = false;
+        ball.holder = null;
+        this.kickCooldown = 45;
+
+        // Procura companheiro livre mais adiantado (Z menor, mais perto do gol de cima)
+        const forwardTeammates = teammates.filter(t => t.id !== this.id && !t.isKnockedDown && t.z < this.z - 1.0);
+
+        // Se for o Centroavante ou estiver muito perto do gol: CHUTA NO GOL!
+        if (this.isStriker || this.z < -2.0 || forwardTeammates.length === 0) {
+          // Mira nos cantos da trave (esquerda ou direita) para deslocar o goleiro
+          const targetCornerX = Math.random() < 0.5 ? -2.4 : 2.4;
+          const targetGoalZ = -10.5;
+          const angle = Math.atan2(targetGoalZ - this.z, targetCornerX - this.x);
+          const shotPower = 0.38 + Math.random() * 0.06;
+
+          ball.vx = Math.cos(angle) * shotPower;
+          ball.vz = Math.sin(angle) * shotPower;
+          this.mesh.rotation.y = Math.atan2(this.x - targetCornerX, this.z - targetGoalZ);
+          sfx.powerKick();
+        } else {
+          // PASSE / TABELINHA: Toca rasteiro e preciso para o companheiro melhor posicionado
+          const receiver = forwardTeammates[Math.floor(Math.random() * forwardTeammates.length)];
+          // Leve antecipação do passe à frente do companheiro
+          const leadZ = receiver.z - 0.4;
+          const angle = Math.atan2(leadZ - this.z, receiver.x - this.x);
+          const dist = Math.hypot(receiver.x - this.x, leadZ - this.z);
+          const passPower = Math.min(0.35, Math.max(0.24, dist * 0.055));
+
+          ball.vx = Math.cos(angle) * passPower;
+          ball.vz = Math.sin(angle) * passPower;
+          this.mesh.rotation.y = Math.atan2(this.x - receiver.x, this.z - leadZ);
+          sfx.kick();
+        }
+      }
+    }
+
+    // Posicionamento tático do time atacando para cima
+    const teammates = [
+      new Teammate(1, 0, -4.2, true),     // Centroavante (Striker)
+      new Teammate(2, -2.8, -1.2, false), // Ponta Esquerda
+      new Teammate(3, 2.8, -1.2, false),  // Ponta Direita
+      new Teammate(4, 0, 3.2, false)      // Meia Armador (perto dos flippers)
+    ];
+
+    // --- FÍSICA ROBUSTA SEM TUNNELING ---
+    function closestPointOnSegment(px, pz, x1, z1, x2, z2) {
+      const dx = x2 - x1;
+      const dz = z2 - z1;
+      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (pz - z1) * dz) / (dx * dx + dz * dz)));
+      return { x: x1 + t * dx, z: z1 + t * dz, t: t };
+    }
+
+    function checkWallCollision() {
+      wallSegments.forEach(w => {
+        const p = closestPointOnSegment(ball.x, ball.z, w.x1, w.z1, w.x2, w.z2);
+        const dx = ball.x - p.x;
+        const dz = ball.z - p.z;
+        const dist = Math.hypot(dx, dz);
+
+        if (dist < ball.radius + 0.28) {
+          const nx = dx / (dist || 1);
+          const nz = dz / (dist || 1);
+          ball.x = p.x + nx * (ball.radius + 0.28);
+          ball.z = p.z + nz * (ball.radius + 0.28);
+
+          const dot = ball.vx * nx + ball.vz * nz;
+          if (dot < 0) {
+            ball.vx -= 1.85 * dot * nx;
+            ball.vz -= 1.85 * dot * nz;
+            setDirectFlipperShot(false); // Bateu na lateral: perde poder de nocaute!
+            sfx.wall();
+          }
+        }
+      });
+    }
+
+    function checkFlipperCollision(flipper) {
+      const tip = flipper.getTip();
+      const p = closestPointOnSegment(ball.x, ball.z, flipper.pivotX, flipper.pivotZ, tip.x, tip.z);
+      const dx = ball.x - p.x;
+      const dz = ball.z - p.z;
+      const dist = Math.hypot(dx, dz);
+
+      if (dist < ball.radius + 0.25) {
+        const nx = dx / (dist || 1);
+        const nz = dz / (dist || 1);
+        ball.x = p.x + nx * (ball.radius + 0.25);
+        ball.z = p.z + nz * (ball.radius + 0.25);
+
+        const flipperSpeed = flipper.angVel * p.t * flipper.length * 1.9;
+        const perpX = -Math.sin(flipper.angle);
+        const perpZ = Math.cos(flipper.angle);
+
+        ball.vx += perpX * flipperSpeed;
+        ball.vz += perpZ * flipperSpeed;
+
+        const dot = ball.vx * nx + ball.vz * nz;
+        if (dot < 0) {
+          ball.vx -= 1.6 * dot * nx;
+          ball.vz -= 1.6 * dot * nz;
+        }
+
+        const finalSpeed = Math.hypot(ball.vx, ball.vz);
+        if (Math.abs(flipper.angVel) > 0.05 && finalSpeed > 0.28) {
+          setDirectFlipperShot(true); // Super Chute armado!
+          sfx.powerKick();
+        } else {
+          sfx.wall();
+        }
+      }
+    }
+
+    function showBanner(text) {
+      banner.innerText = text;
+      banner.style.display = 'block';
+      setTimeout(() => banner.style.display = 'none', 1400);
+    }
+
+    // --- LOOP PRINCIPAL DO JOGO ---
+    function animate() {
+      requestAnimationFrame(animate);
+
+      leftFlipper.update();
+      rightFlipper.update();
+      goalkeeper.update();
+      teammates.forEach(t => t.update());
+
+      // 8 Sub-passos de física
+      const SUB_STEPS = 8;
+      for (let s = 0; s < SUB_STEPS; s++) {
+        if (!ball.holder) {
+          ball.vz += ball.gravity / SUB_STEPS;
+          ball.vx *= Math.pow(ball.friction, 1 / SUB_STEPS);
+          ball.vz *= Math.pow(ball.friction, 1 / SUB_STEPS);
+
+          ball.x += ball.vx / SUB_STEPS;
+          ball.z += ball.vz / SUB_STEPS;
+
+          checkWallCollision();
+          checkFlipperCollision(leftFlipper);
+          checkFlipperCollision(rightFlipper);
+
+          // Defesa do Goleiro no Gol de Cima
+          const gdx = ball.x - goalkeeper.x;
+          const gdz = ball.z - goalkeeper.z;
+          const gdist = Math.hypot(gdx, gdz);
+          if (gdist < ball.radius + 0.52) {
+            const nx = gdx / gdist;
+            const nz = gdz / gdist;
+            ball.x = goalkeeper.x + nx * (ball.radius + 0.52);
+            ball.z = goalkeeper.z + nz * (ball.radius + 0.52);
+
+            // Espalma a bola de volta para o meio-campo
+            ball.vx = nx * 0.28 + (Math.random() - 0.5) * 0.1;
+            ball.vz = Math.abs(nz) * 0.34;
+            setDirectFlipperShot(false);
+            sfx.wall();
+          }
+        }
+      }
+
+      // GOL DO SEU TIME (P1) NO GOLEIRO CPU
+      if (ball.z < -10.5 && Math.abs(ball.x) < 3.2) {
+        scoreP1++;
+        scoreP1El.innerText = scoreP1;
+        showBanner("GOOOOOOL DO SEU TIME!");
+        sfx.goal();
+        resetBall(false);
+      }
+
+      // GOL DA CPU (A bola vazou pelos seus flippers)
+      if (ball.z > 12.0) {
+        scoreCPU++;
+        scoreCPUEl.innerText = scoreCPU;
+        showBanner("GOL DA CPU!");
+        resetBall(true);
+      }
+
+      // Rotação física e posição da bola
+      ballMesh.position.set(ball.x, 0.38, ball.z);
+      if (!ball.holder) {
+        ballMesh.rotation.x += ball.vz * 1.8;
+        ballMesh.rotation.z -= ball.vx * 1.8;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // --- CONTROLES (TECLADO E MULTI-TOUCH) ---
+    window.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+      if (e.key === 'ArrowLeft' || key === 'a') leftFlipper.isPressed = true;
+      if (e.key === 'ArrowRight' || key === 'd') rightFlipper.isPressed = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const key = e.key.toLowerCase();
+      if (e.key === 'ArrowLeft' || key === 'a') leftFlipper.isPressed = false;
+      if (e.key === 'ArrowRight' || key === 'd') rightFlipper.isPressed = false;
+    });
+
+    function updateTouchControls(e) {
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      let left = false;
+      let right = false;
+
+      for (let i = 0; i < e.touches.length; i++) {
+        const x = e.touches[i].clientX - rect.left;
+        if (x < rect.width / 2) left = true;
+        else right = true;
+      }
+      leftFlipper.isPressed = left;
+      rightFlipper.isPressed = right;
+    }
+
+    container.addEventListener('touchstart', updateTouchControls, { passive: false });
+    container.addEventListener('touchmove', updateTouchControls, { passive: false });
+    container.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      if (e.touches.length === 0) {
+        leftFlipper.isPressed = false;
+        rightFlipper.isPressed = false;
+      } else {
+        updateTouchControls(e);
+      }
+    }, { passive: false });
+
+    container.addEventListener('mousedown', (e) => {
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      if (x < rect.width / 2) leftFlipper.isPressed = true;
+      else rightFlipper.isPressed = true;
+    });
+
+    window.addEventListener('mouseup', () => {
+      leftFlipper.isPressed = false;
+      rightFlipper.isPressed = false;
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    });
+
+    resetBall(true);
+    animate();
+  </script>
+</body>
+</html>

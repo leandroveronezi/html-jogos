@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BATALHA NAVAL // ESQUADRA TÁTICA EM CADERNO</title>
+<style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+  }
+  body {
+    background-color: #c4cdd6;
+    font-family: 'Courier New', Courier, monospace;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+    padding: 10px;
+  }
+  #notebook-frame {
+    position: relative;
+    background: #fbf9f0;
+    box-shadow: 0 16px 45px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.12);
+    border-radius: 4px;
+    border: 1px solid #d4ceba;
+  }
+  canvas {
+    display: block;
+    cursor: default;
+  }
+  /* Botões estilo bilhete de papel recortado colado com fita */
+  .doodle-btn {
+    position: absolute;
+    background: #fffdf5;
+    border: 1.5px solid #0a358c;
+    color: #0a358c;
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: bold;
+    font-size: 11px;
+    padding: 7px 14px;
+    cursor: pointer;
+    box-shadow: 2px 2px 0px rgba(10, 53, 140, 0.4);
+    transform: rotate(-0.5deg);
+    transition: all 0.12s ease;
+  }
+  .doodle-btn:hover {
+    transform: scale(1.04) rotate(0deg);
+    background: #fff8d6;
+  }
+  .doodle-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+  }
+  #btn-rotate { top: 480px; left: 630px; }
+  #btn-random  { top: 525px; left: 630px; }
+  #btn-start   { top: 520px; left: 785px; border-color: #bd1313; color: #bd1313; font-size: 13px; }
+  #btn-newgame { bottom: 15px; right: 25px; }
+</style>
+</head>
+<body>
+
+<div id="notebook-frame">
+  <canvas id="navalCanvas" width="1040" height="670"></canvas>
+  
+  <!-- Controles da Fase de Planejamento -->
+  <button id="btn-rotate" class="doodle-btn">↻ GIRAR NAVIO [R]</button>
+  <button id="btn-random" class="doodle-btn">⚡ AUTO-POSICIONAR</button>
+  <button id="btn-start" class="doodle-btn">⚔ INICIAR BATALHA!</button>
+  
+  <!-- Controle da Fase de Combate -->
+  <button id="btn-newgame" class="doodle-btn" style="display:none;">NOVA MISSÃO [R]</button>
+</div>
+
+<script>
+/**
+ * BATALHA NAVAL REALISTA // ESTILO CANETA ESFEROGRÁFICA EM FOLHA DE CADERNO
+ */
+
+const canvas = document.getElementById('navalCanvas');
+const ctx = canvas.getContext('2d');
+
+const btnRotate = document.getElementById('btn-rotate');
+const btnRandom = document.getElementById('btn-random');
+const btnStart = document.getElementById('btn-start');
+const btnNewGame = document.getElementById('btn-newgame');
+
+// Cores de caneta realista
+const PEN_BLUE   = '#0a358c';   // Tinta azul caneta BIC 0.7mm
+const PEN_BLUE_L = 'rgba(10, 53, 140, 0.3)';
+const PEN_RED    = '#bd1313';   // Caneta vermelha de marcação
+const PEN_BLACK  = '#1b1d20';   // Caneta preta de rasura
+const PAPER_BG   = '#fbf9f0';   // Papel sulfite pautado
+const GRID_COLOR = 'rgba(75, 125, 195, 0.18)'; // Quadriculado suave escolar
+
+const GRID_SIZE = 10;
+const CELL_SIZE = 32;
+
+// Origens dos Mapas
+const SETUP_ORIGIN = { x: 140, y: 155 };
+const BATTLE_ENEMY = { x: 120, y: 155 };
+const BATTLE_PLAYER = { x: 570, y: 155 };
+
+// Catálogo das 5 Embarcações Navais
+const SHIP_CONFIGS = [
+  { id: 0, type: 'CARRIER',    name: 'PORTA-AVIÕES',     size: 5, desc: 'Pista com caças a jato' },
+  { id: 1, type: 'BATTLESHIP', name: 'ENCOURAÇADO',      size: 4, desc: 'Torres duplas de 406mm' },
+  { id: 2, type: 'CRUISER',    name: 'CRUZADOR LEVE',    size: 3, desc: 'Mastros e mísseis antinavio' },
+  { id: 3, type: 'SUBMARINE',  name: 'SUBMARINO NUCLEAR',size: 3, desc: 'Periscópios e tubos de torpedo' },
+  { id: 4, type: 'DESTROYER',  name: 'CONTRATORPEDEIRO', size: 2, desc: 'Canhão de proa e cargas' }
+];
+
+// Estados do Jogo: 'SETUP' (Posicionamento) | 'BATTLE' (Combate)
+let gameState = 'SETUP';
+
+// Frota do Jogador
+let playerShips = [];
+let playerFleetPlaced = false;
+
+// Frota Inimiga
+let enemyShips = [];
+
+// Matrizes de Tiro
+let playerGrid = [];
+let enemyGrid = [];
+let playerShots = [];
+let enemyShots = [];
+
+// Dados de Interação no Posicionamento
+let selectedShipId = null;
+let currentRotationH = true; // true = Horizontal, false = Vertical
+let hoveredGridCell = { r: -1, c: -1 };
+
+// Turno de Combate e IA
+let turn = 'PLAYER';
+let gameOver = false;
+let victory = false;
+let messageLog = "SALA DE ESTRATÉGIA // POSICIONE SEUS 5 NAVIOS NO MAPA DE DEFESA.";
+let combatAlert = "";
+let cpuHuntQueue = [];
+
+// --- GERADOR DE SONS DE CANETA (Web Audio API) ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playPenSound(type = 'scratch') {
+  try {
+    const dur = type === 'hit' ? 0.24 : (type === 'click' ? 0.05 : 0.09);
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * dur, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      if (type === 'hit') {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioCtx.sampleRate * 0.06));
+      } else {
+        data[i] = (Math.random() * 2 - 1) * (type === 'click' ? 0.15 : Math.sin(i * 0.06) * 0.2);
+      }
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = type === 'hit' ? 'lowpass' : 'bandpass';
+    filter.frequency.value = type === 'hit' ? 550 : 2600;
+    src.connect(filter);
+    filter.connect(audioCtx.destination);
+    src.start();
+  } catch(e) {}
+}
+
+// Inicialização da Fase de Posicionamento
+function initSetup() {
+  gameState = 'SETUP';
+  playerGrid = createEmptyGrid();
+  enemyGrid = createEmptyGrid();
+  playerShots = createEmptyGrid();
+  enemyShots = createEmptyGrid();
+  cpuHuntQueue = [];
+  gameOver = false;
+  victory = false;
+  turn = 'PLAYER';
+  selectedShipId = null;
+  currentRotationH = true;
+  messageLog = "SALA DE ESTRATÉGIA // CLIQUE EM UM NAVIO DA LISTA PARA POSICIONÁ-LO.";
+  combatAlert = "";
+
+  playerShips = SHIP_CONFIGS.map(s => ({
+    ...s,
+    placed: false,
+    r: -1,
+    c: -1,
+    horizontal: true
+  }));
+
+  btnRotate.style.display = 'block';
+  btnRandom.style.display = 'block';
+  btnStart.style.display = 'block';
+  btnNewGame.style.display = 'none';
+
+  render();
+}
+
+function createEmptyGrid() {
+  return Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
+}
+
+// ==========================================================
+// DESENHOS TÉCNICOS DETALHADOS DOS NAVIOS À CANETA AZUL
+// ==========================================================
+
+function drawDetailedShip(originX, originY, ship, isPreview = false, isValid = true, isSunk = false) {
+  const { size, horizontal, type } = ship;
+  const len = size * CELL_SIZE;
+  const w = CELL_SIZE;
+
+  ctx.save();
+  ctx.translate(originX, originY);
+
+  if (!horizontal) {
+    ctx.translate(w, 0);
+    ctx.rotate(Math.PI / 2);
+  }
+
+  // Cor do traço
+  let mainColor = PEN_BLUE;
+  if (isPreview) mainColor = isValid ? PEN_BLUE : PEN_RED;
+  else if (isSunk) mainColor = PEN_BLACK;
+
+  ctx.strokeStyle = mainColor;
+  ctx.fillStyle = PAPER_BG;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // 1. CASCO DO NAVIO COM PROA HIDRODINÂMICA E POPA
+  ctx.beginPath();
+  ctx.moveTo(8, 5);
+  ctx.lineTo(len - 18, 5);
+  ctx.quadraticCurveTo(len - 2, 8, len - 2, w / 2); // Bico afilado da proa
+  ctx.quadraticCurveTo(len - 2, w - 8, len - 18, w - 5);
+  ctx.lineTo(8, w - 5);
+  ctx.quadraticCurveTo(2, w / 2, 8, 5); // Popa
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Hachuras diagonais de profundidade do casco (sombra técnica à caneta)
+  ctx.save();
+  ctx.strokeStyle = mainColor;
+  ctx.lineWidth = 0.8;
+  for (let x = 12; x < len - 15; x += 6) {
+    ctx.beginPath();
+    ctx.moveTo(x, w - 5);
+    ctx.lineTo(x + 5, w - 10);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 2. DETALHES DE CONVÉS ESPECÍFICOS POR MODELO
+  if (type === 'CARRIER') {
+    // === PORTA-AVIÕES (Pista de pouso, ilha lateral e caças) ===
+    // Faixa central tracejada da pista
+    ctx.save();
+    ctx.strokeStyle = mainColor;
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.moveTo(12, w / 2);
+    ctx.lineTo(len - 24, w / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Ilha de comando na borda
+    ctx.strokeRect(len * 0.58, 3, 20, 6);
+    ctx.beginPath();
+    ctx.moveTo(len * 0.64, 3); ctx.lineTo(len * 0.64, -2); // Antena
+    ctx.stroke();
+
+    // 2 Caças a jato estacionados desenhados em traço fino
+    const drawFighter = (fx, fy) => {
+      ctx.beginPath();
+      ctx.moveTo(fx - 4, fy); ctx.lineTo(fx + 5, fy); // Fuselagem
+      ctx.moveTo(fx - 1, fy - 5); ctx.lineTo(fx + 2, fy); ctx.lineTo(fx - 1, fy + 5); // Asas delta
+      ctx.stroke();
+    };
+    drawFighter(len * 0.25, w / 2 - 5);
+    drawFighter(len * 0.38, w / 2 + 5);
+    ctx.restore();
+
+  } else if (type === 'BATTLESHIP') {
+    // === ENCOURAÇADO (Torres duplas de artilharia pesada e castelo central) ===
+    // Castelo de comando central
+    ctx.strokeRect(len * 0.42, w * 0.22, len * 0.18, w * 0.56);
+    ctx.strokeRect(len * 0.47, w * 0.32, len * 0.08, w * 0.36);
+
+    // Mastro com radar giratório
+    ctx.beginPath();
+    ctx.moveTo(len * 0.51, w * 0.22); ctx.lineTo(len * 0.51, w * 0.1);
+    ctx.moveTo(len * 0.47, w * 0.1); ctx.lineTo(len * 0.55, w * 0.1);
+    ctx.stroke();
+
+    // 3 Torres de Artilharia Duplas com canos longos
+    const drawTurret = (tx, ty, angle = 0) => {
+      ctx.beginPath();
+      ctx.arc(tx, ty, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Canos duplos
+      ctx.beginPath();
+      ctx.moveTo(tx + 4, ty - 2); ctx.lineTo(tx + 14, ty - 2);
+      ctx.moveTo(tx + 4, ty + 2); ctx.lineTo(tx + 14, ty + 2);
+      ctx.stroke();
+    };
+    drawTurret(len * 0.24, w / 2); // Torre de ré
+    drawTurret(len * 0.72, w / 2); // Torre de vante 1
+    drawTurret(len * 0.86, w / 2); // Torre de vante 2
+
+  } else if (type === 'CRUISER') {
+    // === CRUZADOR (Canhão de proa, chaminés aletadas e lançador de mísseis) ===
+    // Torre de canhão de proa
+    ctx.beginPath();
+    ctx.arc(len * 0.78, w / 2, 5, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(len * 0.82, w / 2); ctx.lineTo(len * 0.94, w / 2); // Cano longo
+    ctx.stroke();
+
+    // Ponte e Chaminé
+    ctx.strokeRect(len * 0.45, w * 0.28, len * 0.18, w * 0.44);
+    ctx.beginPath();
+    ctx.arc(len * 0.34, w / 2, 4, 0, Math.PI * 2); // Chaminé
+    ctx.stroke();
+
+    // Lançador de mísseis de ré (caixas hachuradas)
+    ctx.strokeRect(len * 0.16, w * 0.25, 12, w * 0.5);
+
+  } else if (type === 'SUBMARINE') {
+    // === SUBMARINO NUCLEAR (Forma de gota/charuto, vela central e hélice) ===
+    // Vela / Conning Tower central
+    ctx.strokeRect(len * 0.48, w * 0.28, len * 0.16, w * 0.44);
+    // Periscópios
+    ctx.beginPath();
+    ctx.moveTo(len * 0.53, w * 0.28); ctx.lineTo(len * 0.53, w * 0.14);
+    ctx.lineTo(len * 0.56, w * 0.14);
+    ctx.moveTo(len * 0.58, w * 0.28); ctx.lineTo(len * 0.58, w * 0.18);
+    ctx.stroke();
+
+    // Planos de mergulho laterais
+    ctx.strokeRect(len * 0.50, w * 0.15, 10, w * 0.7);
+
+    // Hélice de propulsão na popa
+    ctx.beginPath();
+    ctx.moveTo(3, w * 0.2); ctx.lineTo(5, w / 2); ctx.lineTo(3, w * 0.8);
+    ctx.stroke();
+
+  } else if (type === 'DESTROYER') {
+    // === CONTRATORPEDEIRO (Barco rápido, canhão e cargas de profundidade) ===
+    // Canhão de proa
+    ctx.beginPath();
+    ctx.arc(len * 0.72, w / 2, 4.5, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(len * 0.76, w / 2); ctx.lineTo(len * 0.88, w / 2);
+    ctx.stroke();
+
+    // Cabine com visor
+    ctx.strokeRect(len * 0.38, w * 0.25, len * 0.22, w * 0.5);
+
+    // Cargas de profundidade na popa (dois tambores)
+    ctx.strokeRect(len * 0.12, w * 0.2, 5, 6);
+    ctx.strokeRect(len * 0.12, w * 0.6, 5, 6);
+  }
+
+  ctx.restore();
+}
+
+// ==========================================================
+// FUNÇÕES DE TRAÇADO MANUAL À CANETA
+// ==========================================================
+
+function drawWobblyLine(x1, y1, x2, y2, color, width = 1.2) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  const dist = Math.hypot(x2 - x1, y2 - y1);
+  const steps = Math.max(3, Math.floor(dist / 12));
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const nx = x1 + (x2 - x1) * t + (Math.sin(i * 8 + x1) * 0.7);
+    const ny = y1 + (y2 - y1) * t + (Math.cos(i * 6 + y1) * 0.7);
+    ctx.lineTo(nx, ny);
+  }
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Rabiscos frenéticos de explosão com caneta vermelha
+function drawExplosionScribble(x, y, w, h) {
+  ctx.save();
+  ctx.strokeStyle = PEN_RED;
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+
+  ctx.beginPath();
+  for (let i = 0; i < 12; i++) {
+    const py = y + 3 + (i / 11) * (h - 6);
+    const px1 = x + 3 + (Math.sin(i * 5) * 2);
+    const px2 = x + w - 3 + (Math.cos(i * 3) * 2);
+    if (i % 2 === 0) { ctx.lineTo(px1, py); ctx.lineTo(px2, py); }
+    else { ctx.lineTo(px2, py); ctx.lineTo(px1, py); }
+  }
+  ctx.stroke();
+
+  // "X" de impacto sobreposto
+  drawWobblyLine(x + 4, y + 4, x + w - 4, y + h - 4, PEN_RED, 2.2);
+  drawWobblyLine(x + w - 4, y + 4, x + 4, y + h - 4, PEN_RED, 2.2);
+  ctx.restore();
+}
+
+// Tiro na água: círculo com ondinhas de caneta azul
+function drawWaterSplash(cx, cy) {
+  ctx.save();
+  ctx.strokeStyle = PEN_BLUE;
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  const r = 9;
+  for (let a = 0; a <= Math.PI * 2 + 0.5; a += 0.4) {
+    const rad = r + (Math.sin(a * 4) * 2.2);
+    const px = cx + Math.cos(a) * rad;
+    const py = cy + Math.sin(a) * rad;
+    if (a === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  // Ondinha
+  ctx.beginPath();
+  ctx.moveTo(cx - 5, cy + 2);
+  ctx.quadraticCurveTo(cx, cy - 2, cx + 5, cy + 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Rasura preta quando afunda o navio por completo
+function drawSunkBlackout(x, y, w, h) {
+  ctx.save();
+  ctx.strokeStyle = PEN_BLACK;
+  ctx.lineWidth = 1.8;
+  for (let i = 0; i < 4; i++) {
+    drawWobblyLine(x - 2, y + 5 + i * 7, x + w + 2, y + 3 + i * 7, PEN_BLACK, 1.8);
+  }
+  ctx.restore();
+}
+
+// ==========================================================
+// RENDERIZAÇÃO DA FOLHA DE CADERNO ESCOLAR
+// ==========================================================
+
+function drawNotebookSheet() {
+  ctx.fillStyle = PAPER_BG;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Grade quadriculada suave
+  ctx.strokeStyle = GRID_COLOR;
+  ctx.lineWidth = 0.8;
+  const sq = 16;
+  ctx.beginPath();
+  for (let x = 0; x < canvas.width; x += sq) {
+    ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+  }
+  for (let y = 0; y < canvas.height; y += sq) {
+    ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
+  }
+  ctx.stroke();
+
+  // Furos de fichário na lateral esquerda
+  for (let y = 50; y < canvas.height - 30; y += 76) {
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.beginPath();
+    ctx.arc(33, y + 1, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c4cdd6';
+    ctx.beginPath();
+    ctx.arc(32, y, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(10, 53, 140, 0.4)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  // Margem dupla vermelha escolar
+  drawWobblyLine(76, 0, 76, canvas.height, PEN_RED, 1.4);
+  drawWobblyLine(80, 0, 80, canvas.height, PEN_RED, 0.9);
+
+  // Cabeçalho à caneta
+  ctx.font = "bold 19px 'Courier New'";
+  ctx.fillStyle = PEN_BLUE;
+  ctx.fillText("BATALHA NAVAL // ESTRATÉGIA TÁTICA", 110, 46);
+  drawWobblyLine(110, 54, 520, 56, PEN_BLUE, 2);
+  drawWobblyLine(112, 58, 505, 60, PEN_BLUE, 1.2);
+
+  ctx.font = "bold 11px 'Courier New'";
+  ctx.fillStyle = PEN_BLACK;
+  ctx.fillText("DISCIPLINA: GEOMETRIA NAVAL", 740, 42);
+  ctx.fillText(`FASE: ${gameState === 'SETUP' ? 'DISPOSIÇÃO DE TROPAS' : 'FOGO CRUZADO'}`, 740, 58);
+}
+
+// Grade de Coordenadas (A-J, 1-10)
+function drawGridBox(origin, title, subtitle, isRed = false) {
+  const { x, y } = origin;
+
+  ctx.font = "bold 14px 'Courier New'";
+  ctx.fillStyle = isRed ? PEN_RED : PEN_BLUE;
+  ctx.fillText(title, x, y - 30);
+
+  ctx.font = "11px 'Courier New'";
+  ctx.fillStyle = PEN_BLACK;
+  ctx.fillText(subtitle, x, y - 14);
+
+  // Letras e Números
+  const letters = "ABCDEFGHIJ";
+  ctx.font = "bold 12px 'Courier New'";
+  ctx.fillStyle = PEN_BLUE;
+
+  for (let c = 0; c < GRID_SIZE; c++) {
+    ctx.fillText((c + 1).toString(), x + c * CELL_SIZE + 11, y - 4);
+  }
+  for (let r = 0; r < GRID_SIZE; r++) {
+    ctx.fillText(letters[r], x - 18, y + r * CELL_SIZE + 21);
+  }
+
+  // Linhas da grade desenhadas à mão
+  for (let r = 0; r <= GRID_SIZE; r++) {
+    drawWobblyLine(x, y + r * CELL_SIZE, x + GRID_SIZE * CELL_SIZE, y + r * CELL_SIZE, PEN_BLUE, 1.2);
+  }
+  for (let c = 0; c <= GRID_SIZE; c++) {
+    drawWobblyLine(x + c * CELL_SIZE, y, x + c * CELL_SIZE, y + GRID_SIZE * CELL_SIZE, PEN_BLUE, 1.2);
+  }
+}
+
+// ==========================================================
+// RENDERIZAÇÃO: FASE 1 - ESTALEIRO DE POSICIONAMENTO
+// ==========================================================
+
+function drawSetupScreen() {
+  drawGridBox(SETUP_ORIGIN, "MAPA DE DEFESA DA ESQUADRA", "[POSICIONE SUAS EMBARCAÇÕES]");
+
+  // Navios já fixados no mapa
+  playerShips.forEach(ship => {
+    if (ship.placed) {
+      const sx = SETUP_ORIGIN.x + ship.c * CELL_SIZE;
+      const sy = SETUP_ORIGIN.y + ship.r * CELL_SIZE;
+      drawDetailedShip(sx, sy, ship, false);
+    }
+  });
+
+  // Hangar / Doca Seca na Lateral Direita
+  const trayX = 520;
+  const trayY = 125;
+
+  ctx.font = "bold 14px 'Courier New'";
+  ctx.fillStyle = PEN_BLUE;
+  ctx.fillText("DOCA SECA // CLIQUE NO NAVIO PARA ESCOLHER:", trayX, trayY);
+
+  playerShips.forEach((ship, idx) => {
+    const itemY = trayY + 22 + (idx * 64);
+
+    // Borda de seleção do item
+    const isSelected = (selectedShipId === ship.id);
+    ctx.save();
+    ctx.strokeStyle = isSelected ? PEN_RED : (ship.placed ? 'rgba(10,53,140,0.3)' : PEN_BLUE);
+    ctx.lineWidth = isSelected ? 2 : 1;
+    ctx.strokeRect(trayX, itemY, 440, 56);
+
+    ctx.font = "bold 12px 'Courier New'";
+    ctx.fillStyle = isSelected ? PEN_RED : (ship.placed ? 'rgba(10,53,140,0.4)' : PEN_BLUE);
+    ctx.fillText(`${idx + 1}. ${ship.name} (${ship.size} CÉLULAS)`, trayX + 10, itemY + 16);
+
+    ctx.font = "10px 'Courier New'";
+    ctx.fillStyle = PEN_BLACK;
+    ctx.fillText(ship.desc, trayX + 10, itemY + 30);
+    ctx.fillText(ship.placed ? "[JÁ POSICIONADO NO MAPA - CLIQUE P/ RECOLOCAR]" : "[DISPONÍVEL P/ EMBARQUE]", trayX + 10, itemY + 46);
+
+    // Miniatura ilustrada na direita do botão
+    const previewScale = 0.55;
+    ctx.save();
+    ctx.translate(trayX + 310, itemY + 14);
+    ctx.scale(previewScale, previewScale);
+    drawDetailedShip(0, 0, { ...ship, horizontal: true }, false);
+    ctx.restore();
+
+    ctx.restore();
+  });
+
+  // Instruções de Teclado no Rodapé
+  ctx.font = "bold 11px 'Courier New'";
+  ctx.fillStyle = PEN_BLUE;
+  ctx.fillText("COMANDOS: [R] ou [BOTÃO DIREITO] GIRA O NAVIO (HORIZONTAL / VERTICAL)", 110, 520);
+  ctx.fillText("DICA: VOCÊ PODE CLICAR EM QUALQUER NAVIO JÁ COLOCADO PARA MOVER DE LUGAR!", 110, 540);
+
+  // Fantasma / Preview do Navio sob o Cursor
+  if (selectedShipId !== null && hoveredGridCell.r >= 0 && hoveredGridCell.c >= 0) {
+    const activeShip = playerShips.find(s => s.id === selectedShipId);
+    if (activeShip) {
+      const valid = canPlaceShip(hoveredGridCell.r, hoveredGridCell.c, activeShip.size, currentRotationH, activeShip.id);
+      const ghostX = SETUP_ORIGIN.x + hoveredGridCell.c * CELL_SIZE;
+      const ghostY = SETUP_ORIGIN.y + hoveredGridCell.r * CELL_SIZE;
+
+      drawDetailedShip(ghostX, ghostY, { ...activeShip, horizontal: currentRotationH }, true, valid);
+    }
+  }
+
+  // Atualiza estado do botão INICIAR BATALHA
+  const allPlaced = playerShips.every(s => s.placed);
+  btnStart.style.opacity = allPlaced ? "1" : "0.45";
+  btnStart.style.pointerEvents = allPlaced ? "auto" : "none";
+}
+
+// ==========================================================
+// RENDERIZAÇÃO: FASE 2 - COMBATE REAL NA FOLHA DE CADERNO
+// ==========================================================
+
+function drawBattleScreen() {
+  drawGridBox(BATTLE_ENEMY, "RADAR INIMIGO (COORDENADAS DE TIRO)", "[CLIQUE PARA DISPARAR]", true);
+  drawGridBox(BATTLE_PLAYER, "NOSSA ESQUADRA (DEFESA)", "[ESTADO DA NOSSA FROTA]", false);
+
+  // 1. Desenha os Navios do Jogador com o Traço Detalhado à Caneta
+  playerShips.forEach(ship => {
+    const sx = BATTLE_PLAYER.x + ship.c * CELL_SIZE;
+    const sy = BATTLE_PLAYER.y + ship.r * CELL_SIZE;
+    const sunk = isShipSunk(playerGrid, enemyShots, ship.id);
+    drawDetailedShip(sx, sy, ship, false, true, sunk);
+  });
+
+  // 2. Disparos do Inimigo na nossa frota
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const shot = enemyShots[r][c];
+      const px = BATTLE_PLAYER.x + c * CELL_SIZE;
+      const py = BATTLE_PLAYER.y + r * CELL_SIZE;
+
+      if (shot === 'HIT') {
+        drawExplosionScribble(px, py, CELL_SIZE, CELL_SIZE);
+      } else if (shot === 'MISS') {
+        drawWaterSplash(px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+      }
+    }
+  }
+
+  // 3. Disparos feitos pelo Jogador no Radar Inimigo
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const shot = playerShots[r][c];
+      const px = BATTLE_ENEMY.x + c * CELL_SIZE;
+      const py = BATTLE_ENEMY.y + r * CELL_SIZE;
+
+      if (shot === 'HIT') {
+        drawExplosionScribble(px, py, CELL_SIZE, CELL_SIZE);
+
+        // Se o navio inimigo correspondente afundou, rasura com caneta preta
+        const targetShip = enemyGrid[r][c];
+        if (targetShip && isShipSunk(enemyGrid, playerShots, targetShip.id)) {
+          drawSunkBlackout(px, py, CELL_SIZE, CELL_SIZE);
+        }
+      } else if (shot === 'MISS') {
+        drawWaterSplash(px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+      }
+    }
+  }
+
+  // Checklist e Estado das Frotas no Rodapé
+  drawFleetChecklists();
+
+  // Relatório de Bordo / Mensagens
+  ctx.save();
+  drawWobblyLine(110, 595, 920, 595, PEN_BLUE, 1.2);
+  ctx.font = "bold 13px 'Courier New'";
+  ctx.fillStyle = turn === 'PLAYER' ? PEN_BLUE : PEN_RED;
+  ctx.fillText(`RELATÓRIO: ${messageLog}`, 120, 622);
+
+  if (combatAlert) {
+    ctx.font = "bold 12px 'Courier New'";
+    ctx.fillStyle = PEN_RED;
+    ctx.fillText(combatAlert, 120, 642);
+  }
+  ctx.restore();
+
+  // Carimbo de Vitória / Derrota
+  if (gameOver) {
+    drawGameOverStamp();
+  }
+}
+
+function drawFleetChecklists() {
+  const startY = 485;
+
+  // Nossa Frota
+  ctx.font = "bold 12px 'Courier New'";
+  ctx.fillStyle = PEN_BLUE;
+  ctx.fillText("NOSSAS EMBARCAÇÕES:", BATTLE_PLAYER.x, startY);
+
+  playerShips.forEach((s, idx) => {
+    const sunk = isShipSunk(playerGrid, enemyShots, s.id);
+    const lineY = startY + 18 + (idx * 17);
+    ctx.font = "11px 'Courier New'";
+    ctx.fillStyle = sunk ? PEN_BLACK : PEN_BLUE;
+    ctx.fillText(`[${sunk ? 'AFUNDADO' : ' OPERANTE '}] ${s.name}`, BATTLE_PLAYER.x, lineY);
+    if (sunk) {
+      drawWobblyLine(BATTLE_PLAYER.x + 24, lineY - 4, BATTLE_PLAYER.x + 230, lineY - 4, PEN_BLACK, 1.8);
+    }
+  });
+
+  // Frota Inimiga
+  ctx.fillStyle = PEN_RED;
+  ctx.fillText("FROTA DO INIMIGO:", BATTLE_ENEMY.x, startY);
+
+  SHIP_CONFIGS.forEach((s, idx) => {
+    const sunk = isShipSunk(enemyGrid, playerShots, s.id);
+    const lineY = startY + 18 + (idx * 17);
+    ctx.font = "11px 'Courier New'";
+    ctx.fillStyle = sunk ? PEN_BLACK : PEN_RED;
+    ctx.fillText(`[${sunk ? 'DESTRUÍDO' : ' EM AÇÃO  '}] ${s.name}`, BATTLE_ENEMY.x, lineY);
+    if (sunk) {
+      drawWobblyLine(BATTLE_ENEMY.x + 24, lineY - 4, BATTLE_ENEMY.x + 230, lineY - 4, PEN_RED, 1.6);
+    }
+  });
+}
+
+function drawGameOverStamp() {
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2 - 25);
+  ctx.rotate(-0.06);
+
+  const stampColor = victory ? PEN_BLUE : PEN_RED;
+  ctx.strokeStyle = stampColor;
+  ctx.lineWidth = 3.5;
+  ctx.strokeRect(-250, -50, 500, 100);
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(-244, -44, 488, 88);
+
+  ctx.font = "bold 22px 'Courier New'";
+  ctx.fillStyle = stampColor;
+  ctx.textAlign = "center";
+  ctx.fillText(victory ? "VITÓRIA! ESQUADRA INIMIGA AFUNDADA!" : "DERROTA! NOSSA FROTA FOI ANIQUILADA!", 0, -10);
+
+  ctx.font = "bold 13px 'Courier New'";
+  ctx.fillText(victory ? "MISSÃO CUMPRIDA // NOTA 10 EM GEOMETRIA NAVAL" : "RELATÓRIO: TODOS OS BARCOS FORAM PARA O FUNDO", 0, 18);
+  ctx.fillText("CLIQUE EM [NOVA MISSÃO] PARA RECOMEÇAR", 0, 36);
+  ctx.restore();
+}
+
+// ==========================================================
+// VALIDAÇÃO E POSICIONAMENTO DOS NAVIOS
+// ==========================================================
+
+function canPlaceShip(r, c, size, horizontal, ignoreShipId = -1) {
+  if (horizontal) {
+    if (c + size > GRID_SIZE) return false;
+  } else {
+    if (r + size > GRID_SIZE) return false;
+  }
+
+  for (let i = 0; i < size; i++) {
+    const curR = horizontal ? r : r + i;
+    const curC = horizontal ? c + i : c;
+
+    // Colisão com outros navios já colocados
+    for (let ship of playerShips) {
+      if (!ship.placed || ship.id === ignoreShipId) continue;
+      for (let si = 0; si < ship.size; si++) {
+        const sr = ship.horizontal ? ship.r : ship.r + si;
+        const sc = ship.horizontal ? ship.c + si : ship.c;
+        if (curR === sr && curC === sc) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function commitPlayerShipPlacement(shipId, r, c, horizontal) {
+  const ship = playerShips.find(s => s.id === shipId);
+  if (!ship) return;
+
+  ship.placed = true;
+  ship.r = r;
+  ship.c = c;
+  ship.horizontal = horizontal;
+  selectedShipId = null;
+  playPenSound('scratch');
+  render();
+}
+
+function randomizeFleet(targetShips, grid) {
+  // Limpa
+  targetShips.forEach(s => { s.placed = false; s.r = -1; s.c = -1; });
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) grid[r][c] = null;
+  }
+
+  targetShips.forEach(ship => {
+    let placed = false;
+    let tries = 0;
+    while (!placed && tries < 500) {
+      tries++;
+      const h = Math.random() < 0.5;
+      const maxC = h ? GRID_SIZE - ship.size : GRID_SIZE - 1;
+      const maxR = h ? GRID_SIZE - 1 : GRID_SIZE - ship.size;
+      const r = Math.floor(Math.random() * (maxR + 1));
+      const c = Math.floor(Math.random() * (maxC + 1));
+
+      // Checa colisão
+      let collides = false;
+      for (let i = 0; i < ship.size; i++) {
+        const curR = h ? r : r + i;
+        const curC = h ? c + i : c;
+        if (grid[curR][curC] !== null) { collides = true; break; }
+      }
+
+      if (!collides) {
+        ship.placed = true;
+        ship.r = r;
+        ship.c = c;
+        ship.horizontal = h;
+        for (let i = 0; i < ship.size; i++) {
+          const curR = h ? r : r + i;
+          const curC = h ? c + i : c;
+          grid[curR][curC] = { id: ship.id, name: ship.name, size: ship.size, horizontal: h };
+        }
+        placed = true;
+      }
+    }
+  });
+}
+
+function startBattle() {
+  if (!playerShips.every(s => s.placed)) return;
+
+  // Preenche matriz final do jogador
+  playerGrid = createEmptyGrid();
+  playerShips.forEach(ship => {
+    for (let i = 0; i < ship.size; i++) {
+      const r = ship.horizontal ? ship.r : ship.r + i;
+      const c = ship.horizontal ? ship.c + i : ship.c;
+      playerGrid[r][c] = { id: ship.id, name: ship.name, size: ship.size };
+    }
+  });
+
+  // Posiciona frota inimiga
+  enemyShips = SHIP_CONFIGS.map(s => ({ ...s, placed: false }));
+  enemyGrid = createEmptyGrid();
+  randomizeFleet(enemyShips, enemyGrid);
+
+  gameState = 'BATTLE';
+  btnRotate.style.display = 'none';
+  btnRandom.style.display = 'none';
+  btnStart.style.display = 'none';
+  btnNewGame.style.display = 'block';
+
+  messageLog = "BATALHA INICIADA! SELECIONE UMA COORDENADA NO RADAR INIMIGO PARA DISPARAR.";
+  playPenSound('hit');
+  render();
+}
+
+// ==========================================================
+// SISTEMA DE TIRO E COMBATE
+// ==========================================================
+
+function isShipSunk(grid, shots, shipId) {
+  let hasCells = false;
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (grid[r][c] && grid[r][c].id === shipId) {
+        hasCells = true;
+        if (shots[r][c] !== 'HIT') return false;
+      }
+    }
+  }
+  return hasCells;
+}
+
+function checkAllSunk(grid, shots) {
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (grid[r][c] !== null && shots[r][c] !== 'HIT') return false;
+    }
+  }
+  return true;
+}
+
+function handleBattleClick(mx, my) {
+  if (gameOver || turn !== 'PLAYER') return;
+
+  const col = Math.floor((mx - BATTLE_ENEMY.x) / CELL_SIZE);
+  const row = Math.floor((my - BATTLE_ENEMY.y) / CELL_SIZE);
+
+  if (col >= 0 && col < GRID_SIZE && row >= 0 && row < GRID_SIZE) {
+    if (playerShots[row][col] !== null) {
+      messageLog = "VOCÊ JÁ DISPAROU NESTE PONTO! ESCOLHA OUTRO QUADRANTE.";
+      render();
+      return;
+    }
+
+    const target = enemyGrid[row][col];
+    const letters = "ABCDEFGHIJ";
+    const coordName = `${letters[row]}-${col + 1}`;
+
+    if (target !== null) {
+      playerShots[row][col] = 'HIT';
+      playPenSound('hit');
+      if (isShipSunk(enemyGrid, playerShots, target.id)) {
+        combatAlert = `FOGO CERTEIRO: O ${target.name} INIMIGO FOI PARA O FUNDO!`;
+      } else {
+        combatAlert = `IMPACTO CONFIRMADO EM ${coordName}! ACERTOU UMA EMBARCAÇÃO!`;
+      }
+    } else {
+      playerShots[row][col] = 'MISS';
+      playPenSound('scratch');
+      combatAlert = `DISPARO EM ${coordName}: DEU ÁGUA!`;
+    }
+
+    if (checkAllSunk(enemyGrid, playerShots)) {
+      gameOver = true;
+      victory = true;
+      messageLog = "MISSÃO COMPLETA: TODA A FROTA INIMIGA FOI DESTRUÍDA!";
+      render();
+      return;
+    }
+
+    // Turno da IA
+    turn = 'CPU';
+    messageLog = "O INIMIGO ESTÁ TRAÇANDO O VETOR DE DISPARO...";
+    render();
+    setTimeout(cpuTurn, 650);
+  }
+}
+
+function cpuTurn() {
+  if (gameOver) return;
+
+  let r, c;
+
+  // Modo Caça e Destruição
+  while (cpuHuntQueue.length > 0) {
+    const candidate = cpuHuntQueue.pop();
+    if (enemyShots[candidate.r][candidate.c] === null) {
+      r = candidate.r;
+      c = candidate.c;
+      break;
+    }
+  }
+
+  if (r === undefined) {
+    let tries = 0;
+    do {
+      r = Math.floor(Math.random() * GRID_SIZE);
+      c = Math.floor(Math.random() * GRID_SIZE);
+      tries++;
+    } while (enemyShots[r][c] !== null && tries < 600);
+  }
+
+  const target = playerGrid[r][c];
+  const letters = "ABCDEFGHIJ";
+  const coordName = `${letters[r]}-${c + 1}`;
+
+  if (target !== null) {
+    enemyShots[r][c] = 'HIT';
+    playPenSound('hit');
+    messageLog = `O INIMIGO ACERTOU NOSSO ${target.name} EM ${coordName}!`;
+
+    // Adiciona vizinhos na fila de caça
+    const neighbors = [
+      { r: r - 1, c: c }, { r: r + 1, c: c },
+      { r: r, c: c - 1 }, { r: r, c: c + 1 }
+    ];
+    neighbors.forEach(n => {
+      if (n.r >= 0 && n.r < GRID_SIZE && n.c >= 0 && n.c < GRID_SIZE && enemyShots[n.r][n.c] === null) {
+        cpuHuntQueue.push(n);
+      }
+    });
+  } else {
+    enemyShots[r][c] = 'MISS';
+    playPenSound('scratch');
+    messageLog = `DISPARO INIMIGO EM ${coordName} DEU NA ÁGUA! NOSSA VEZ.`;
+  }
+
+  if (checkAllSunk(playerGrid, enemyShots)) {
+    gameOver = true;
+    victory = false;
+    messageLog = "FIM DE MISSÃO: TODOS OS NOSSOS NAVIOS FORAM AFUNDADOS!";
+  } else {
+    turn = 'PLAYER';
+  }
+
+  render();
+}
+
+// ==========================================================
+// CONTROLES DE MOUSE E TECLADO
+// ==========================================================
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (gameState === 'SETUP') {
+    const c = Math.floor((mx - SETUP_ORIGIN.x) / CELL_SIZE);
+    const r = Math.floor((my - SETUP_ORIGIN.y) / CELL_SIZE);
+
+    if (c >= 0 && c < GRID_SIZE && r >= 0 && r < GRID_SIZE) {
+      hoveredGridCell = { r, c };
+    } else {
+      hoveredGridCell = { r: -1, c: -1 };
+    }
+    render();
+  }
+});
+
+canvas.addEventListener('mousedown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // Botão Direito = Girar Navio
+  if (e.button === 2) {
+    currentRotationH = !currentRotationH;
+    playPenSound('click');
+    render();
+    return;
+  }
+
+  if (gameState === 'SETUP') {
+    // 1. Clique na grade para posicionar o navio ativo
+    if (hoveredGridCell.r >= 0 && hoveredGridCell.c >= 0 && selectedShipId !== null) {
+      const activeShip = playerShips.find(s => s.id === selectedShipId);
+      if (activeShip && canPlaceShip(hoveredGridCell.r, hoveredGridCell.c, activeShip.size, currentRotationH, activeShip.id)) {
+        commitPlayerShipPlacement(activeShip.id, hoveredGridCell.r, hoveredGridCell.c, currentRotationH);
+        return;
+      }
+    }
+
+    // 2. Clique em um navio já colocado na grade para reposicioná-lo
+    if (hoveredGridCell.r >= 0 && hoveredGridCell.c >= 0) {
+      for (let s of playerShips) {
+        if (!s.placed) continue;
+        for (let i = 0; i < s.size; i++) {
+          const sr = s.horizontal ? s.r : s.r + i;
+          const sc = s.horizontal ? s.c + i : s.c;
+          if (hoveredGridCell.r === sr && hoveredGridCell.c === sc) {
+            selectedShipId = s.id;
+            currentRotationH = s.horizontal;
+            s.placed = false; // Recoloca na mão
+            playPenSound('click');
+            render();
+            return;
+          }
+        }
+      }
+    }
+
+    // 3. Clique na lista do Hangar / Doca Seca
+    const trayX = 520;
+    const trayY = 125;
+    playerShips.forEach((ship, idx) => {
+      const itemY = trayY + 22 + (idx * 64);
+      if (mx >= trayX && mx <= trayX + 440 && my >= itemY && my <= itemY + 56) {
+        selectedShipId = ship.id;
+        currentRotationH = ship.horizontal;
+        ship.placed = false; // Tira do mapa para reposicionar
+        playPenSound('click');
+        render();
+      }
+    });
+
+  } else if (gameState === 'BATTLE') {
+    handleBattleClick(mx, my);
+  }
+});
+
+// Previne menu de contexto com botão direito para permitir girar com botão direito
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// Botões da Interface
+btnRotate.addEventListener('click', () => {
+  currentRotationH = !currentRotationH;
+  playPenSound('click');
+  render();
+});
+
+btnRandom.addEventListener('click', () => {
+  randomizeFleet(playerShips, playerGrid);
+  selectedShipId = null;
+  playPenSound('scratch');
+  render();
+});
+
+btnStart.addEventListener('click', startBattle);
+
+btnNewGame.addEventListener('click', () => {
+  initSetup();
+  playPenSound('scratch');
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyR') {
+    if (gameState === 'SETUP') {
+      currentRotationH = !currentRotationH;
+      playPenSound('click');
+      render();
+    } else {
+      initSetup();
+    }
+  }
+});
+
+function render() {
+  drawNotebookSheet();
+  if (gameState === 'SETUP') {
+    drawSetupScreen();
+  } else {
+    drawBattleScreen();
+  }
+}
+
+// Inicia no Estaleiro de Posicionamento
+initSetup();
+
+</script>
+</body>
+</html>
